@@ -259,17 +259,13 @@ fn twenty_pane_layout_produces_valid_geometry_and_resizes_all_ptys() -> Result<(
 #[test]
 fn session_name_rewrites_preserve_server_state() -> Result<(), Box<dyn Error>> {
     let _guard = serialize_test_execution();
-    let live_harness = CliHarness::new("stress-names-live")?;
-    let mut live_daemon = live_harness.start_hidden_daemon()?;
-    let stable_session = unique_session_name("stress-names-live");
-
-    assert_success(&live_harness.run(&["new-session", "-d", "-s", stable_session.as_str()])?);
-
-    for (label, source_name, expected_name, should_succeed) in [
+    let cases = [
         ("stress-names-empty", "", None, false),
         ("stress-names-colon", "a:b", Some("a_b"), true),
         ("stress-names-dot", "a..b", Some("a__b"), true),
-    ] {
+    ];
+
+    for (label, source_name, expected_name, should_succeed) in cases {
         let harness = CliHarness::new(label)?;
         let _cleanup = harness.auto_start_cleanup()?;
         let output = harness.run_with(&["new-session", "-d", "-s", source_name], |command| {
@@ -315,7 +311,15 @@ fn session_name_rewrites_preserve_server_state() -> Result<(), Box<dyn Error>> {
                 "invalid session names must not create a socket for {label}"
             );
         }
+    }
 
+    let live_harness = CliHarness::new("stress-names-live")?;
+    let mut live_daemon = live_harness.start_hidden_daemon()?;
+    let stable_session = unique_session_name("stress-names-live");
+
+    assert_success(&live_harness.run(&["new-session", "-d", "-s", stable_session.as_str()])?);
+
+    for (_label, source_name, expected_name, should_succeed) in cases {
         let live_output = live_harness.run(&["new-session", "-d", "-s", source_name])?;
         if should_succeed {
             assert_success(&live_output);
