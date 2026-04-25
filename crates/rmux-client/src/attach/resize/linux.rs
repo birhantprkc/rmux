@@ -69,7 +69,8 @@ impl ResizeWatcher {
 
                 if signal == Signal::WINCH {
                     let size = match terminal_size_from_fd(&terminal_fd) {
-                        Ok(size) => size,
+                        Ok(Some(size)) => size,
+                        Ok(None) => continue,
                         Err(_) => return,
                     };
 

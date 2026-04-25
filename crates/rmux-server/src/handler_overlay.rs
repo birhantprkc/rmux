@@ -176,6 +176,10 @@ impl RequestHandler {
         attach_pid: u32,
         size: TerminalSize,
     ) -> Result<(), RmuxError> {
+        if size.cols == 0 || size.rows == 0 {
+            return Ok(());
+        }
+
         let mut close_overlay = false;
         let (resized_session, mode_tree_zoom_target) = {
             let mut active_attach = self.active_attach.lock().await;

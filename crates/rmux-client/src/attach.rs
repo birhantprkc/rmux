@@ -108,11 +108,13 @@ where
         .try_clone_to_owned()
         .map_err(AttachError::from)?;
 
-    resize_tx.send(initial_size).map_err(|_| {
-        ClientError::Io(io::Error::other(
-            "resize channel closed before attach start",
-        ))
-    })?;
+    if let Some(initial_size) = initial_size {
+        resize_tx.send(initial_size).map_err(|_| {
+            ClientError::Io(io::Error::other(
+                "resize channel closed before attach start",
+            ))
+        })?;
+    }
 
     let resize_watcher = ResizeWatcher::spawn(terminal_fd, resize_tx)?;
     let attach_result = drive_attach_stream_with_locking(

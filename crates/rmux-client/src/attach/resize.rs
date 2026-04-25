@@ -14,13 +14,14 @@ pub(super) use platform::{ResizeWatcher, SignalMaskGuard};
 
 use super::Result;
 
-pub(super) fn terminal_size_from_fd<Fd>(fd: &Fd) -> Result<TerminalSize>
+pub(super) fn terminal_size_from_fd<Fd>(fd: &Fd) -> Result<Option<TerminalSize>>
 where
     Fd: AsFd,
 {
     let winsize = tcgetwinsize(fd)?;
-    Ok(TerminalSize {
+    let size = TerminalSize {
         cols: winsize.ws_col,
         rows: winsize.ws_row,
-    })
+    };
+    Ok((size.cols > 0 && size.rows > 0).then_some(size))
 }

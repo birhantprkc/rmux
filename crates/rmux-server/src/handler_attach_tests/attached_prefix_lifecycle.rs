@@ -160,3 +160,42 @@ async fn attached_resize_resizes_session_and_refreshes_status_frame() {
         "resize should redraw status for the attached client, got {frame:?}"
     );
 }
+
+#[tokio::test]
+async fn attached_resize_ignores_zero_sized_terminal_reports() {
+    let handler = RequestHandler::new();
+    let requester_pid = std::process::id();
+    let alpha = session_name("alpha");
+    let mut control_rx = create_attached_session(&handler, requester_pid, &alpha).await;
+
+    handler
+        .handle_attached_resize(requester_pid, TerminalSize { cols: 0, rows: 0 })
+        .await
+        .expect("zero-sized resize is ignored");
+
+    let (client_size, session_size) = {
+        let active_attach = handler.active_attach.lock().await;
+        let client_size = active_attach
+            .by_pid
+            .get(&requester_pid)
+            .expect("attached client is tracked")
+            .client_size;
+        drop(active_attach);
+
+        let state = handler.state.lock().await;
+        let session_size = state
+            .sessions
+            .session(&alpha)
+            .expect("session exists")
+            .window()
+            .size();
+        (client_size, session_size)
+    };
+
+    assert_eq!(client_size, TerminalSize { cols: 80, rows: 24 });
+    assert_eq!(session_size, TerminalSize { cols: 80, rows: 24 });
+    assert!(
+        control_rx.try_recv().is_err(),
+        "ignored zero-sized resize must not emit a refresh frame"
+    );
+}

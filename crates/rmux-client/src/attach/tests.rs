@@ -15,8 +15,29 @@ use rustix::termios::{tcsetwinsize, Winsize};
 
 use super::{
     attach_with_terminal, fallback_attach_stop_sequence, input_loop, output_loop,
-    AttachScreenTracker, RawTerminal, ResizeWatcher, SignalMaskGuard, TerminalSize,
+    terminal_size_from_fd, AttachScreenTracker, RawTerminal, ResizeWatcher, SignalMaskGuard,
+    TerminalSize,
 };
+
+#[test]
+fn terminal_size_from_fd_ignores_zero_sized_terminals() -> Result<(), Box<dyn std::error::Error>> {
+    let pair = PtyPair::open_with_size(rmux_pty::TerminalSize::new(80, 24))?;
+    let (_master, slave) = pair.into_split();
+    let terminal = File::from(slave.into_owned_fd());
+
+    tcsetwinsize(
+        &terminal,
+        Winsize {
+            ws_row: 0,
+            ws_col: 0,
+            ws_xpixel: 0,
+            ws_ypixel: 0,
+        },
+    )?;
+
+    assert_eq!(terminal_size_from_fd(&terminal)?, None);
+    Ok(())
+}
 
 #[test]
 fn resize_watcher_reports_sigwinch_updates() -> Result<(), Box<dyn std::error::Error>> {
