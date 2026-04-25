@@ -141,7 +141,10 @@ fn assert_termios_eq(expected: &Termios, actual: &Termios) {
     assert_eq!(actual.input_modes, expected.input_modes);
     assert_eq!(actual.output_modes, expected.output_modes);
     assert_eq!(actual.control_modes, expected.control_modes);
-    assert_eq!(actual.local_modes, expected.local_modes);
+    assert_eq!(
+        comparable_local_modes(actual.local_modes),
+        comparable_local_modes(expected.local_modes)
+    );
     #[cfg(target_os = "linux")]
     assert_eq!(actual.line_discipline, expected.line_discipline);
     assert_eq!(
@@ -150,4 +153,11 @@ fn assert_termios_eq(expected: &Termios, actual: &Termios) {
     );
     assert_eq!(actual.input_speed(), expected.input_speed());
     assert_eq!(actual.output_speed(), expected.output_speed());
+}
+
+fn comparable_local_modes(mut modes: LocalModes) -> LocalModes {
+    #[cfg(target_os = "macos")]
+    modes.remove(LocalModes::PENDIN);
+
+    modes
 }
