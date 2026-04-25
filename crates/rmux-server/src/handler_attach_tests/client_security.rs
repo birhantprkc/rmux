@@ -103,7 +103,7 @@ async fn lock_client_accepts_tty_path_targets() {
         .await;
 
     let mut child = spawn_tty_child().expect("spawn tty child");
-    let tty_path = std::fs::read_link(format!("/proc/{}/fd/0", child.id())).expect("tty path");
+    let tty_path = rmux_os::process::fd_path(child.id(), 0).expect("tty path");
     let tty_target = tty_path.display().to_string();
     let tty_basename = tty_path
         .strip_prefix("/dev")
