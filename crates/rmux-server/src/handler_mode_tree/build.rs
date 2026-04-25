@@ -396,8 +396,7 @@ fn local_datetime(epoch: i64) -> Option<DateTime<Local>> {
 }
 
 fn attached_client_label(attach_pid: u32) -> String {
-    std::fs::read_link(format!("/proc/{attach_pid}/fd/0"))
-        .ok()
+    rmux_os::process::fd_path(attach_pid, 0)
         .map(|path| path.to_string_lossy().into_owned())
         .unwrap_or_else(|| attach_pid.to_string())
 }

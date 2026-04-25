@@ -359,7 +359,7 @@ pub(in crate::handler) fn attached_client_matches_target(
 }
 
 fn attached_client_tty_path(attach_pid: u32) -> Option<PathBuf> {
-    fs::read_link(format!("/proc/{attach_pid}/fd/0")).ok()
+    rmux_os::process::fd_path(attach_pid, 0)
 }
 
 pub(in crate::handler) fn session_selection_prefers_live_process(pid: u32) -> bool {
