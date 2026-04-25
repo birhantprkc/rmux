@@ -397,29 +397,13 @@ fn indicates_stale_socket(error: &io::Error) -> bool {
 }
 
 pub(crate) fn real_user_id() -> io::Result<u32> {
-    let status = fs::read_to_string("/proc/self/status")?;
-    parse_real_user_id(&status)
-}
-
-fn parse_real_user_id(status: &str) -> io::Result<u32> {
-    let uid_line = status
-        .lines()
-        .find(|line| line.starts_with("Uid:"))
-        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "missing Uid line"))?;
-    let uid = uid_line
-        .split_whitespace()
-        .nth(1)
-        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "missing real uid"))?;
-
-    uid.parse::<u32>()
-        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))
+    Ok(rmux_os::identity::real_user_id())
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        default_socket_path, parse_real_user_id, remove_stale_socket_if_needed,
-        socket_root_from_env, DaemonConfig,
+        default_socket_path, remove_stale_socket_if_needed, socket_root_from_env, DaemonConfig,
     };
     use std::ffi::OsStr;
     use std::fs;
@@ -452,20 +436,11 @@ mod tests {
     }
 
     #[test]
-    fn real_uid_parser_uses_the_real_uid_field() {
-        let status = "\
-Name:\trmux\n\
-Uid:\t1000\t2000\t3000\t4000\n\
-Gid:\t1000\t1000\t1000\t1000\n";
-
-        assert_eq!(parse_real_user_id(status).expect("real uid"), 1000);
-    }
-
-    #[test]
-    fn real_uid_parser_requires_a_uid_line() {
-        let error = parse_real_user_id("Name:\trmux\n").expect_err("missing uid line");
-
-        assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+    fn real_user_id_matches_process_identity() {
+        assert_eq!(
+            super::real_user_id().expect("real uid"),
+            rmux_os::identity::real_user_id()
+        );
     }
 
     #[test]

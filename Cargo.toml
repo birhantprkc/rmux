@@ -3,6 +3,7 @@ members = [
     ".",
     "crates/rmux-proto",
     "crates/rmux-pty",
+    "crates/rmux-os",
     "crates/rmux-core",
     "crates/rmux-server",
     "crates/rmux-client",

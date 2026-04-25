@@ -398,6 +398,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "rmux-os"
+version = "0.0.2"
+dependencies = [
+ "rustix",
+]
+
+[[package]]
 name = "rmux-proto"
 version = "0.0.2"
 dependencies = [
@@ -422,6 +429,7 @@ dependencies = [
  "glob",
  "regex",
  "rmux-core",
+ "rmux-os",
  "rmux-proto",
  "rmux-pty",
  "rustix",
