@@ -13,7 +13,7 @@ use common::{
     stdout, tty_has_input, unique_tmpdir, wait_for_no_child_processes, CliHarness,
     BINARY_OVERRIDE_ENV,
 };
-use rmux_client::connect;
+use rmux_client::{connect, ClientError};
 use rmux_core::Session;
 use rmux_proto::{
     CapturePaneRequest, KillSessionRequest, KillSessionResponse, LayoutName, NewSessionRequest,
@@ -517,9 +517,7 @@ fn shutdown_removes_socket_files_after_all_sessions_are_killed() -> Result<(), B
             killed,
             Response::KillSession(KillSessionResponse { existed: true })
         ),
-        Err(error)
-            if error.to_string().contains("UnexpectedEof")
-                || error.to_string().contains("unexpected EOF") => {}
+        Err(ClientError::UnexpectedEof) => {}
         Err(error) => return Err(Box::new(error)),
     }
     drop(connection);
