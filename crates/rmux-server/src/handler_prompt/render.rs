@@ -37,6 +37,7 @@ mod tests {
         let prompt = RenderedPrompt {
             prompt: "search ".to_owned(),
             input: "0123456789".to_owned(),
+            cursor: 10,
             command_prompt: true,
         };
         let (left, right) = rendered_prompt_input(&prompt, 12, &utf8);
@@ -50,6 +51,7 @@ mod tests {
         let prompt = RenderedPrompt {
             prompt: "p".to_owned(),
             input: "i".to_owned(),
+            cursor: 1,
             command_prompt: true,
         };
         let (left, right) = rendered_prompt_input(&prompt, 0, &utf8);
@@ -63,6 +65,7 @@ mod tests {
         let prompt = RenderedPrompt {
             prompt: "cmd: ".to_owned(),
             input: "hello".to_owned(),
+            cursor: 5,
             command_prompt: true,
         };
         let (left, right) = rendered_prompt_input(&prompt, 10, &utf8);

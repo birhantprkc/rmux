@@ -195,6 +195,7 @@ impl ClientPromptState {
         RenderedPrompt {
             prompt: self.prompt.clone(),
             input: self.buffer.clone(),
+            cursor: self.cursor,
             // tmux opens command-prompt in PROMPT_ENTRY mode and only flips to
             // PROMPT_COMMAND after Escape in vi-style editing. rmux does not
             // model that mode switch yet, so the initial render must stay on

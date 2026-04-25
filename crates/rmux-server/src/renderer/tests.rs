@@ -453,6 +453,30 @@ fn status_only_render_starts_from_a_reset_sgr_state() {
 }
 
 #[test]
+fn prompt_status_render_positions_cursor_on_the_input_cell() {
+    let session = Session::new(session_name("alpha"), TerminalSize { cols: 20, rows: 4 });
+    let prompt = super::RenderedPrompt {
+        prompt: "rename-window ".to_owned(),
+        input: String::new(),
+        cursor: 0,
+        command_prompt: false,
+    };
+
+    let frame = String::from_utf8(super::render_with_attached_count_and_prompt(
+        &session,
+        &OptionStore::new(),
+        1,
+        Some(&prompt),
+    ))
+    .expect("frame is utf-8");
+
+    assert!(
+        frame.ends_with("\u{1b}[4;15H"),
+        "prompt cursor should land after the prompt label, got {frame:?}"
+    );
+}
+
+#[test]
 fn border_render_starts_from_a_reset_sgr_state() {
     let mut session = Session::new(session_name("alpha"), TerminalSize { cols: 8, rows: 4 });
     session.split_active_pane().expect("split succeeds");

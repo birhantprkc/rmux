@@ -9,22 +9,26 @@ use rmux_proto::OptionName;
 use crate::format_runtime::{render_runtime_template, RuntimeFormatContext};
 
 use super::{
-    apply_runtime_style_overlay, apply_style_overlay, colour_inherits_base, format_draw_line,
-    parse_option_colour, parse_standalone_style, render_formatted_line, FormattedLine,
-    RenderedPrompt,
+    apply_runtime_style_overlay, apply_style_overlay, colour_inherits_base, cursor_position_bytes,
+    format_draw_line, parse_option_colour, parse_standalone_style, render_formatted_line,
+    FormattedLine, RenderedPrompt,
 };
 
 #[path = "status/geometry.rs"]
 mod geometry;
 #[path = "status/message.rs"]
 mod message;
+#[path = "status/prompt.rs"]
+mod prompt;
 #[path = "status/runs.rs"]
 mod runs;
 
 pub(super) use geometry::StatusGeometry;
 pub(super) use message::format_status_message_line;
+pub(super) use prompt::prompt_status_runs;
 pub(super) use runs::{sanitize_status_text, status_runs_width, StatusRun};
 
+use prompt::prompt_status_layout;
 use runs::{push_spaces, push_status_run, render_status_runs, truncate_status_runs, StatusStyle};
 
 pub(super) fn render_status_bar(
@@ -44,10 +48,10 @@ pub(super) fn render_status_bar(
     }
 
     if let Some(prompt) = prompt {
-        return render_status_runs(
-            status_y,
-            &prompt_status_runs(session, options, geometry.terminal_size.cols, prompt),
-        );
+        let layout = prompt_status_layout(session, options, geometry.terminal_size.cols, prompt);
+        let mut frame = render_status_runs(status_y, &layout.runs);
+        frame.extend_from_slice(cursor_position_bytes(status_y, layout.cursor_x).as_slice());
+        return frame;
     }
 
     let line = status_bar_line_with_pane_title(
@@ -60,54 +64,6 @@ pub(super) fn render_status_bar(
     let mut frame = Vec::new();
     render_formatted_line(&mut frame, 0, status_y, &line);
     frame
-}
-
-pub(super) fn prompt_status_runs(
-    session: &Session,
-    options: &OptionStore,
-    columns: u16,
-    prompt: &RenderedPrompt,
-) -> Vec<StatusRun> {
-    let width = usize::from(columns);
-    let session_name = session.name();
-    let utf8_config = Utf8Config::from_options(options);
-    let style_option = if prompt.command_prompt {
-        OptionName::MessageCommandStyle
-    } else {
-        OptionName::MessageStyle
-    };
-    let style = apply_style_overlay(
-        &resolved_status_style(options, session_name),
-        options.resolve(Some(session_name), style_option),
-    );
-    let prompt_text =
-        sanitize_status_text(tmux_truncate_to_width(&prompt.prompt, width, &utf8_config));
-    let prompt_width = tmux_text_width(&prompt_text, &utf8_config);
-    let available = width.saturating_sub(prompt_width);
-    let input_text =
-        sanitize_status_text(prompt_visible_input(&prompt.input, available, &utf8_config));
-
-    let mut runs = Vec::new();
-    push_status_run(&mut runs, prompt_text, style.clone());
-    push_status_run(&mut runs, input_text, style.clone());
-    let rendered = status_runs_width(&runs, &utf8_config);
-    push_spaces(&mut runs, width.saturating_sub(rendered), style);
-    runs
-}
-
-fn prompt_visible_input(input: &str, width: usize, utf8_config: &Utf8Config) -> String {
-    if width == 0 {
-        return String::new();
-    }
-
-    let mut visible = input.to_owned();
-    while tmux_text_width(&visible, utf8_config) > width {
-        let Some((index, _)) = visible.char_indices().nth(1) else {
-            break;
-        };
-        visible.drain(..index);
-    }
-    tmux_truncate_to_width(&visible, width, utf8_config)
 }
 
 #[cfg_attr(not(test), allow(dead_code))]

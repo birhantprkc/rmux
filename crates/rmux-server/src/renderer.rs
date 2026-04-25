@@ -54,6 +54,7 @@ use status::{
 pub(crate) struct RenderedPrompt {
     pub(crate) prompt: String,
     pub(crate) input: String,
+    pub(crate) cursor: usize,
     pub(crate) command_prompt: bool,
 }
 
