@@ -1,4 +1,4 @@
-use std::error::Error;
+use std::{error::Error, path::Path};
 mod common;
 
 use common::{send_request, session_name, start_server, TestHarness};
@@ -6,6 +6,48 @@ use rmux_proto::{
     DisplayMessageRequest, ListWindowsRequest, NewSessionRequest, NewWindowRequest, Request,
     Response, Target, TerminalSize,
 };
+
+fn default_shell_window_name() -> String {
+    std::env::var_os("SHELL")
+        .and_then(|shell| Path::new(&shell).file_name().map(|name| name.to_owned()))
+        .map(|name| name.to_string_lossy().trim_start_matches('-').to_owned())
+        .filter(|name| !name.is_empty())
+        .unwrap_or_else(|| "sh".to_owned())
+}
+
+fn assert_window_format_line(
+    line: &str,
+    window_index: &str,
+    window_name: &str,
+    raw_flags: &str,
+    active: &str,
+    last: &str,
+    conditional: &str,
+) {
+    let fields: Vec<&str> = line.split(':').collect();
+    assert_eq!(fields.len(), 14, "unexpected format fields: {fields:?}");
+    assert_eq!(fields[0], "alpha");
+    assert_eq!(fields[1], "2");
+    assert_eq!(fields[2], "0");
+    assert_eq!(fields[3], "x");
+    assert_eq!(fields[4], window_index);
+    assert_eq!(fields[5], window_name);
+    assert_eq!(fields[6], raw_flags);
+    assert_eq!(fields[7], active);
+    assert_eq!(fields[8], last);
+    assert_eq!(fields[9], format!("@{window_index}"));
+    assert_eq!(fields[10], "");
+    assert_eq!(fields[11], format!("{window_index}{window_name}alpha"));
+    assert!(
+        !fields[12].contains("#{"),
+        "pane title should be resolved, not leaked as a format token"
+    );
+    assert_eq!(fields[13], conditional);
+}
+
+fn is_unix_pty_path(path: &str) -> bool {
+    path.starts_with("/dev/pts/") || path.starts_with("/dev/ttys")
+}
 
 #[tokio::test]
 async fn list_windows_uses_shared_formatter_through_real_socket() -> Result<(), Box<dyn Error>> {
@@ -59,11 +101,19 @@ async fn list_windows_uses_shared_formatter_through_real_socket() -> Result<(), 
     let output = listed
         .command_output()
         .expect("list-windows returns command output");
-    assert_eq!(
-        std::str::from_utf8(output.stdout()).expect("list-windows output is utf-8"),
-        "alpha:2:0:x:0:bash:-:0:1:@0::0bashalpha:RMUXHOST:no\n\
-alpha:2:0:x:1:logs:*:1:0:@1::1logsalpha:RMUXHOST:yes\n"
+    let stdout = std::str::from_utf8(output.stdout()).expect("list-windows output is utf-8");
+    let lines: Vec<&str> = stdout.lines().collect();
+    assert_eq!(lines.len(), 2, "unexpected list-windows output: {stdout:?}");
+    assert_window_format_line(
+        lines[0].trim_end(),
+        "0",
+        &default_shell_window_name(),
+        "-",
+        "0",
+        "1",
+        "no",
     );
+    assert_window_format_line(lines[1].trim_end(), "1", "logs", "*", "1", "0", "yes");
 
     handle.shutdown().await?;
     Ok(())
@@ -174,7 +224,7 @@ async fn display_message_session_target_includes_active_pane_runtime_context(
     assert_eq!(fields[2], "0");
     assert!(!fields[3].is_empty(), "pane_current_path must be populated");
     assert!(fields[4].parse::<u32>().is_ok(), "pane_pid must be numeric");
-    assert!(fields[5].starts_with("/dev/pts/"), "pane_tty must be a pty");
+    assert!(is_unix_pty_path(fields[5]), "pane_tty must be a pty");
     assert_eq!(fields[6], harness.socket_path().to_string_lossy());
 
     handle.shutdown().await?;

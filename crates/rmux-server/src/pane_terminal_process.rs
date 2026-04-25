@@ -53,7 +53,7 @@ impl PaneTerminal {
     }
 
     pub(crate) fn tty_path(&self) -> Option<PathBuf> {
-        std::fs::read_link(format!("/proc/{}/fd/0", self.pid())).ok()
+        rmux_os::process::fd_path(self.pid(), 0)
     }
 
     pub(crate) fn is_alive(&mut self) -> rmux_pty::Result<bool> {
