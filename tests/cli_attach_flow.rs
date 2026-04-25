@@ -211,6 +211,14 @@ fn wait_for_mode_tree_enter(harness: &CliHarness, target: &str) -> Result<(), Bo
     }
 }
 
+fn assert_mode_tree_exited_with_shell_name(output: &std::process::Output) {
+    let rendered = common::stdout(output);
+    assert!(
+        rendered == "bash|0|\n" || rendered == "zsh|0|\n" || rendered == "sh|0|\n",
+        "expected shell window name with no active mode, got: {rendered:?}"
+    );
+}
+
 #[test]
 fn attach_session_binary_uses_the_real_attach_stream_and_restores_terminal(
 ) -> Result<(), Box<dyn Error>> {
@@ -1070,7 +1078,7 @@ fn compact_prefix_wq_closes_choose_tree_when_keys_arrive_in_one_burst() -> Resul
         "alpha:0.0",
         "#{window_name}|#{pane_in_mode}|#{pane_mode}",
     ])?;
-    assert_eq!(common::stdout(&output), "bash|0|\n");
+    assert_mode_tree_exited_with_shell_name(&output);
 
     assert_success(&harness.run(&["kill-session", "-t", "alpha"])?);
     let status = attach.wait_for_exit(IO_TIMEOUT)?;
@@ -1105,7 +1113,7 @@ fn compact_prefix_tq_exits_clock_mode_when_keys_arrive_in_one_burst() -> Result<
         "alpha:0.0",
         "#{window_name}|#{pane_in_mode}|#{pane_mode}",
     ])?;
-    assert_eq!(common::stdout(&output), "bash|0|\n");
+    assert_mode_tree_exited_with_shell_name(&output);
 
     assert_success(&harness.run(&["kill-session", "-t", "alpha"])?);
     let status = attach.wait_for_exit(IO_TIMEOUT)?;

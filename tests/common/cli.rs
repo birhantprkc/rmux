@@ -12,6 +12,8 @@ use crate::common::{
     write_hidden_launcher, AutoStartCleanup, BINARY_OVERRIDE_ENV, BINARY_OVERRIDE_TEST_OPT_IN_ENV,
 };
 
+const TEST_SHELL_STARTUP: &str = "export PS1='tester@RMUXHOST:~$ '\nexport PROMPT=\"$PS1\"\n";
+
 pub(crate) struct CliHarness {
     tmpdir: PathBuf,
     socket_path: PathBuf,
@@ -23,6 +25,7 @@ impl CliHarness {
     pub(crate) fn new(label: &str) -> Result<Self, Box<dyn Error>> {
         let tmpdir = unique_tmpdir(label);
         fs::create_dir_all(&tmpdir)?;
+        write_test_shell_startup_files(&tmpdir.join("home"))?;
         let socket_path = default_socket_path_in(&tmpdir)?;
         let launcher_path = tmpdir.join("rmux-launcher.sh");
         let pid_path = tmpdir.join("rmux.pid");
@@ -99,6 +102,20 @@ impl CliHarness {
     pub(crate) fn tmpdir(&self) -> &Path {
         &self.tmpdir
     }
+}
+
+fn write_test_shell_startup_files(home: &Path) -> Result<(), Box<dyn Error>> {
+    fs::create_dir_all(home)?;
+    for file_name in [
+        ".bash_profile",
+        ".bashrc",
+        ".profile",
+        ".zprofile",
+        ".zshrc",
+    ] {
+        fs::write(home.join(file_name), TEST_SHELL_STARTUP)?;
+    }
+    Ok(())
 }
 
 impl Drop for CliHarness {
