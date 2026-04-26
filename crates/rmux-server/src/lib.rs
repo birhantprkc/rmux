@@ -46,7 +46,8 @@ mod pane_terminals;
 mod pane_transcript;
 #[cfg(unix)]
 mod renderer;
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
+#[cfg_attr(windows, allow(dead_code))]
 mod server_access;
 #[cfg(unix)]
 mod terminal;

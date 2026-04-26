@@ -1,10 +1,9 @@
 use std::collections::BTreeMap;
+#[cfg(unix)]
 use std::fs;
 
-use rmux_os::identity::UserIdentity;
+use rmux_os::identity::{IdentityResolver, UserIdentity};
 use rmux_proto::{AttachSessionExtRequest, CommandOutput, Request, RmuxError, ServerAccessRequest};
-
-use crate::daemon::real_user_id;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum AccessMode {
@@ -43,7 +42,8 @@ pub(crate) struct ServerAccessStore {
 impl ServerAccessStore {
     #[must_use]
     pub(crate) fn new(owner_uid: u32) -> Self {
-        Self::new_for_identity(owner_uid, UserIdentity::Uid(owner_uid))
+        let owner_identity = current_user_identity().unwrap_or(UserIdentity::Uid(owner_uid));
+        Self::new_for_identity(owner_uid, owner_identity)
     }
 
     #[must_use]
@@ -114,7 +114,17 @@ impl ServerAccessStore {
 }
 
 pub(crate) fn current_owner_uid() -> u32 {
-    real_user_id().unwrap_or(0)
+    current_user_identity()
+        .ok()
+        .and_then(|identity| match identity {
+            UserIdentity::Uid(uid) => Some(uid),
+            UserIdentity::Sid(_) => None,
+        })
+        .unwrap_or(0)
+}
+
+fn current_user_identity() -> std::io::Result<UserIdentity> {
+    IdentityResolver::current()
 }
 
 pub(crate) fn resolve_user(value: &str) -> Result<ResolvedUser, RmuxError> {
@@ -263,15 +273,23 @@ struct PasswdEntry {
 }
 
 fn passwd_entries() -> Vec<PasswdEntry> {
-    fs::read_to_string("/etc/passwd")
-        .ok()
-        .map(|contents| {
-            contents
-                .lines()
-                .filter_map(parse_passwd_entry)
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default()
+    #[cfg(windows)]
+    {
+        Vec::new()
+    }
+
+    #[cfg(unix)]
+    {
+        fs::read_to_string("/etc/passwd")
+            .ok()
+            .map(|contents| {
+                contents
+                    .lines()
+                    .filter_map(parse_passwd_entry)
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default()
+    }
 }
 
 fn parse_passwd_entry(line: &str) -> Option<PasswdEntry> {
@@ -296,5 +314,13 @@ mod tests {
             store.mode_for_identity(&UserIdentity::Sid("S-1-5-21-2000".into())),
             None
         );
+    }
+
+    #[test]
+    fn access_store_tracks_current_platform_identity_for_owner() {
+        let owner = current_user_identity().expect("current identity");
+        let store = ServerAccessStore::new(current_owner_uid());
+
+        assert_eq!(store.mode_for_identity(&owner), Some(AccessMode::ReadWrite));
     }
 }
