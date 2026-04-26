@@ -22,7 +22,9 @@ use text::{
     classify_word_char, line_char, owner_positions, pattern_looks_like_regex, WordBoundary,
     WordClass,
 };
+#[cfg_attr(windows, allow(unused_imports))]
 pub(crate) use transfer::run_pipe_command;
+#[cfg_attr(windows, allow(unused_imports))]
 pub(crate) use types::{
     CopyBufferTarget, CopyModeCommandContext, CopyModeMouseContext, CopyModeSummary,
     CopyModeTransfer, CopyPosition, ModeKeys,

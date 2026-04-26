@@ -17,7 +17,8 @@ mod control;
 mod control_mode;
 #[cfg(unix)]
 mod control_notifications;
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
+#[cfg_attr(windows, allow(dead_code))]
 mod copy_mode;
 mod daemon;
 #[cfg(unix)]

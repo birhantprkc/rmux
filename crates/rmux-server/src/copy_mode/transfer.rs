@@ -354,8 +354,8 @@ pub(crate) fn run_pipe_command(
         return Ok(());
     }
 
-    let mut child = Command::new(shell);
-    child.arg("-c").arg(command).stdin(Stdio::piped());
+    let mut child = shell_command(shell, command);
+    child.stdin(Stdio::piped());
     if let Some(directory) = working_directory {
         child.current_dir(directory);
     }
@@ -380,4 +380,29 @@ pub(crate) fn run_pipe_command(
             "pipe command '{command}' exited with status {status}"
         )))
     }
+}
+
+#[cfg(unix)]
+fn shell_command(shell: &str, command: &str) -> Command {
+    let mut child = Command::new(shell);
+    child.arg("-c").arg(command);
+    child
+}
+
+#[cfg(windows)]
+fn shell_command(shell: &str, command: &str) -> Command {
+    let mut child = Command::new(shell);
+    let shell_name = std::path::Path::new(shell)
+        .file_stem()
+        .and_then(|name| name.to_str())
+        .map(str::to_ascii_lowercase);
+    match shell_name.as_deref() {
+        Some("powershell" | "pwsh") => {
+            child.arg("-NoProfile").arg("-Command").arg(command);
+        }
+        _ => {
+            child.arg("/C").arg(command);
+        }
+    }
+    child
 }
