@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 use rmux_proto::{
     format_continue_line, format_exit_line, CONTROL_BUFFER_LOW, CONTROL_MAXIMUM_AGE_MS,
 };
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncWrite, AsyncWriteExt};
 
 use super::ControlClientFlags;
 
@@ -48,7 +48,7 @@ impl ControlOutputQueue {
 
 pub(super) async fn flush_output_queue(
     output_queue: &mut ControlOutputQueue,
-    writer: &mut tokio::net::unix::OwnedWriteHalf,
+    writer: &mut (impl AsyncWrite + Unpin),
     flags: ControlClientFlags,
     paused_panes: &mut HashSet<u32>,
 ) -> io::Result<()> {

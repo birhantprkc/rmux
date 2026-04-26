@@ -4,12 +4,12 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
+use rmux_ipc::LocalStream;
 use rmux_proto::{
     format_exit_line, format_extended_output_line, format_guard_line, format_output_line,
     format_pause_line, ControlGuardKind, ControlMode, SessionName, CONTROL_BUFFER_HIGH,
 };
-use tokio::io::AsyncReadExt;
-use tokio::net::UnixStream;
+use tokio::io::{AsyncReadExt, WriteHalf};
 use tokio::sync::{broadcast, mpsc, watch};
 use tokio::task::JoinHandle;
 
@@ -62,7 +62,7 @@ pub(crate) struct ControlLifecycle {
 }
 
 pub(crate) async fn forward_control(
-    stream: UnixStream,
+    stream: LocalStream,
     handler: Arc<RequestHandler>,
     requester_pid: u32,
     initial_socket_bytes: Vec<u8>,
@@ -71,7 +71,7 @@ pub(crate) async fn forward_control(
     lifecycle: ControlLifecycle,
 ) -> io::Result<()> {
     let (pane_event_tx, mut pane_event_rx) = mpsc::unbounded_channel();
-    let (mut read_half, mut write_half) = stream.into_split();
+    let (mut read_half, mut write_half) = tokio::io::split(stream);
     let mut input_buffer = initial_socket_bytes;
     let mut queued_lines: VecDeque<String> =
         extract_complete_control_lines(&mut input_buffer).into();
@@ -407,7 +407,7 @@ struct ServerEventContext<'a> {
     pane_event_tx: mpsc::UnboundedSender<PaneEvent>,
     pane_event_rx: &'a mut mpsc::UnboundedReceiver<PaneEvent>,
     output_queue: &'a mut ControlOutputQueue,
-    write_half: &'a mut tokio::net::unix::OwnedWriteHalf,
+    write_half: &'a mut WriteHalf<LocalStream>,
     paused_panes: &'a mut HashSet<u32>,
     flags: &'a mut ControlClientFlags,
     deferred: &'a mut DeferredServerEvents,
