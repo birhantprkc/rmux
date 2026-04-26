@@ -2,7 +2,12 @@
 set -euo pipefail
 
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
-RMUX="$ROOT/target/debug/rmux"
+TARGET_DIR="${CARGO_TARGET_DIR:-$ROOT/target}"
+case "$TARGET_DIR" in
+    /*) ;;
+    *) TARGET_DIR="$ROOT/$TARGET_DIR" ;;
+esac
+RMUX="$TARGET_DIR/debug/rmux"
 SMOKE_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/rmux-smoke.XXXXXX")"
 export RMUX_TMPDIR="$SMOKE_ROOT"
 

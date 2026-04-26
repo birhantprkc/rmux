@@ -434,10 +434,15 @@ fn assert_termios_eq(expected: &Termios, actual: &Termios) {
     assert_eq!(actual.output_speed(), expected.output_speed());
 }
 
+#[cfg(target_os = "macos")]
 fn comparable_local_modes(mut modes: LocalModes) -> LocalModes {
-    #[cfg(target_os = "macos")]
     modes.remove(LocalModes::PENDIN);
 
+    modes
+}
+
+#[cfg(not(target_os = "macos"))]
+fn comparable_local_modes(modes: LocalModes) -> LocalModes {
     modes
 }
 

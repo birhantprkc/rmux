@@ -109,6 +109,15 @@ fn transcript_without_status_line(transcript: &str) -> String {
     }
 }
 
+fn line_has_isolated_left_chevron(line: &str) -> bool {
+    line.contains('│')
+        && line
+            .chars()
+            .collect::<Vec<_>>()
+            .windows(3)
+            .any(|window| matches!(window, [' ', '<', ' ']))
+}
+
 fn apply_quiescent_attach_output(
     attach: &mut AttachedSession,
     screen: &mut Screen,
@@ -1860,16 +1869,19 @@ fn choose_tree_preview_gutter_uses_tmux_margin_when_columns_overflow() -> Result
         &mut parser,
         IO_TIMEOUT,
         "choose-tree preview with left chevron",
-        |content| content.contains("sort: index") && content.lines().any(|line| line.contains('<')),
+        |content| {
+            content.contains("sort: index") && content.lines().any(line_has_isolated_left_chevron)
+        },
     )?;
-    let chevron_line = tree
+    let Some(chevron_line) = tree
         .lines()
-        .find(|line| line.contains('<'))
-        .ok_or("choose-tree preview did not render a left chevron")?;
-    assert!(
-        chevron_line.contains(" < "),
-        "choose-tree preview gutter should leave a tmux-style margin around the left chevron, got:\n{tree}"
-    );
+        .find(|line| line_has_isolated_left_chevron(line))
+    else {
+        return Err(format!(
+            "choose-tree preview did not render an isolated left chevron:\n{tree}"
+        )
+        .into());
+    };
     assert!(
         !chevron_line.contains("│<") && !chevron_line.contains("<│"),
         "choose-tree preview gutter should not glue the left chevron to the box border, got:\n{tree}"

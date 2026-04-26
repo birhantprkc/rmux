@@ -2,7 +2,12 @@
 set -euo pipefail
 
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
-RMUX="$ROOT/target/debug/rmux"
+TARGET_DIR="${CARGO_TARGET_DIR:-$ROOT/target}"
+case "$TARGET_DIR" in
+    /*) ;;
+    *) TARGET_DIR="$ROOT/$TARGET_DIR" ;;
+esac
+RMUX="$TARGET_DIR/debug/rmux"
 SMOKE_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/rmux-smoke-deep.XXXXXX")"
 export RMUX_TMPDIR="$SMOKE_ROOT"
 
@@ -108,8 +113,10 @@ assert_process_formats() {
 
 assert_no_rmux_processes_for_root() {
     command -v pgrep >/dev/null 2>&1 || return 0
-    if pgrep -af rmux | grep -F "$SMOKE_ROOT" >/dev/null 2>&1; then
-        pgrep -af rmux | grep -F "$SMOKE_ROOT" >&2 || true
+    local matches
+    matches="$(pgrep -af -- "$RMUX" | grep -F "$SMOKE_ROOT" || true)"
+    if [[ -n "$matches" ]]; then
+        printf '%s\n' "$matches" >&2
         fail "rmux process still references $SMOKE_ROOT"
     fi
 }
