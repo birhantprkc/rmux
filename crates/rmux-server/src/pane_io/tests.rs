@@ -12,8 +12,8 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::{mpsc, watch};
 
 use super::{
-    forward_attach, open_pane_writer, pane_output_channel, process_socket_messages,
-    should_emit_overlay, AttachControl, AttachTarget, LiveAttachInputContext, OverlayFrame,
+    forward_attach, pane_output_channel, process_socket_messages, should_emit_overlay,
+    AttachControl, AttachTarget, LiveAttachInputContext, OverlayFrame,
 };
 use crate::handler::RequestHandler;
 use crate::outer_terminal::{OuterTerminal, OuterTerminalContext};
@@ -70,9 +70,6 @@ async fn typed_keystroke_wire_reaches_stub_and_acknowledges() {
         .await;
 
     let (stream, mut peer) = tokio::net::UnixStream::pair().expect("attach stream pair");
-    let pty = PtyPair::open().expect("open pty pair");
-    let pane_master = pty.into_master();
-    let pane_writer = open_pane_writer(pane_master).expect("open pane writer");
     let keystroke = AttachedKeystroke::new(b"\x1b[A".to_vec());
     let encoded = encode_attach_message(&AttachMessage::Keystroke(keystroke))
         .expect("encode typed keystroke");
@@ -88,7 +85,6 @@ async fn typed_keystroke_wire_reaches_stub_and_acknowledges() {
     process_socket_messages(
         &mut decoder,
         &stream,
-        &pane_writer,
         &live_input,
         &mut pending_input,
         &mut locked,
@@ -133,9 +129,6 @@ async fn mouse_keystroke_wire_does_not_error_or_drop_the_attach() {
         .await;
 
     let (stream, mut peer) = tokio::net::UnixStream::pair().expect("attach stream pair");
-    let pty = PtyPair::open().expect("open pty pair");
-    let pane_master = pty.into_master();
-    let pane_writer = open_pane_writer(pane_master).expect("open pane writer");
     let keystroke = AttachedKeystroke::new(b"\x1b[<0;10;10M".to_vec());
     let encoded = encode_attach_message(&AttachMessage::Keystroke(keystroke))
         .expect("encode mouse keystroke");
@@ -151,7 +144,6 @@ async fn mouse_keystroke_wire_does_not_error_or_drop_the_attach() {
     process_socket_messages(
         &mut decoder,
         &stream,
-        &pane_writer,
         &live_input,
         &mut pending_input,
         &mut locked,

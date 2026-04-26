@@ -1,9 +1,8 @@
 use rmux_core::PaneId;
 use rmux_proto::TerminalSize;
-use rmux_pty::{PtyIo, PtyMaster};
+use rmux_pty::PtyMaster;
 use std::sync::atomic::{AtomicBool, AtomicU64};
 use std::sync::Arc;
-use tokio::io::unix::AsyncFd;
 use tokio::sync::{broadcast, mpsc};
 
 use crate::control::ControlModeUpgrade;
@@ -177,7 +176,7 @@ pub(crate) struct AttachSessionUpgrade {
 
 pub(super) struct OpenAttachTarget {
     pub(super) session_name: rmux_proto::SessionName,
-    pub(super) pane_writer: AsyncFd<PtyIo>,
+    pub(super) _pane_master: PtyMaster,
     pub(super) pane_output: Option<PaneOutputReceiver>,
     pub(super) render_frame: Vec<u8>,
     pub(super) outer_terminal: OuterTerminal,

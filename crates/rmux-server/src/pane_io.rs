@@ -1,11 +1,9 @@
 use rmux_ipc::LocalStream;
 use rmux_proto::{AttachFrameDecoder, AttachMessage};
-use rmux_pty::PtyIo;
 use std::collections::VecDeque;
 use std::io;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
-use tokio::io::unix::AsyncFd;
 use tokio::sync::{mpsc, watch};
 
 const READ_BUFFER_SIZE: usize = 8192;
@@ -32,8 +30,6 @@ pub(crate) use types::{
     OverlayFrame, PaneAlertCallback, PaneAlertEvent, PaneExitCallback, PaneExitEvent,
     PaneOutputSender,
 };
-#[cfg(test)]
-use wire::open_pane_writer;
 use wire::{
     emit_attach_bytes, emit_attach_frame, emit_attach_message, emit_attach_stop,
     emit_detached_message, emit_exited_message, emit_render_frame, invalid_attach_message,
@@ -121,7 +117,6 @@ pub(crate) async fn forward_attach(
             process_socket_messages(
                 &mut decoder,
                 &stream,
-                &current_target.pane_writer,
                 &live_input,
                 &mut pending_input,
                 &mut locked,
@@ -358,7 +353,6 @@ pub(crate) async fn forward_attach(
                             process_socket_messages(
                                 &mut decoder,
                                 &stream,
-                                &current_target.pane_writer,
                                 &live_input,
                                 &mut pending_input,
                                 &mut locked,
@@ -387,7 +381,6 @@ pub(crate) async fn forward_attach(
 async fn process_socket_messages(
     decoder: &mut AttachFrameDecoder,
     stream: &LocalStream,
-    _pane_writer: &AsyncFd<PtyIo>,
     live_input: &LiveAttachInputContext,
     pending_input: &mut Vec<u8>,
     locked: &mut bool,

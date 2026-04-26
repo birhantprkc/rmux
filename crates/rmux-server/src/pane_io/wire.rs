@@ -22,11 +22,9 @@ pub(super) fn open_attach_target(target: AttachTarget) -> io::Result<OpenAttachT
         cursor_style,
         persistent_overlay_state_id,
     } = target;
-    let pane_writer = open_pane_writer(pane_master)?;
-
     Ok(OpenAttachTarget {
         session_name,
-        pane_writer,
+        _pane_master: pane_master,
         pane_output: Some(pane_output.subscribe()),
         render_frame,
         outer_terminal,
