@@ -5,27 +5,44 @@ use std::ffi::OsString;
 use std::io;
 #[cfg(windows)]
 use std::io::{Read, Write};
+#[cfg(windows)]
+use std::os::windows::io::AsRawHandle;
 #[cfg(unix)]
 use std::path::Path;
+#[cfg(windows)]
+use std::ptr::null_mut;
 use std::time::Duration;
 use std::time::Instant;
 
 use crate::LocalEndpoint;
+use rmux_os::identity::UserIdentity;
 
 #[cfg(windows)]
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 #[cfg(windows)]
 use tokio::net::windows::named_pipe::{ClientOptions, NamedPipeClient};
 #[cfg(windows)]
-use windows_sys::Win32::Foundation::ERROR_PIPE_BUSY;
+use windows_sys::Win32::Foundation::{CloseHandle, LocalFree, ERROR_PIPE_BUSY, HANDLE};
+#[cfg(windows)]
+use windows_sys::Win32::Security::Authorization::ConvertSidToStringSidW;
+#[cfg(windows)]
+use windows_sys::Win32::Security::{
+    GetTokenInformation, RevertToSelf, TokenUser, TOKEN_QUERY, TOKEN_USER,
+};
+#[cfg(windows)]
+use windows_sys::Win32::System::Pipes::{GetNamedPipeClientProcessId, ImpersonateNamedPipeClient};
+#[cfg(windows)]
+use windows_sys::Win32::System::Threading::{GetCurrentThread, OpenThreadToken};
 
 /// Identity of a connected local peer.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PeerIdentity {
     /// Peer process id.
     pub pid: u32,
     /// Peer Unix user id.
     pub uid: u32,
+    /// Platform user identity for the peer.
+    pub user: UserIdentity,
 }
 
 /// Async local byte stream used by the server runtime.
@@ -57,16 +74,169 @@ impl PeerIdentity {
         let uid = credentials.uid();
         let pid = u32::try_from(pid)
             .map_err(|_| io::Error::other(format!("invalid unix peer pid {pid}")))?;
-        Ok(Self { pid, uid })
+        Ok(Self {
+            pid,
+            uid,
+            user: UserIdentity::Uid(uid),
+        })
     }
 }
 
 #[cfg(windows)]
 impl PeerIdentity {
-    pub(crate) fn current_process() -> Self {
-        Self {
-            pid: std::process::id(),
-            uid: 0,
+    pub(crate) fn from_windows_pipe(stream: &LocalStream) -> io::Result<Self> {
+        let handle = stream.as_raw_handle() as HANDLE;
+        let pid = named_pipe_client_pid(handle)?;
+        let user = named_pipe_client_user(handle)?;
+        Ok(Self { pid, uid: 0, user })
+    }
+}
+
+#[cfg(windows)]
+fn named_pipe_client_pid(handle: HANDLE) -> io::Result<u32> {
+    let mut pid = 0;
+    let ok = unsafe {
+        // SAFETY: handle is a connected named-pipe server handle and pid is a valid out pointer.
+        GetNamedPipeClientProcessId(handle, &mut pid)
+    };
+    if ok == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(pid)
+}
+
+#[cfg(windows)]
+fn named_pipe_client_user(handle: HANDLE) -> io::Result<UserIdentity> {
+    let ok = unsafe {
+        // SAFETY: handle is a connected named-pipe server handle. RevertGuard
+        // below restores the server thread token after querying the client token.
+        ImpersonateNamedPipeClient(handle)
+    };
+    if ok == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    let _guard = RevertGuard;
+
+    let mut token = null_mut();
+    let ok = unsafe {
+        // SAFETY: GetCurrentThread returns a valid pseudo-handle and token is a valid out pointer.
+        OpenThreadToken(GetCurrentThread(), TOKEN_QUERY, 1, &mut token)
+    };
+    if ok == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    let token = OwnedHandle(token);
+    token_user_identity(token.get())
+}
+
+#[cfg(windows)]
+fn token_user_identity(token: HANDLE) -> io::Result<UserIdentity> {
+    let mut needed = 0;
+    unsafe {
+        // SAFETY: This first call intentionally requests the required byte count.
+        GetTokenInformation(token, TokenUser, null_mut(), 0, &mut needed);
+    }
+    if needed == 0 {
+        return Err(io::Error::last_os_error());
+    }
+
+    let mut buffer = vec![0_u8; usize::try_from(needed).map_err(|_| io::ErrorKind::InvalidData)?];
+    let ok = unsafe {
+        // SAFETY: buffer is writable for the byte count reported by Windows.
+        GetTokenInformation(
+            token,
+            TokenUser,
+            buffer.as_mut_ptr().cast(),
+            needed,
+            &mut needed,
+        )
+    };
+    if ok == 0 {
+        return Err(io::Error::last_os_error());
+    }
+
+    let token_user = unsafe {
+        // SAFETY: A successful TokenUser query initializes TOKEN_USER at the buffer start.
+        &*(buffer.as_ptr().cast::<TOKEN_USER>())
+    };
+    sid_to_identity(token_user.User.Sid)
+}
+
+#[cfg(windows)]
+fn sid_to_identity(sid: *mut core::ffi::c_void) -> io::Result<UserIdentity> {
+    let mut sid_string = null_mut();
+    let ok = unsafe {
+        // SAFETY: sid comes from TOKEN_USER and sid_string is freed with LocalFree on success.
+        ConvertSidToStringSidW(sid, &mut sid_string)
+    };
+    if ok == 0 {
+        return Err(io::Error::last_os_error());
+    }
+
+    let value = wide_ptr_to_string(sid_string.cast_const());
+    unsafe {
+        // SAFETY: sid_string was allocated by ConvertSidToStringSidW.
+        LocalFree(sid_string.cast());
+    }
+    value.map(|sid| UserIdentity::Sid(sid.into_boxed_str()))
+}
+
+#[cfg(windows)]
+fn wide_ptr_to_string(ptr: *const u16) -> io::Result<String> {
+    if ptr.is_null() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "Windows returned a null SID string",
+        ));
+    }
+
+    let mut len = 0;
+    unsafe {
+        // SAFETY: Windows returns a nul-terminated UTF-16 string on success.
+        while *ptr.add(len) != 0 {
+            len += 1;
+        }
+        String::from_utf16(std::slice::from_raw_parts(ptr, len)).map_err(|error| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("invalid UTF-16 SID string: {error}"),
+            )
+        })
+    }
+}
+
+#[cfg(windows)]
+struct OwnedHandle(HANDLE);
+
+#[cfg(windows)]
+impl OwnedHandle {
+    fn get(&self) -> HANDLE {
+        self.0
+    }
+}
+
+#[cfg(windows)]
+impl Drop for OwnedHandle {
+    fn drop(&mut self) {
+        if !self.0.is_null() {
+            unsafe {
+                // SAFETY: self.0 is a handle returned by OpenThreadToken.
+                CloseHandle(self.0);
+            }
+        }
+    }
+}
+
+#[cfg(windows)]
+struct RevertGuard;
+
+#[cfg(windows)]
+impl Drop for RevertGuard {
+    fn drop(&mut self) {
+        unsafe {
+            // SAFETY: this thread may have been impersonating; RevertToSelf is idempotent enough
+            // for cleanup here and there is no useful recovery path during Drop.
+            RevertToSelf();
         }
     }
 }

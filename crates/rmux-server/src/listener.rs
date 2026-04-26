@@ -398,6 +398,7 @@ mod tests {
                 PeerIdentity {
                     pid: std::process::id(),
                     uid: rmux_os::identity::real_user_id(),
+                    user: rmux_os::identity::UserIdentity::Uid(rmux_os::identity::real_user_id()),
                 },
                 handler,
                 shutdown_rx,

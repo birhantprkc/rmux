@@ -82,13 +82,14 @@ async fn accept_impl(listener: &LocalListener) -> io::Result<(LocalStream, PeerI
     };
 
     server.connect().await?;
+    let peer = PeerIdentity::from_windows_pipe(&server);
     let next = create_server(&listener.pipe_name, false)?;
     {
         let mut pending = listener.pending.lock().await;
         *pending = Some(next);
     }
 
-    Ok((server, PeerIdentity::current_process()))
+    Ok((server, peer?))
 }
 
 #[cfg(windows)]

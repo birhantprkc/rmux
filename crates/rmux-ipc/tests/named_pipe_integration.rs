@@ -5,6 +5,7 @@ use std::io::{Read, Write};
 use std::time::Duration;
 
 use rmux_ipc::{connect_blocking, endpoint_for_label, LocalListener};
+use rmux_os::identity::UserIdentity;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::time::timeout;
 
@@ -16,6 +17,7 @@ async fn named_pipe_roundtrip_uses_bound_endpoint() -> std::io::Result<()> {
     let accept = tokio::spawn(async move {
         let (mut stream, peer) = listener.accept().await?;
         assert_ne!(peer.pid, 0);
+        assert!(matches!(peer.user, UserIdentity::Sid(ref sid) if sid.starts_with("S-")));
 
         let mut request = [0_u8; 4];
         stream.read_exact(&mut request).await?;
