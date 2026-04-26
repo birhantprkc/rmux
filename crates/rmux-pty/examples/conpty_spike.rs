@@ -35,7 +35,7 @@ use windows_sys::Win32::System::Threading::{
     GetProcessHandleCount, InitializeProcThreadAttributeList, UpdateProcThreadAttribute,
     WaitForSingleObject, CREATE_UNICODE_ENVIRONMENT, EXTENDED_STARTUPINFO_PRESENT,
     LPPROC_THREAD_ATTRIBUTE_LIST, PROCESS_INFORMATION, PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE,
-    STARTUPINFOEXW, STARTUPINFOW,
+    STARTF_USESTDHANDLES, STARTUPINFOEXW, STARTUPINFOW,
 };
 
 #[cfg(not(windows))]
@@ -50,6 +50,8 @@ async fn main() -> io::Result<()> {
     match args.mode {
         Mode::TokioNamedPipe => run_tokio_named_pipe(args).await,
         Mode::BlockingAnonymousPipe => run_blocking_anonymous_pipe(args).await,
+        Mode::PlainCreateProcess => run_plain_create_process(args),
+        Mode::PlainStartupInfoEx => run_plain_startupinfoex(args),
     }
 }
 
@@ -111,6 +113,7 @@ async fn run_tokio_named_pipe(args: Args) -> io::Result<()> {
         "  saw_ready_marker: {}",
         String::from_utf8_lossy(&output).contains("RMUX_CONPTY_READY")
     );
+    println!("  output_preview: {}", preview_bytes(&output));
 
     Ok(())
 }
@@ -164,6 +167,41 @@ async fn run_blocking_anonymous_pipe(args: Args) -> io::Result<()> {
         "  saw_ready_marker: {}",
         String::from_utf8_lossy(&output).contains("RMUX_CONPTY_READY")
     );
+    println!("  output_preview: {}", preview_bytes(&output));
+
+    Ok(())
+}
+
+#[cfg(windows)]
+fn run_plain_create_process(args: Args) -> io::Result<()> {
+    run_process_control("plain-create-process", args, false)
+}
+
+#[cfg(windows)]
+fn run_plain_startupinfoex(args: Args) -> io::Result<()> {
+    run_process_control("plain-startupinfoex", args, true)
+}
+
+#[cfg(windows)]
+fn run_process_control(mode: &str, args: Args, extended_startup: bool) -> io::Result<()> {
+    let before_handles = current_process_handle_count()?;
+    let started = Instant::now();
+    let (process, _thread) = spawn_cmd_control(args.lines, extended_startup)?;
+    let launch_elapsed = started.elapsed();
+    let status = wait_for_process(&process)?;
+    drop(process);
+    let after_handles = current_process_handle_count()?;
+
+    println!("rmux ConPTY spike");
+    println!("  mode: {mode}");
+    println!("  command: cmd.exe");
+    println!("  lines requested: {}", args.lines);
+    println!("  exit code: {}", status);
+    println!("  launch_ms: {:.3}", millis(launch_elapsed));
+    println!(
+        "  handle_delta: {}",
+        i64::from(after_handles) - i64::from(before_handles)
+    );
 
     Ok(())
 }
@@ -182,6 +220,8 @@ struct Args {
 enum Mode {
     TokioNamedPipe,
     BlockingAnonymousPipe,
+    PlainCreateProcess,
+    PlainStartupInfoEx,
 }
 
 #[cfg(windows)]
@@ -265,24 +305,7 @@ impl TokioNamedPipeConpty {
     }
 
     fn wait(&mut self) -> io::Result<u32> {
-        let wait = unsafe { WaitForSingleObject(self.process.as_raw_handle() as HANDLE, 5_000) };
-        if wait == WAIT_FAILED {
-            return Err(last_os_error());
-        }
-        if wait != WAIT_OBJECT_0 {
-            return Err(io::Error::new(
-                io::ErrorKind::TimedOut,
-                "ConPTY child did not exit within spike timeout",
-            ));
-        }
-
-        let mut exit_code = 0_u32;
-        let ok =
-            unsafe { GetExitCodeProcess(self.process.as_raw_handle() as HANDLE, &mut exit_code) };
-        if ok == 0 {
-            return Err(last_os_error());
-        }
-        Ok(exit_code)
+        wait_for_process(&self.process)
     }
 }
 
@@ -332,24 +355,7 @@ impl BlockingAnonymousPipeConpty {
     }
 
     fn wait(&mut self) -> io::Result<u32> {
-        let wait = unsafe { WaitForSingleObject(self.process.as_raw_handle() as HANDLE, 5_000) };
-        if wait == WAIT_FAILED {
-            return Err(last_os_error());
-        }
-        if wait != WAIT_OBJECT_0 {
-            return Err(io::Error::new(
-                io::ErrorKind::TimedOut,
-                "ConPTY child did not exit within spike timeout",
-            ));
-        }
-
-        let mut exit_code = 0_u32;
-        let ok =
-            unsafe { GetExitCodeProcess(self.process.as_raw_handle() as HANDLE, &mut exit_code) };
-        if ok == 0 {
-            return Err(last_os_error());
-        }
-        Ok(exit_code)
+        wait_for_process(&self.process)
     }
 }
 
@@ -482,7 +488,7 @@ impl AttributeList {
                 list,
                 0,
                 PROC_THREAD_ATTRIBUTE_PSEUDOCONSOLE as usize,
-                &hpc as *const HPCON as *const _,
+                hpc as *const _,
                 size_of::<HPCON>(),
                 null_mut(),
                 null(),
@@ -515,6 +521,7 @@ fn spawn_cmd(
 ) -> io::Result<(OwnedHandle, OwnedHandle)> {
     let mut startup = STARTUPINFOEXW::default();
     startup.StartupInfo.cb = size_of::<STARTUPINFOEXW>() as u32;
+    startup.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
     startup.lpAttributeList = attributes;
 
     let mut process_info = PROCESS_INFORMATION::default();
@@ -547,6 +554,76 @@ fn spawn_cmd(
     let process = unsafe { OwnedHandle::from_raw_handle(process_info.hProcess as _) };
     let thread = unsafe { OwnedHandle::from_raw_handle(process_info.hThread as _) };
     Ok((process, thread))
+}
+
+#[cfg(windows)]
+fn spawn_cmd_control(
+    lines: u32,
+    extended_startup: bool,
+) -> io::Result<(OwnedHandle, OwnedHandle)> {
+    let mut startup = STARTUPINFOEXW::default();
+    startup.StartupInfo.cb = if extended_startup {
+        size_of::<STARTUPINFOEXW>() as u32
+    } else {
+        size_of::<STARTUPINFOW>() as u32
+    };
+
+    let mut process_info = PROCESS_INFORMATION::default();
+    let cmd_path = std::env::var_os("COMSPEC")
+        .unwrap_or_else(|| OsString::from("C:\\Windows\\System32\\cmd.exe"));
+    let command = format!(
+        "\"{}\" /C \"echo RMUX_CONPTY_READY&for /L %i in (1,1,{lines}) do @echo rmux-spike-%i\"",
+        cmd_path.to_string_lossy()
+    );
+    let program = wide_null(cmd_path);
+    let mut command_line = wide_null(OsString::from(command));
+    let creation_flags = if extended_startup {
+        EXTENDED_STARTUPINFO_PRESENT | CREATE_UNICODE_ENVIRONMENT
+    } else {
+        CREATE_UNICODE_ENVIRONMENT
+    };
+    let created = unsafe {
+        CreateProcessW(
+            program.as_ptr(),
+            command_line.as_mut_ptr(),
+            null(),
+            null(),
+            0,
+            creation_flags,
+            null(),
+            null(),
+            &startup.StartupInfo as *const STARTUPINFOW,
+            &mut process_info,
+        )
+    };
+    if created == 0 {
+        return Err(last_os_error());
+    }
+
+    let process = unsafe { OwnedHandle::from_raw_handle(process_info.hProcess as _) };
+    let thread = unsafe { OwnedHandle::from_raw_handle(process_info.hThread as _) };
+    Ok((process, thread))
+}
+
+#[cfg(windows)]
+fn wait_for_process(process: &OwnedHandle) -> io::Result<u32> {
+    let wait = unsafe { WaitForSingleObject(process.as_raw_handle() as HANDLE, 5_000) };
+    if wait == WAIT_FAILED {
+        return Err(last_os_error());
+    }
+    if wait != WAIT_OBJECT_0 {
+        return Err(io::Error::new(
+            io::ErrorKind::TimedOut,
+            "ConPTY child did not exit within spike timeout",
+        ));
+    }
+
+    let mut exit_code = 0_u32;
+    let ok = unsafe { GetExitCodeProcess(process.as_raw_handle() as HANDLE, &mut exit_code) };
+    if ok == 0 {
+        return Err(last_os_error());
+    }
+    Ok(exit_code)
 }
 
 #[cfg(windows)]
@@ -586,6 +663,8 @@ fn parse_mode(args: &mut impl Iterator<Item = String>) -> Mode {
     match value.as_str() {
         "tokio-named-pipe-overlapped" => Mode::TokioNamedPipe,
         "blocking-anonymous-pipe" => Mode::BlockingAnonymousPipe,
+        "plain-create-process" => Mode::PlainCreateProcess,
+        "plain-startupinfoex" => Mode::PlainStartupInfoEx,
         _ => {
             eprintln!("invalid mode: {value}");
             print_usage();
@@ -597,7 +676,7 @@ fn parse_mode(args: &mut impl Iterator<Item = String>) -> Mode {
 #[cfg(windows)]
 fn print_usage() {
     eprintln!(
-        "usage: cargo run -p rmux-pty --example conpty_spike -- [--mode MODE] [--lines N] [--cols N] [--rows N]\n\nmodes:\n  tokio-named-pipe-overlapped\n  blocking-anonymous-pipe"
+        "usage: cargo run -p rmux-pty --example conpty_spike -- [--mode MODE] [--lines N] [--cols N] [--rows N]\n\nmodes:\n  tokio-named-pipe-overlapped\n  blocking-anonymous-pipe\n  plain-create-process\n  plain-startupinfoex"
     );
 }
 
@@ -653,6 +732,16 @@ fn mib_per_second(bytes: usize, elapsed: Duration) -> f64 {
         return 0.0;
     }
     bytes as f64 / (1024.0 * 1024.0) / elapsed.as_secs_f64()
+}
+
+#[cfg(windows)]
+fn preview_bytes(bytes: &[u8]) -> String {
+    bytes
+        .iter()
+        .take(160)
+        .flat_map(|byte| std::ascii::escape_default(*byte))
+        .map(char::from)
+        .collect()
 }
 
 #[cfg(windows)]
