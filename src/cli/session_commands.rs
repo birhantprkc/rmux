@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use rmux_client::{connect_or_absent, detect_context, ClientContext, ConnectResult};
+use rmux_client::{connect, detect_context, ClientContext};
 use rmux_proto::request::{
     AttachSessionExt2Request, KillSessionRequest, ListSessionsRequest, NewSessionExtRequest,
     SwitchClientExt3Request,
@@ -100,37 +100,32 @@ pub(super) fn run_has_session(
     args: SessionTargetArgs,
     socket_path: &Path,
 ) -> Result<i32, ExitFailure> {
-    match connect_or_absent(socket_path).map_err(ExitFailure::from_client)? {
-        ConnectResult::Absent => Ok(1),
-        ConnectResult::Connected(mut connection) => {
-            let missing_message = args
-                .target
-                .as_ref()
-                .map(|target| format!("can't find session: {target}"))
-                .unwrap_or_else(|| "can't find session".to_owned());
-            let target = match args.target.as_ref() {
-                Some(target) => resolve_session_target_spec(&mut connection, target, false)
-                    .map_err(map_has_session_lookup_error)?,
-                None => resolve_current_session_target(&mut connection)?,
-            };
-            let response = connection
-                .has_session(target)
-                .map_err(ExitFailure::from_client)?;
+    let mut connection = connect(socket_path)
+        .map_err(|error| ExitFailure::from_client_connect(socket_path, error))?;
+    let missing_message = args
+        .target
+        .as_ref()
+        .map(|target| format!("can't find session: {target}"))
+        .unwrap_or_else(|| "can't find session".to_owned());
+    let target = match args.target.as_ref() {
+        Some(target) => resolve_session_target_spec(&mut connection, target, false)
+            .map_err(map_has_session_lookup_error)?,
+        None => resolve_current_session_target(&mut connection)?,
+    };
+    let response = connection
+        .has_session(target)
+        .map_err(ExitFailure::from_client)?;
 
-            match response {
-                Response::HasSession(response) => {
-                    if response.exists {
-                        Ok(0)
-                    } else {
-                        Err(ExitFailure::new(1, missing_message))
-                    }
-                }
-                Response::Error(ErrorResponse { error }) => {
-                    Err(ExitFailure::new(1, error.to_string()))
-                }
-                other => Err(unexpected_response("has-session", &other)),
+    match response {
+        Response::HasSession(response) => {
+            if response.exists {
+                Ok(0)
+            } else {
+                Err(ExitFailure::new(1, missing_message))
             }
         }
+        Response::Error(ErrorResponse { error }) => Err(ExitFailure::new(1, error.to_string())),
+        other => Err(unexpected_response("has-session", &other)),
     }
 }
 
@@ -142,26 +137,20 @@ pub(super) fn run_kill_session(
     args: KillSessionArgs,
     socket_path: &Path,
 ) -> Result<i32, ExitFailure> {
-    match connect_or_absent(socket_path).map_err(ExitFailure::from_client)? {
-        ConnectResult::Absent => Ok(1),
-        ConnectResult::Connected(mut connection) => {
-            let target = resolve_session_target_or_current(
-                &mut connection,
-                args.target.as_ref(),
-                "kill-session",
-            )
+    let mut connection = connect(socket_path)
+        .map_err(|error| ExitFailure::from_client_connect(socket_path, error))?;
+    let target =
+        resolve_session_target_or_current(&mut connection, args.target.as_ref(), "kill-session")
             .map_err(map_kill_session_lookup_error)?;
-            let response = connection
-                .kill_session(KillSessionRequest {
-                    target,
-                    kill_all_except_target: args.kill_all_except_target,
-                    clear_alerts: args.clear_alerts,
-                })
-                .map_err(ExitFailure::from_client)?;
-            expect_command_success(response, "kill-session")?;
-            Ok(0)
-        }
-    }
+    let response = connection
+        .kill_session(KillSessionRequest {
+            target,
+            kill_all_except_target: args.kill_all_except_target,
+            clear_alerts: args.clear_alerts,
+        })
+        .map_err(ExitFailure::from_client)?;
+    expect_command_success(response, "kill-session")?;
+    Ok(0)
 }
 
 fn map_kill_session_lookup_error(error: ExitFailure) -> ExitFailure {

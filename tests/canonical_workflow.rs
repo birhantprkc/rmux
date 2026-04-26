@@ -268,8 +268,9 @@ fn assert_absent_session(output: &Output) {
         "absent has-session should not produce stdout"
     );
     assert!(
-        stderr(output).is_empty(),
-        "absent has-session should not produce stderr"
+        stderr(output).contains("no server running on "),
+        "absent has-session should report absent server, got: {}",
+        stderr(output)
     );
 }
 
@@ -305,8 +306,9 @@ fn assert_cleanup_kill_result(output: &Output) {
             );
             let stderr_text = stderr(output);
             assert!(
-                stderr_text.is_empty() || stderr_text.contains("session not found: workflow"),
-                "cleanup kill should be silent on an absent server or report a missing session, got: {stderr_text}",
+                stderr_text.contains("no server running on ")
+                    || stderr_text.contains("session not found: workflow"),
+                "cleanup kill should report an absent server or a missing session, got: {stderr_text}",
             );
         }
         other => panic!(

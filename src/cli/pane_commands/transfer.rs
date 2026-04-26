@@ -76,7 +76,8 @@ pub(in crate::cli) fn run_break_pane(
     socket_path: &Path,
 ) -> Result<i32, ExitFailure> {
     run_command_resolved(socket_path, "break-pane", move |connection| {
-        let source = resolve_pane_target_spec(connection, &args.source)?;
+        let source =
+            resolve_pane_target_or_current(connection, args.source.as_ref(), "break-pane")?;
         let target = args
             .target
             .as_ref()

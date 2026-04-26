@@ -148,6 +148,21 @@ fn select_pane_accepts_session_targets_like_tmux() {
 }
 
 #[test]
+fn select_pane_accepts_bare_current_target_like_tmux() {
+    let cli = parse_args(&["select-pane"]).unwrap();
+    match cli.command.expect("parsed command") {
+        super::super::Command::SelectPane(args) => {
+            assert!(args.target.is_none());
+            assert!(args.direction().is_none());
+            assert!(!args.mark);
+            assert!(!args.clear_marked);
+            assert!(args.title.is_none());
+        }
+        _ => panic!("expected SelectPane command"),
+    }
+}
+
+#[test]
 fn select_pane_accepts_non_zero_window_targets() {
     let cli = parse_args(&["select-pane", "-t", "alpha:5.2"]).unwrap();
     match cli.command.expect("parsed command") {

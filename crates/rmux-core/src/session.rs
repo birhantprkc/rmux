@@ -331,6 +331,7 @@ impl Session {
             .expect("addressed session window must exist");
 
         match adjustment {
+            ResizePaneAdjustment::NoOp => {}
             ResizePaneAdjustment::AbsoluteWidth { columns } => {
                 let _ = window.resize_pane_width(pane_index, columns);
             }

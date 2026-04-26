@@ -228,7 +228,10 @@ fn break_pane_accepts_optional_target_and_name() {
 
     match cli.command.expect("parsed command") {
         super::super::Command::BreakPane(args) => {
-            assert_eq!(args.source.to_string(), "alpha:1.2");
+            assert_eq!(
+                args.source.as_ref().expect("source exists").to_string(),
+                "alpha:1.2"
+            );
             assert_eq!(args.target.expect("target exists").to_string(), "beta:4");
             assert_eq!(args.name.as_deref(), Some("logs"));
         }

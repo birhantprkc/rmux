@@ -597,7 +597,11 @@ fn binary_roundtrip_covers_the_public_window_command_surface() -> Result<(), Box
     let has_after_kill = harness.run(&["has-session", "-t", "alpha"])?;
     assert_eq!(has_after_kill.status.code(), Some(1));
     assert!(stdout(&has_after_kill).is_empty());
-    assert!(stderr(&has_after_kill).is_empty());
+    assert!(
+        stderr(&has_after_kill).contains("no server running on "),
+        "has-session after the last session is killed should report absent server, got: {}",
+        stderr(&has_after_kill)
+    );
 
     terminate_child(daemon.child_mut())?;
     Ok(())

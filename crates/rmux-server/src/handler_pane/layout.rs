@@ -252,6 +252,7 @@ impl RequestHandler {
             let mut state = self.state.lock().await;
             match state.mutate_session_and_resize_terminals(&session_name, |session| {
                 match adjustment {
+                    ResizePaneAdjustment::NoOp => {}
                     ResizePaneAdjustment::Zoom => {
                         session.toggle_zoom_in_window(window_index, pane_index)?;
                     }
@@ -275,7 +276,9 @@ impl RequestHandler {
             }
         };
 
-        if matches!(response, Response::ResizePane(_)) {
+        if matches!(response, Response::ResizePane(_))
+            && !matches!(adjustment, ResizePaneAdjustment::NoOp)
+        {
             self.emit(LifecycleEvent::WindowLayoutChanged {
                 target: WindowTarget::with_window(session_name.clone(), window_index),
             })

@@ -435,6 +435,8 @@ pub enum ResizePaneAdjustment {
         /// The requested column delta.
         cells: u16,
     },
+    /// Resolves the target and reports success without changing layout.
+    NoOp,
 }
 
 fn parse_pane_index(target: &str, pane_index: &str) -> Result<u32, RmuxError> {

@@ -193,21 +193,33 @@ fn help_produces_display_help_kind() {
 }
 
 #[test]
-fn resize_pane_requires_columns() {
-    let error = parse_args(&["resize-pane", "-t", "alpha:0.0"]).unwrap_err();
-    assert_eq!(
-        error.kind(),
-        clap::error::ErrorKind::MissingRequiredArgument
-    );
+fn resize_pane_accepts_target_only_noop_like_tmux() {
+    let cli = parse_args(&["resize-pane", "-t", "alpha:0.0"]).unwrap();
+    match cli.command.expect("parsed command") {
+        super::super::Command::ResizePane(args) => {
+            assert_eq!(args.target.expect("target").to_string(), "alpha:0.0");
+            assert!(args.down.is_none());
+            assert!(args.up.is_none());
+            assert!(args.left.is_none());
+            assert!(args.right.is_none());
+            assert!(args.columns.is_none());
+            assert!(args.rows.is_none());
+            assert!(!args.zoom);
+        }
+        other => panic!("expected ResizePane command, got {other:?}"),
+    }
 }
 
 #[test]
-fn select_layout_requires_layout_argument() {
-    let error = parse_args(&["select-layout", "-t", "alpha:0"]).unwrap_err();
-    assert_eq!(
-        error.kind(),
-        clap::error::ErrorKind::MissingRequiredArgument
-    );
+fn select_layout_accepts_target_only_noop_like_tmux() {
+    let cli = parse_args(&["select-layout", "-t", "alpha:0"]).unwrap();
+    match cli.command.expect("parsed command") {
+        super::super::Command::SelectLayout(args) => {
+            assert_eq!(args.target.expect("target").to_string(), "alpha:0");
+            assert!(args.layout.is_none());
+        }
+        other => panic!("expected SelectLayout command, got {other:?}"),
+    }
 }
 
 #[test]
@@ -216,7 +228,7 @@ fn select_layout_preserves_layout_argument_for_runtime_validation() {
 
     match cli.command.expect("parsed command") {
         super::super::Command::SelectLayout(args) => {
-            assert_eq!(args.layout, "invalid-layout");
+            assert_eq!(args.layout.as_deref(), Some("invalid-layout"));
         }
         _ => panic!("expected SelectLayout command"),
     }
@@ -235,7 +247,7 @@ fn select_layout_accepts_tmux_layout_names() {
 
         match cli.command.expect("parsed command") {
             super::super::Command::SelectLayout(args) => {
-                assert_eq!(args.layout, layout_name);
+                assert_eq!(args.layout.as_deref(), Some(layout_name));
             }
             _ => panic!("expected SelectLayout command"),
         }

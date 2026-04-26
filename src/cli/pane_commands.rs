@@ -250,12 +250,10 @@ pub(super) fn run_resize_pane(
         ResizePaneAdjustment::AbsoluteWidth { columns }
     } else if let Some(rows) = args.rows {
         ResizePaneAdjustment::AbsoluteHeight { rows }
-    } else {
-        debug_assert!(
-            args.zoom,
-            "clap adjustment group must require one adjustment"
-        );
+    } else if args.zoom {
         ResizePaneAdjustment::Zoom
+    } else {
+        ResizePaneAdjustment::NoOp
     };
 
     run_command_resolved(socket_path, "resize-pane", move |connection| {

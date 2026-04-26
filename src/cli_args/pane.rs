@@ -190,7 +190,7 @@ pub(crate) struct BreakPaneArgs {
     #[arg(short = 'P', action = ArgAction::SetTrue)]
     pub(crate) print_target: bool,
     #[arg(short = 's', value_parser = parse_target_spec)]
-    pub(crate) source: TargetSpec,
+    pub(crate) source: Option<TargetSpec>,
     #[arg(short = 't', value_parser = parse_target_spec)]
     pub(crate) target: Option<TargetSpec>,
     #[arg(short = 'n')]
@@ -229,13 +229,13 @@ pub(crate) struct RespawnPaneArgs {
 pub(crate) struct SelectLayoutArgs {
     #[arg(short = 't', value_parser = parse_target_spec)]
     pub(crate) target: Option<TargetSpec>,
-    pub(crate) layout: String,
+    pub(crate) layout: Option<String>,
 }
 
 #[derive(Debug, Clone, Args)]
 #[command(group(
     ArgGroup::new("adjustment")
-        .required(true)
+        .required(false)
         .multiple(false)
         .args(["down", "up", "left", "right", "columns", "rows", "zoom"])
 ))]
@@ -385,18 +385,6 @@ impl JoinPaneArgs {
 
 impl SelectPaneArgs {
     fn validate(self) -> Result<Self, clap::Error> {
-        if self.target.is_none()
-            && !self.mark
-            && !self.clear_marked
-            && self.title.is_none()
-            && self.direction().is_none()
-        {
-            return Err(clap::Error::raw(
-                clap::error::ErrorKind::MissingRequiredArgument,
-                "the following required arguments were not provided:\n  -t <TARGET>",
-            ));
-        }
-
         if self.direction().is_some() && (self.mark || self.clear_marked || self.title.is_some()) {
             return Err(clap::Error::raw(
                 clap::error::ErrorKind::ArgumentConflict,

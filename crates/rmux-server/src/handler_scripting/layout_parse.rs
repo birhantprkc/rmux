@@ -6,7 +6,7 @@ use rmux_proto::{
 };
 
 use super::tokens::CommandTokens;
-use super::values::{missing_argument, parse_u16, parse_u64};
+use super::values::{parse_u16, parse_u64};
 use super::{
     implicit_pane_target, implicit_session_name, implicit_window_target,
     is_unsupported_named_layout, parse_layout_name, parse_pane_target, parse_select_layout_target,
@@ -239,8 +239,7 @@ pub(super) fn parse_resize_pane(
 
     Ok(Request::ResizePane(ResizePaneRequest {
         target: target.unwrap_or(implicit_pane_target(sessions, find_context, "resize-pane")?),
-        adjustment: adjustment
-            .ok_or_else(|| missing_argument("resize-pane", "-x, -y, -U, -D, -L, -R, or -Z"))?,
+        adjustment: adjustment.unwrap_or(ResizePaneAdjustment::NoOp),
     }))
 }
 

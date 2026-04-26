@@ -361,7 +361,7 @@ checksum = "dc897dd8d9e8bd1ed8cdad82b5966c3e0ecae09fb1907d58efaa013543185d0a"
 
 [[package]]
 name = "rmux"
-version = "0.0.2"
+version = "3.9.2"
 dependencies = [
  "clap",
  "libc",
@@ -376,7 +376,7 @@ dependencies = [
 
 [[package]]
 name = "rmux-client"
-version = "0.0.2"
+version = "3.9.2"
 dependencies = [
  "libc",
  "rmux-core",
@@ -390,7 +390,7 @@ dependencies = [
 
 [[package]]
 name = "rmux-core"
-version = "0.0.2"
+version = "3.9.2"
 dependencies = [
  "chrono",
  "regex",
@@ -400,7 +400,7 @@ dependencies = [
 
 [[package]]
 name = "rmux-os"
-version = "0.0.2"
+version = "3.9.2"
 dependencies = [
  "libc",
  "rustix",
@@ -408,7 +408,7 @@ dependencies = [
 
 [[package]]
 name = "rmux-proto"
-version = "0.0.2"
+version = "3.9.2"
 dependencies = [
  "bincode",
  "serde",
@@ -417,7 +417,7 @@ dependencies = [
 
 [[package]]
 name = "rmux-pty"
-version = "0.0.2"
+version = "3.9.2"
 dependencies = [
  "libc",
  "rustix",
@@ -425,7 +425,7 @@ dependencies = [
 
 [[package]]
 name = "rmux-server"
-version = "0.0.2"
+version = "3.9.2"
 dependencies = [
  "chrono",
  "glob",

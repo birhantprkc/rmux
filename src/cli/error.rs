@@ -64,7 +64,7 @@ impl ExitFailure {
                 .as_deref()
                 .is_some_and(|default_path| default_path == socket_path)
             {
-                return Self::new(1, format!("no server running on {}", socket_path.display()));
+                return Self::no_server_running(socket_path);
             }
             if let ClientError::Io(io_error) = &error {
                 return Self::new(
@@ -79,6 +79,10 @@ impl ExitFailure {
         }
 
         Self::from_client(error)
+    }
+
+    pub(super) fn no_server_running(socket_path: &Path) -> Self {
+        Self::new(1, format!("no server running on {}", socket_path.display()))
     }
 
     pub(super) fn from_auto_start(error: AutoStartError) -> Self {

@@ -6,6 +6,7 @@ use crate::layout::{LayoutDirection, LayoutOptions, LayoutTree};
 impl Window {
     pub(crate) fn resize_main_pane(&mut self, adjustment: ResizePaneAdjustment) {
         match adjustment {
+            ResizePaneAdjustment::NoOp => return,
             ResizePaneAdjustment::AbsoluteWidth { columns } => {
                 self.auto_unzoom();
                 if self.custom_layout {
@@ -165,7 +166,8 @@ impl Window {
             ResizePaneAdjustment::Right { cells } => (LayoutDirection::LeftRight, i32::from(cells)),
             ResizePaneAdjustment::AbsoluteWidth { .. }
             | ResizePaneAdjustment::AbsoluteHeight { .. }
-            | ResizePaneAdjustment::Zoom => return false,
+            | ResizePaneAdjustment::Zoom
+            | ResizePaneAdjustment::NoOp => return false,
         };
 
         self.auto_unzoom();

@@ -12,8 +12,8 @@ use rmux_proto::{ClientTerminalContext, ControlMode, ErrorResponse, Response};
 
 use super::{
     connect_with_startserver, current_terminal_size, expect_command_success,
-    finish_command_success, resolve_session_target_spec, run_command, run_payload_command_resolved,
-    unexpected_response, ExitFailure, StartupOptions,
+    finish_command_success, list_session_names, resolve_session_target_spec, run_command,
+    run_payload_command_resolved, unexpected_response, ExitFailure, StartupOptions,
 };
 use crate::cli_args::{
     AttachSessionArgs, Cli, DetachClientArgs, ListClientsArgs, RefreshClientArgs,
@@ -54,6 +54,10 @@ pub(super) fn run_attach_session(
     let nested_skip_environment_update = args.skip_environment_update;
     let nested_toggle_read_only = args.read_only;
     let mut connection = connect_with_startserver(socket_path, startup)?;
+    if list_session_names(&mut connection)?.is_empty() {
+        let _ = connection.kill_server();
+        return Err(ExitFailure::new(1, "no sessions"));
+    }
     let target = args
         .target
         .as_ref()

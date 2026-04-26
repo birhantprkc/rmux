@@ -1,3 +1,4 @@
+use rmux_client::Connection;
 use rmux_proto::types::OptionScopeSelector;
 use rmux_proto::{SetOptionMode, Target, WindowTarget};
 
@@ -226,40 +227,41 @@ fn resolve_set_option_scope(
 pub(super) fn resolve_show_options_scope(
     command: ShowOptionsCommandKind,
     args: &ShowOptionsArgs,
-) -> Result<OptionScopeSelector, ExitFailure> {
+) -> Result<ShowOptionsScope, ExitFailure> {
     let force_window = matches!(command, ShowOptionsCommandKind::ShowWindowOptions);
     let command_name = command.command_name();
     if args.server {
-        return Ok(OptionScopeSelector::ServerGlobal);
+        return Ok(OptionScopeSelector::ServerGlobal.into());
     }
 
     match (args.window || force_window, args.pane, args.target.as_ref()) {
-        (true, false, _) if args.global => Ok(OptionScopeSelector::WindowGlobal),
+        (true, false, _) if args.global => Ok(OptionScopeSelector::WindowGlobal.into()),
         (true, false, Some(Target::Session(session_name))) => Ok(OptionScopeSelector::Window(
             rmux_proto::WindowTarget::new(session_name.clone()),
-        )),
+        )
+        .into()),
         (true, false, Some(Target::Window(target))) => {
-            Ok(OptionScopeSelector::Window(target.clone()))
+            Ok(OptionScopeSelector::Window(target.clone()).into())
         }
         (true, false, Some(Target::Pane(target))) => Ok(OptionScopeSelector::Window(
             rmux_proto::WindowTarget::with_window(
                 target.session_name().clone(),
                 target.window_index(),
             ),
-        )),
+        )
+        .into()),
+        (true, false, None) if force_window => Ok(ShowOptionsScope::CurrentWindow),
         (true, false, None) => Err(ExitFailure::new(
             1,
-            if force_window {
-                format!("{command_name} requires a target or -g")
-            } else {
-                format!("{command_name} -w requires a target")
-            },
+            format!("{command_name} -w requires a target"),
         )),
         (false, true, _) if args.global => Err(ExitFailure::new(
             1,
             format!("{command_name} does not support combining -g and -p"),
         )),
-        (false, true, Some(Target::Pane(target))) => Ok(OptionScopeSelector::Pane(target.clone())),
+        (false, true, Some(Target::Pane(target))) => {
+            Ok(OptionScopeSelector::Pane(target.clone()).into())
+        }
         (false, true, Some(_)) => Err(ExitFailure::new(
             1,
             format!("{command_name} -p requires a pane target"),
@@ -272,22 +274,50 @@ pub(super) fn resolve_show_options_scope(
             OptionScopeSelector::WindowGlobal
         } else {
             OptionScopeSelector::SessionGlobal
-        }),
+        }
+        .into()),
         (false, false, Some(Target::Session(session_name))) => {
-            Ok(OptionScopeSelector::Session(session_name.clone()))
+            Ok(OptionScopeSelector::Session(session_name.clone()).into())
         }
         (false, false, Some(Target::Window(target))) => {
-            Ok(OptionScopeSelector::Window(target.clone()))
+            Ok(OptionScopeSelector::Window(target.clone()).into())
         }
-        (false, false, Some(Target::Pane(target))) => Ok(OptionScopeSelector::Pane(target.clone())),
-        (false, false, None) => Err(ExitFailure::new(
-            1,
-            if force_window {
-                format!("{command_name} requires a target or -g")
-            } else {
-                format!("{command_name} requires -g, -s, or a target")
-            },
-        )),
+        (false, false, Some(Target::Pane(target))) => {
+            Ok(OptionScopeSelector::Pane(target.clone()).into())
+        }
+        (false, false, None) if force_window => Ok(ShowOptionsScope::CurrentWindow),
+        (false, false, None) => Ok(ShowOptionsScope::CurrentSession),
         (true, true, _) => unreachable!("clap scope group prevents -w and -p together"),
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum ShowOptionsScope {
+    Resolved(OptionScopeSelector),
+    CurrentSession,
+    CurrentWindow,
+}
+
+impl ShowOptionsScope {
+    pub(super) fn resolve(
+        self,
+        connection: &mut Connection,
+        command_name: &str,
+    ) -> Result<OptionScopeSelector, ExitFailure> {
+        match self {
+            Self::Resolved(scope) => Ok(scope),
+            Self::CurrentSession => super::super::resolve_current_session_target(connection)
+                .map(OptionScopeSelector::Session),
+            Self::CurrentWindow => {
+                super::super::resolve_window_target_or_current(connection, None, command_name)
+                    .map(OptionScopeSelector::Window)
+            }
+        }
+    }
+}
+
+impl From<OptionScopeSelector> for ShowOptionsScope {
+    fn from(scope: OptionScopeSelector) -> Self {
+        Self::Resolved(scope)
     }
 }

@@ -399,6 +399,39 @@ fn server_access_list_succeeds_against_running_server() -> Result<(), Box<dyn Er
 }
 
 #[test]
+fn current_target_commands_accept_tmux_style_implicit_defaults() -> Result<(), Box<dyn Error>> {
+    let harness = CliHarness::new("implicit-current-cli")?;
+    let _daemon = harness.start_hidden_daemon()?;
+
+    assert_success(&harness.run(&["new-session", "-d", "-s", "alpha"])?);
+    for args in [
+        &["select-pane"][..],
+        &["resize-pane"][..],
+        &["select-layout"][..],
+    ] {
+        let output = harness.run(args)?;
+        assert_success(&output);
+    }
+    for args in [
+        &["show-options"][..],
+        &["show-window-options"][..],
+        &["show-environment"][..],
+        &["show-hooks"][..],
+    ] {
+        let output = harness.run(args)?;
+        assert_eq!(output.status.code(), Some(0));
+        assert!(stderr(&output).is_empty());
+    }
+
+    assert_success(&harness.run(&["break-pane"])?);
+    let windows = harness.run(&["list-windows", "-t", "alpha", "-F", "#{window_index}"])?;
+    assert_eq!(windows.status.code(), Some(0));
+    assert!(stderr(&windows).is_empty());
+    assert_eq!(stdout(&windows).lines().count(), 1);
+    Ok(())
+}
+
+#[test]
 fn attach_session_is_a_start_server_command() -> Result<(), Box<dyn Error>> {
     let harness = CliHarness::new("attach-start-server")?;
     let _cleanup = harness.auto_start_cleanup()?;
@@ -408,8 +441,9 @@ fn attach_session_is_a_start_server_command() -> Result<(), Box<dyn Error>> {
     })?;
 
     assert_eq!(output.status.code(), Some(1));
+    assert_eq!(stderr(&output).trim(), "no sessions");
     assert!(harness.pid_path().exists());
-    assert!(harness.socket_path().exists());
+    wait_for_socket_cleanup(harness.socket_path())?;
     Ok(())
 }
 
@@ -680,25 +714,25 @@ fn new_session_trailing_shell_command_spawns_initial_pane_command() -> Result<()
 }
 
 #[test]
-fn has_session_is_silent_when_the_server_is_absent() -> Result<(), Box<dyn Error>> {
+fn has_session_reports_absent_server_when_the_server_is_absent() -> Result<(), Box<dyn Error>> {
     let harness = CliHarness::new("has-session-absent")?;
     let output = harness.run(&["has-session", "-t", "alpha"])?;
 
     assert_eq!(output.status.code(), Some(1));
     assert!(stdout(&output).is_empty());
-    assert!(stderr(&output).is_empty());
+    assert_absent_server_error(&output, &harness, "has-session");
     assert!(!harness.socket_path().exists());
     Ok(())
 }
 
 #[test]
-fn kill_session_is_silent_when_the_server_is_absent() -> Result<(), Box<dyn Error>> {
+fn kill_session_reports_absent_server_when_the_server_is_absent() -> Result<(), Box<dyn Error>> {
     let harness = CliHarness::new("kill-session-absent")?;
     let output = harness.run(&["kill-session", "-t", "alpha"])?;
 
     assert_eq!(output.status.code(), Some(1));
     assert!(stdout(&output).is_empty());
-    assert!(stderr(&output).is_empty());
+    assert_absent_server_error(&output, &harness, "kill-session");
     assert!(!harness.socket_path().exists());
     Ok(())
 }
@@ -756,7 +790,11 @@ fn rmux_environment_socket_is_used_when_no_socket_flag_is_given() -> Result<(), 
 
     assert_eq!(output.status.code(), Some(1));
     assert!(stdout(&output).is_empty());
-    assert!(stderr(&output).is_empty());
+    assert!(
+        stderr(&output).contains("error connecting to "),
+        "RMUX socket environment should keep explicit-socket connect diagnostics, got: {}",
+        stderr(&output)
+    );
     Ok(())
 }
 
@@ -1222,25 +1260,12 @@ fn window_option_commands_surface_command_name_in_scope_errors() -> Result<(), B
     let show_no_scope = harness.run(&["show-window-options"])?;
     assert_eq!(show_no_scope.status.code(), Some(1));
     assert!(stdout(&show_no_scope).is_empty());
-    assert!(
-        stderr(&show_no_scope).contains("show-window-options requires a target or -g"),
-        "show-window-options with no scope should surface the command name, got: {}",
-        stderr(&show_no_scope)
-    );
-    assert!(
-        !stderr(&show_no_scope).contains("show-options"),
-        "show-window-options scope errors must not leak show-options: {}",
-        stderr(&show_no_scope)
-    );
+    assert_absent_server_error(&show_no_scope, &harness, "show-window-options");
     assert!(!harness.socket_path().exists());
 
     let show_options_no_scope = harness.run(&["show-options"])?;
     assert_eq!(show_options_no_scope.status.code(), Some(1));
-    assert!(
-        stderr(&show_options_no_scope).contains("show-options requires -g, -s, or a target"),
-        "show-options with no scope should mention -g/-s/target, got: {}",
-        stderr(&show_options_no_scope)
-    );
+    assert_absent_server_error(&show_options_no_scope, &harness, "show-options");
     assert!(!harness.socket_path().exists());
 
     let show_options_w_no_target = harness.run(&["show-options", "-w"])?;
@@ -1277,6 +1302,8 @@ fn simple_commands_report_absent_server_on_stderr() -> Result<(), Box<dyn Error>
         ("next-window", &["-t", "alpha"]),
         ("previous-window", &["-t", "alpha"]),
         ("last-window", &["-t", "alpha"]),
+        ("has-session", &[]),
+        ("kill-session", &[]),
         ("list-sessions", &[]),
         ("list-windows", &["-t", "alpha"]),
         ("move-window", &["-s", "alpha:0", "-t", "alpha:1"]),

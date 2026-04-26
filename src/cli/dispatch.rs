@@ -1,6 +1,7 @@
 use std::io::Read;
 use std::path::Path;
 
+use rmux_client::connect;
 use rmux_proto::{ClientTerminalContext, CopyModeRequest, ErrorResponse, LayoutName, Response};
 
 use super::capture_pane::{build_capture_pane_request, capture_pane_request};
@@ -141,6 +142,9 @@ fn dispatch(
             })
         }
         Command::SelectLayout(args) => {
+            if args.layout.is_none() {
+                return run_select_layout_noop(args.target.as_ref(), socket_path);
+            }
             run_command_resolved(socket_path, "select-layout", move |connection| {
                 let target = match args.target.as_ref() {
                     Some(target) => resolve_select_layout_target_spec(connection, target)?,
@@ -148,17 +152,18 @@ fn dispatch(
                         resolve_window_target_or_current(connection, None, "select-layout")?,
                     ),
                 };
-                match args.layout.parse::<LayoutName>() {
-                    Ok(layout) if is_unsupported_named_layout(layout) => {
-                        Err(invalid_layout_failure(&args.layout))
+                let layout = args.layout.as_ref().expect("handled no-op layout");
+                match layout.parse::<LayoutName>() {
+                    Ok(parsed) if is_unsupported_named_layout(parsed) => {
+                        Err(invalid_layout_failure(layout))
                     }
-                    Ok(layout) => connection
-                        .select_layout(target, layout)
+                    Ok(parsed) => connection
+                        .select_layout(target, parsed)
                         .map_err(ExitFailure::from_client),
-                    Err(_) if looks_like_custom_layout(&args.layout) => connection
-                        .select_custom_layout(target, args.layout.clone())
+                    Err(_) if looks_like_custom_layout(layout) => connection
+                        .select_custom_layout(target, layout.clone())
                         .map_err(ExitFailure::from_client),
-                    Err(_) => Err(invalid_layout_failure(&args.layout)),
+                    Err(_) => Err(invalid_layout_failure(layout)),
                 }
             })
         }
@@ -488,6 +493,23 @@ fn dispatch(
             ),
         )),
     }
+}
+
+fn run_select_layout_noop(
+    target: Option<&crate::cli_args::TargetSpec>,
+    socket_path: &Path,
+) -> Result<i32, ExitFailure> {
+    let mut connection = connect(socket_path)
+        .map_err(|error| ExitFailure::from_client_connect(socket_path, error))?;
+    match target {
+        Some(target) => {
+            let _ = resolve_select_layout_target_spec(&mut connection, target)?;
+        }
+        None => {
+            let _ = resolve_window_target_or_current(&mut connection, None, "select-layout")?;
+        }
+    }
+    Ok(0)
 }
 
 fn is_unsupported_named_layout(layout: LayoutName) -> bool {

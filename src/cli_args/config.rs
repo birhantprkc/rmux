@@ -190,7 +190,7 @@ impl ShowOptionsArgs {
     disable_help_flag = true,
     group(
         ArgGroup::new("scope")
-            .required(true)
+            .required(false)
             .multiple(false)
             .args(["global", "target"])
     )
@@ -237,7 +237,7 @@ pub(crate) struct SetHookArgs {
 #[derive(Debug, Clone, Args)]
 #[command(group(
     ArgGroup::new("scope")
-        .required(true)
+        .required(false)
         .multiple(true)
         .args(["global", "target"])
 ))]

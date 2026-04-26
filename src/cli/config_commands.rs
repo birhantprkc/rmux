@@ -5,7 +5,9 @@ mod options;
 
 use rmux_proto::{HookLifecycle, ScopeSelector, SetEnvironmentMode, Target};
 
-use crate::cli::{run_command, run_payload_command, ExitFailure};
+use crate::cli::{
+    resolve_current_session_target, run_command, run_payload_command_resolved, ExitFailure,
+};
 use crate::cli_args::{
     build_scope, SetEnvironmentArgs, SetHookArgs, SetOptionArgs, SetOptionCommandKind,
     ShowEnvironmentArgs, ShowHooksArgs, ShowOptionsArgs, ShowOptionsCommandKind,
@@ -63,9 +65,13 @@ pub(crate) fn run_show_options(
     socket_path: &Path,
 ) -> Result<i32, ExitFailure> {
     let scope = resolve_show_options_scope(command, &args)?;
+    let command_name = command.command_name();
 
-    run_payload_command(socket_path, command.command_name(), move |connection| {
-        connection.show_options(scope, args.name, args.value_only)
+    run_payload_command_resolved(socket_path, command_name, move |connection| {
+        let scope = scope.resolve(connection, command_name)?;
+        connection
+            .show_options(scope, args.name, args.value_only)
+            .map_err(ExitFailure::from_client)
     })
 }
 
@@ -73,13 +79,11 @@ pub(crate) fn run_show_environment(
     args: ShowEnvironmentArgs,
     socket_path: &Path,
 ) -> Result<i32, ExitFailure> {
-    run_payload_command(socket_path, "show-environment", move |connection| {
-        connection.show_environment(
-            build_scope(args.global, args.target),
-            args.name,
-            args.hidden,
-            args.shell_format,
-        )
+    run_payload_command_resolved(socket_path, "show-environment", move |connection| {
+        let scope = resolve_show_environment_scope(connection, args.global, args.target)?;
+        connection
+            .show_environment(scope, args.name, args.hidden, args.shell_format)
+            .map_err(ExitFailure::from_client)
     })
 }
 
@@ -104,14 +108,39 @@ pub(crate) fn run_set_hook(args: SetHookArgs, socket_path: &Path) -> Result<i32,
 
 pub(crate) fn run_show_hooks(args: ShowHooksArgs, socket_path: &Path) -> Result<i32, ExitFailure> {
     let scope = resolve_show_hooks_scope(args.global, args.window, args.pane, args.target)?;
-    if let Some(hook) = args.hook {
-        rmux_core::validate_hook_scope(hook, &scope)
-            .map_err(|error| ExitFailure::new(1, error.to_string()))?;
-    }
+    let hook = args.hook;
+    let window = args.window;
+    let pane = args.pane;
 
-    run_payload_command(socket_path, "show-hooks", move |connection| {
-        connection.show_hooks(scope, args.window, args.pane, args.hook)
+    run_payload_command_resolved(socket_path, "show-hooks", move |connection| {
+        let scope = match scope {
+            ShowHooksScope::Resolved(scope) => scope,
+            ShowHooksScope::CurrentSession => {
+                ScopeSelector::Session(resolve_current_session_target(connection)?)
+            }
+        };
+        if let Some(hook) = hook {
+            rmux_core::validate_hook_scope(hook, &scope)
+                .map_err(|error| ExitFailure::new(1, error.to_string()))?;
+        }
+        connection
+            .show_hooks(scope, window, pane, hook)
+            .map_err(ExitFailure::from_client)
     })
+}
+
+fn resolve_show_environment_scope(
+    connection: &mut rmux_client::Connection,
+    global: bool,
+    target: Option<rmux_proto::SessionName>,
+) -> Result<ScopeSelector, ExitFailure> {
+    if global {
+        return Ok(ScopeSelector::Global);
+    }
+    target
+        .map(ScopeSelector::Session)
+        .map(Ok)
+        .unwrap_or_else(|| resolve_current_session_target(connection).map(ScopeSelector::Session))
 }
 
 fn resolve_set_environment_mode(
@@ -204,13 +233,22 @@ fn resolve_show_hooks_scope(
     window: bool,
     pane: bool,
     target: Option<Target>,
-) -> Result<ScopeSelector, ExitFailure> {
+) -> Result<ShowHooksScope, ExitFailure> {
     if global {
         reject_target("show-hooks", target.as_ref(), "-g")?;
-        return Ok(ScopeSelector::Global);
+        return Ok(ShowHooksScope::Resolved(ScopeSelector::Global));
     }
 
-    resolve_hook_scope("show-hooks", false, window, pane, target)
+    if !window && !pane && target.is_none() {
+        return Ok(ShowHooksScope::CurrentSession);
+    }
+
+    resolve_hook_scope("show-hooks", false, window, pane, target).map(ShowHooksScope::Resolved)
+}
+
+enum ShowHooksScope {
+    Resolved(ScopeSelector),
+    CurrentSession,
 }
 
 fn reject_target(command: &str, target: Option<&Target>, flag: &str) -> Result<(), ExitFailure> {
@@ -226,7 +264,7 @@ fn reject_target(command: &str, target: Option<&Target>, flag: &str) -> Result<(
 
 #[cfg(test)]
 mod tests {
-    use super::{resolve_set_option_args, resolve_show_options_scope};
+    use super::{options::ShowOptionsScope, resolve_set_option_args, resolve_show_options_scope};
     use crate::cli_args::{
         SetOptionArgs, SetOptionCommandKind, ShowOptionsArgs, ShowOptionsCommandKind,
     };
@@ -358,7 +396,10 @@ mod tests {
         )
         .expect("window-target show-window-options resolves");
 
-        assert_eq!(scope, OptionScopeSelector::Window(window));
+        assert_eq!(
+            scope,
+            ShowOptionsScope::Resolved(OptionScopeSelector::Window(window))
+        );
     }
 
     #[test]
@@ -378,7 +419,10 @@ mod tests {
         )
         .expect("show-window-options -g resolves");
 
-        assert_eq!(scope, OptionScopeSelector::WindowGlobal);
+        assert_eq!(
+            scope,
+            ShowOptionsScope::Resolved(OptionScopeSelector::WindowGlobal)
+        );
     }
 
     #[test]
@@ -400,7 +444,10 @@ mod tests {
         )
         .expect("show-options -gsv -t resolves");
 
-        assert_eq!(scope, OptionScopeSelector::ServerGlobal);
+        assert_eq!(
+            scope,
+            ShowOptionsScope::Resolved(OptionScopeSelector::ServerGlobal)
+        );
     }
 
     #[test]
@@ -422,7 +469,10 @@ mod tests {
         )
         .expect("show-window-options -g -t resolves");
 
-        assert_eq!(scope, OptionScopeSelector::WindowGlobal);
+        assert_eq!(
+            scope,
+            ShowOptionsScope::Resolved(OptionScopeSelector::WindowGlobal)
+        );
     }
 
     #[test]

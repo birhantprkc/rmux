@@ -19,7 +19,7 @@ fn select_layout_accepts_all_standard_layout_names() {
 
         match cli.command.expect("parsed command") {
             super::Command::SelectLayout(args) => {
-                assert_eq!(args.layout, layout_name);
+                assert_eq!(args.layout.as_deref(), Some(layout_name));
             }
             _ => panic!("expected SelectLayout command"),
         }

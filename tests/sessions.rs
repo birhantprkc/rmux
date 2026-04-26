@@ -339,7 +339,11 @@ fn session_targeting_resolves_unique_prefixes_for_session_commands() -> Result<(
     let missing = harness.run(&["has-session", "-t", "gamma"])?;
     assert_eq!(missing.status.code(), Some(1));
     assert!(stdout(&missing).is_empty());
-    assert!(stderr(&missing).is_empty());
+    assert!(
+        stderr(&missing).contains("no server running on "),
+        "has-session after the last session is killed should report absent server, got: {}",
+        stderr(&missing)
+    );
     Ok(())
 }
 

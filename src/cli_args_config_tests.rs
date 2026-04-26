@@ -9,6 +9,7 @@ fn parse_args(args: &[&str]) -> Result<super::Cli, clap::Error> {
 #[test]
 fn show_options_accepts_global_server_window_pane_and_value_only_scopes() {
     for args in [
+        &["show-options"][..],
         &["show-options", "-g"][..],
         &["show-options", "-g", "-t", "alpha", "status"][..],
         &["show-options", "-g", "@status-line"][..],
@@ -21,6 +22,7 @@ fn show_options_accepts_global_server_window_pane_and_value_only_scopes() {
         &["show-options", "-p", "-t", "alpha:2.3", "-v"][..],
         &["show-options", "-t", "alpha"][..],
         &["show-window-options", "-t", "alpha:2"][..],
+        &["show-window-options"][..],
         &[
             "show-window-options",
             "-g",
@@ -48,8 +50,14 @@ fn show_options_rejects_conflicting_scope_flags() {
 
 #[test]
 fn show_environment_accepts_global_and_session_scope() {
+    parse_args(&["show-environment"]).expect("default show-environment parses");
     parse_args(&["show-environment", "-g"]).expect("global show-environment parses");
     parse_args(&["show-environment", "-t", "alpha"]).expect("session show-environment parses");
+}
+
+#[test]
+fn show_hooks_accepts_default_current_session_scope() {
+    parse_args(&["show-hooks"]).expect("default show-hooks parses");
 }
 
 #[test]
