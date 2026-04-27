@@ -53,7 +53,8 @@ mod pane_io;
 #[cfg(any(unix, windows))]
 #[cfg_attr(windows, allow(dead_code))]
 mod pane_screen_state;
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
+#[cfg_attr(windows, allow(dead_code))]
 mod pane_terminal_lookup;
 #[cfg(unix)]
 mod pane_terminal_process;
