@@ -73,7 +73,8 @@ mod server_access;
 #[cfg(any(unix, windows))]
 #[cfg_attr(windows, allow(dead_code))]
 mod status_ranges;
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
+#[cfg_attr(windows, allow(dead_code))]
 mod terminal;
 #[cfg(any(unix, windows))]
 #[cfg_attr(windows, allow(dead_code))]

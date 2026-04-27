@@ -16,7 +16,7 @@ static UNIQUE_ID: AtomicUsize = AtomicUsize::new(0);
 fn spawn_hook_command_requires_a_runtime_before_launching_a_child() {
     let output_path = unique_output_path("no-runtime");
 
-    let error = spawn_hook_command(format!("printf launched > {}", shell_quote(&output_path)))
+    let error = spawn_hook_command(hook_write_command(&output_path, "launched"))
         .expect_err("spawning a hook without a runtime must fail");
 
     assert_eq!(error.kind(), io::ErrorKind::Other);
@@ -31,10 +31,7 @@ fn spawn_hook_command_requires_a_runtime_before_launching_a_child() {
 async fn spawn_hook_command_runs_compound_shell_commands() -> Result<(), Box<dyn Error>> {
     let output_path = unique_output_path("compound-command");
 
-    spawn_hook_command(format!(
-        "printf first > {path} && printf second >> {path}",
-        path = shell_quote(&output_path)
-    ))?;
+    spawn_hook_command(hook_append_command(&output_path, "first", "second"))?;
 
     wait_for_file_contents(&output_path, "firstsecond").await?;
     fs::remove_file(&output_path)?;
@@ -59,7 +56,7 @@ fn terminal_profile_sets_rmux_term_shell_and_pane_context() {
         .set(
             ScopeSelector::Global,
             OptionName::DefaultShell,
-            "/bin/sh".to_owned(),
+            default_shell_string(),
             SetOptionMode::Replace,
         )
         .expect("default-shell succeeds");
@@ -69,11 +66,11 @@ fn terminal_profile_sets_rmux_term_shell_and_pane_context() {
         &options,
         &session_name,
         7,
-        Path::new("/tmp/rmux.sock"),
+        temp_socket_path().as_path(),
         true,
         Some(&["FOO=bar".to_owned()]),
         Some(rmux_core::PaneId::new(3)),
-        Some(Path::new("/tmp")),
+        Some(std::env::temp_dir().as_path()),
     )
     .expect("profile");
     assert_eq!(profile.environment_value("TERM"), Some("tmux-256color"));
@@ -83,16 +80,24 @@ fn terminal_profile_sets_rmux_term_shell_and_pane_context() {
         Some(env!("CARGO_PKG_VERSION"))
     );
     assert_eq!(profile.environment_value("COLORTERM"), Some("truecolor"));
-    let expected_rmux = format!("/tmp/rmux.sock,{},7", std::process::id());
+    let socket_path = temp_socket_path();
+    let expected_rmux = format!("{},{},7", socket_path.display(), std::process::id());
     assert_eq!(
         profile.environment_value("RMUX"),
         Some(expected_rmux.as_str())
     );
     assert_eq!(profile.environment_value("RMUX_PANE"), Some("%3"));
     assert_eq!(profile.environment_value("FOO"), Some("bar"));
-    assert_eq!(profile.environment_value("SHELL"), Some("/bin/sh"));
-    assert_eq!(profile.environment_value("PWD"), Some("/tmp"));
-    assert_eq!(profile.cwd(), Path::new("/tmp"));
+    let expected_cwd = std::env::temp_dir();
+    assert_eq!(
+        profile.environment_value("SHELL"),
+        Some(default_shell_string().as_str())
+    );
+    assert_eq!(
+        profile.environment_value("PWD"),
+        Some(expected_cwd.to_string_lossy().as_ref())
+    );
+    assert_eq!(profile.cwd(), expected_cwd.as_path());
 }
 
 #[test]
@@ -331,8 +336,77 @@ fn unique_output_path(label: &str) -> PathBuf {
     path
 }
 
-fn shell_quote(path: &Path) -> String {
+fn temp_socket_path() -> PathBuf {
+    std::env::temp_dir().join("rmux.sock")
+}
+
+fn default_shell_string() -> String {
+    #[cfg(unix)]
+    {
+        "/bin/sh".to_owned()
+    }
+    #[cfg(windows)]
+    {
+        std::env::var("COMSPEC").unwrap_or_else(|_| "cmd.exe".to_owned())
+    }
+}
+
+fn hook_write_command(path: &Path, text: &str) -> String {
+    #[cfg(unix)]
+    {
+        format!("printf {} > {}", shell_quote(text), shell_quote_path(path))
+    }
+    #[cfg(windows)]
+    {
+        format!(
+            "[IO.File]::WriteAllText({}, {})",
+            powershell_quote_path(path),
+            powershell_quote(text)
+        )
+    }
+}
+
+fn hook_append_command(path: &Path, first: &str, second: &str) -> String {
+    #[cfg(unix)]
+    {
+        format!(
+            "printf {} > {} && printf {} >> {}",
+            shell_quote(first),
+            shell_quote_path(path),
+            shell_quote(second),
+            shell_quote_path(path)
+        )
+    }
+    #[cfg(windows)]
+    {
+        format!(
+            "[IO.File]::WriteAllText({}, {}); [IO.File]::AppendAllText({}, {})",
+            powershell_quote_path(path),
+            powershell_quote(first),
+            powershell_quote_path(path),
+            powershell_quote(second)
+        )
+    }
+}
+
+#[cfg(unix)]
+fn shell_quote_path(path: &Path) -> String {
     format!("'{}'", path.display().to_string().replace('\'', "'\\''"))
+}
+
+#[cfg(unix)]
+fn shell_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
+}
+
+#[cfg(windows)]
+fn powershell_quote_path(path: &Path) -> String {
+    powershell_quote(&path.display().to_string())
+}
+
+#[cfg(windows)]
+fn powershell_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "''"))
 }
 
 async fn wait_for_file_contents(path: &Path, expected: &str) -> Result<(), Box<dyn Error>> {

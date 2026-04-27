@@ -1,7 +1,9 @@
 use std::collections::HashMap;
 use std::ffi::OsString;
+#[cfg(unix)]
 use std::fs;
 use std::io;
+#[cfg(unix)]
 use std::os::fd::BorrowedFd;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -9,6 +11,7 @@ use std::process::{Command, Stdio};
 use rmux_core::{EnvironmentStore, OptionStore, PaneId};
 use rmux_proto::{OptionName, RmuxError, SessionName};
 use rmux_pty::{ChildCommand, PtyChild, PtyMaster, TerminalSize as PtyTerminalSize};
+#[cfg(unix)]
 use rustix::process::getuid;
 use tokio::runtime::Handle;
 
@@ -213,12 +216,32 @@ pub(crate) fn spawn_pane_process(
 
 fn spawn_command(profile: &TerminalProfile, command: Option<&[String]>) -> ChildCommand {
     match command {
-        Some([single]) => ChildCommand::new(profile.shell()).arg("-c").arg(single),
+        Some([single]) => shell_child_command(profile.shell(), single),
         Some(argv) if !argv.is_empty() => ChildCommand::new(&argv[0]).args(&argv[1..]),
+        #[cfg(unix)]
         _ => ChildCommand::new(profile.shell()).arg0(login_shell_argv0(profile.shell())),
+        #[cfg(windows)]
+        _ => ChildCommand::new(profile.shell()),
     }
 }
 
+#[cfg(unix)]
+fn shell_child_command(shell: &Path, command: &str) -> ChildCommand {
+    ChildCommand::new(shell).arg("-c").arg(command)
+}
+
+#[cfg(windows)]
+fn shell_child_command(shell: &Path, command: &str) -> ChildCommand {
+    match executable_name(shell).as_deref() {
+        Some("powershell.exe" | "powershell" | "pwsh.exe" | "pwsh") => ChildCommand::new(shell)
+            .arg("-NoProfile")
+            .arg("-Command")
+            .arg(command),
+        _ => ChildCommand::new(shell).arg("/C").arg(command),
+    }
+}
+
+#[cfg(unix)]
 fn login_shell_argv0(shell: &Path) -> OsString {
     let name = shell
         .file_name()
@@ -231,13 +254,7 @@ fn login_shell_argv0(shell: &Path) -> OsString {
 
 pub(crate) fn spawn_hook_command(command: String) -> io::Result<()> {
     let handle = Handle::try_current().map_err(io::Error::other)?;
-    let child = Command::new("sh")
-        .arg("-c")
-        .arg(command)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()?;
+    let child = hook_command(command).spawn()?;
 
     handle.spawn_blocking(move || {
         let mut child = child;
@@ -245,6 +262,33 @@ pub(crate) fn spawn_hook_command(command: String) -> io::Result<()> {
     });
 
     Ok(())
+}
+
+fn hook_command(command: String) -> Command {
+    #[cfg(unix)]
+    {
+        let mut child = Command::new("sh");
+        child.arg("-c").arg(command);
+        child
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        child
+    }
+
+    #[cfg(windows)]
+    {
+        let shell = std::env::var_os("POWERSHELL")
+            .or_else(|| std::env::var_os("PWsh"))
+            .unwrap_or_else(|| OsString::from("powershell.exe"));
+        let mut child = Command::new(shell);
+        child.arg("-NoProfile").arg("-Command").arg(command);
+        child
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        child
+    }
 }
 
 pub(crate) fn parse_environment_assignments(
@@ -281,9 +325,10 @@ fn resolve_shell_path(
         .map(PathBuf::from)
         .or_else(current_user_login_shell)
         .or_else(|| environment.get("SHELL").map(PathBuf::from))
-        .unwrap_or_else(|| PathBuf::from("/bin/sh"))
+        .unwrap_or_else(default_shell_path)
 }
 
+#[cfg(unix)]
 fn current_user_login_shell() -> Option<PathBuf> {
     let uid = getuid().as_raw();
     fs::read_to_string("/etc/passwd")
@@ -292,6 +337,12 @@ fn current_user_login_shell() -> Option<PathBuf> {
         .find_map(|line| passwd_shell_for_uid(line, uid))
 }
 
+#[cfg(windows)]
+fn current_user_login_shell() -> Option<PathBuf> {
+    None
+}
+
+#[cfg(unix)]
 fn passwd_shell_for_uid(line: &str, uid: u32) -> Option<PathBuf> {
     let mut fields = line.split(':');
     let _name = fields.next()?;
@@ -304,14 +355,27 @@ fn passwd_shell_for_uid(line: &str, uid: u32) -> Option<PathBuf> {
     (parsed_uid == uid && !shell.is_empty()).then(|| PathBuf::from(shell))
 }
 
+#[cfg(unix)]
+fn default_shell_path() -> PathBuf {
+    PathBuf::from("/bin/sh")
+}
+
+#[cfg(windows)]
+fn default_shell_path() -> PathBuf {
+    std::env::var_os("COMSPEC")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("cmd.exe"))
+}
+
 fn resolve_working_directory(requested_cwd: Option<&Path>) -> Result<PathBuf, RmuxError> {
     let requested = requested_cwd
         .map(PathBuf::from)
         .or_else(|| std::env::current_dir().ok());
     for candidate in requested
         .into_iter()
+        .chain(std::env::var_os("USERPROFILE").map(PathBuf::from))
         .chain(std::env::var_os("HOME").map(PathBuf::from))
-        .chain(std::iter::once(PathBuf::from("/")))
+        .chain(std::iter::once(default_working_directory()))
     {
         if candidate.is_dir() {
             return Ok(candidate);
@@ -323,6 +387,18 @@ fn resolve_working_directory(requested_cwd: Option<&Path>) -> Result<PathBuf, Rm
     ))
 }
 
+fn default_working_directory() -> PathBuf {
+    #[cfg(unix)]
+    {
+        PathBuf::from("/")
+    }
+    #[cfg(windows)]
+    {
+        PathBuf::from(r"C:\")
+    }
+}
+
+#[cfg(unix)]
 pub(crate) fn write_all_to_fd(fd: BorrowedFd<'_>, mut buf: &[u8]) -> io::Result<()> {
     while !buf.is_empty() {
         match rustix::io::write(fd, buf) {
