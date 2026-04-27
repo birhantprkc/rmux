@@ -177,6 +177,18 @@ impl HandlerState {
         )
     }
 
+    pub(crate) fn pane_master_in_window(
+        &self,
+        session_name: &SessionName,
+        window_index: u32,
+        pane_index: u32,
+    ) -> Result<PtyMaster, RmuxError> {
+        let pane_id = pane_id_for_target(&self.sessions, session_name, window_index, pane_index)?;
+        let runtime_session_name = self.runtime_session_name_for_window(session_name, window_index);
+        self.terminals
+            .clone_pane_master(&runtime_session_name, pane_id, window_index, pane_index)
+    }
+
     pub(crate) fn pane_pid_in_window(
         &self,
         session_name: &SessionName,

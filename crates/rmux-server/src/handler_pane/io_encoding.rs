@@ -8,7 +8,6 @@ use crate::format_runtime::render_runtime_template;
 use crate::input_keys::{encode_key, encode_mouse_event, ExtendedKeyFormat};
 use crate::keys::parse_key_code;
 use crate::pane_terminals::{session_not_found, HandlerState};
-use crate::terminal::write_all_to_fd;
 
 pub(super) fn write_bytes_to_target(
     state: &HandlerState,
@@ -30,11 +29,11 @@ pub(super) fn write_bytes_to_target_io(
     let session_name = target.session_name().clone();
     let window_index = target.window_index();
     let pane_index = target.pane_index();
-    let fd = state.pane_master_fd(&session_name, window_index, pane_index)?;
+    let master = state.pane_master_in_window(&session_name, window_index, pane_index)?;
     if bytes.is_empty() {
         return Ok(());
     }
-    write_all_to_fd(fd, bytes).map_err(|error| {
+    master.write_all(bytes).map_err(|error| {
         RmuxError::Server(format!(
             "failed to write to pane {}:{}.{}: {}",
             session_name, window_index, pane_index, error

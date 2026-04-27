@@ -3,8 +3,6 @@ use std::ffi::OsString;
 #[cfg(unix)]
 use std::fs;
 use std::io;
-#[cfg(unix)]
-use std::os::fd::BorrowedFd;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
@@ -396,22 +394,6 @@ fn default_working_directory() -> PathBuf {
     {
         PathBuf::from(r"C:\")
     }
-}
-
-#[cfg(unix)]
-pub(crate) fn write_all_to_fd(fd: BorrowedFd<'_>, mut buf: &[u8]) -> io::Result<()> {
-    while !buf.is_empty() {
-        match rustix::io::write(fd, buf) {
-            Ok(0) => {
-                return Err(io::Error::new(io::ErrorKind::WriteZero, "write returned 0"));
-            }
-            Ok(bytes_written) => buf = &buf[bytes_written..],
-            Err(rustix::io::Errno::INTR) => continue,
-            Err(error) => return Err(error.into()),
-        }
-    }
-
-    Ok(())
 }
 
 fn shell_program_name(path: &Path) -> Option<String> {
