@@ -19,7 +19,7 @@ pub(super) fn decode_bracketed_paste(input: &[u8]) -> BracketedPasteDecode {
         return BracketedPasteDecode::Partial;
     }
 
-    if BRACKETED_PASTE_START.starts_with(input) {
+    if input.len() >= 3 && BRACKETED_PASTE_START.starts_with(input) {
         return BracketedPasteDecode::Partial;
     }
 
@@ -41,6 +41,22 @@ mod tests {
         assert_eq!(
             decode_bracketed_paste(b"\x1b[20"),
             BracketedPasteDecode::Partial
+        );
+    }
+
+    #[test]
+    fn leaves_lone_escape_for_key_decoder() {
+        assert_eq!(
+            decode_bracketed_paste(b"\x1b"),
+            BracketedPasteDecode::NotPaste
+        );
+    }
+
+    #[test]
+    fn leaves_ambiguous_csi_prefix_for_key_decoder() {
+        assert_eq!(
+            decode_bracketed_paste(b"\x1b["),
+            BracketedPasteDecode::NotPaste
         );
     }
 

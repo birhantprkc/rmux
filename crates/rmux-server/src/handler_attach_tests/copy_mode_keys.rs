@@ -1,5 +1,26 @@
 use super::*;
 
+async fn send_attached_copy_mode_command(
+    handler: &RequestHandler,
+    target: &PaneTarget,
+    tokens: &[&str],
+) -> Response {
+    handler
+        .handle(Request::SendKeysExt(rmux_proto::SendKeysExtRequest {
+            target: Some(target.clone()),
+            keys: tokens.iter().map(|token| (*token).to_owned()).collect(),
+            expand_formats: false,
+            hex: false,
+            literal: false,
+            dispatch_key_table: false,
+            copy_mode_command: true,
+            forward_mouse_event: false,
+            reset_terminal: false,
+            repeat_count: None,
+        }))
+        .await
+}
+
 #[tokio::test]
 async fn attached_copy_mode_emacs_slash_is_unbound_and_not_forwarded() {
     let handler = RequestHandler::new();
@@ -227,6 +248,80 @@ async fn attached_copy_mode_q_exits_and_refreshes_normal_surface() {
     assert!(
         !capture_pane_print(&handler, target).await.contains("\nq"),
         "q must be consumed by copy-mode instead of leaking to the pane"
+    );
+}
+
+#[tokio::test]
+async fn attached_copy_mode_copies_selection_to_buffer_and_exits_cleanly() {
+    let handler = RequestHandler::new();
+    let requester_pid = std::process::id();
+    let alpha = session_name("alpha");
+    let mut control_rx = create_quiet_attached_session(&handler, requester_pid, &alpha).await;
+    let target = PaneTarget::new(alpha.clone(), 0);
+    replace_transcript_contents(
+        &handler,
+        &target,
+        TerminalSize { cols: 80, rows: 24 },
+        b"alpha\r\nneedle value\r\nomega\r\n",
+    )
+    .await;
+    assert!(matches!(
+        handler
+            .handle(Request::CopyMode(CopyModeRequest {
+                target: Some(target.clone()),
+                page_down: false,
+                exit_on_scroll: false,
+                hide_position: false,
+                mouse_drag_start: false,
+                cancel_mode: false,
+                scrollbar_scroll: false,
+                source: None,
+                page_up: false,
+            }))
+            .await,
+        Response::CopyMode(_)
+    ));
+    assert_eq!(
+        pane_mode_status(&handler, &alpha).await,
+        "1:copy-mode:0:0\n"
+    );
+
+    assert!(matches!(
+        send_attached_copy_mode_command(&handler, &target, &["search-backward", "--", "needle"])
+            .await,
+        Response::SendKeys(rmux_proto::SendKeysResponse { key_count: 3 })
+    ));
+    assert!(matches!(
+        send_attached_copy_mode_command(&handler, &target, &["select-word"]).await,
+        Response::SendKeys(rmux_proto::SendKeysResponse { key_count: 1 })
+    ));
+    assert_eq!(
+        pane_mode_status(&handler, &alpha).await,
+        "1:copy-mode:1:1\n",
+        "search and word selection should be active before copy"
+    );
+    drain_attach_controls(&mut control_rx);
+
+    assert!(matches!(
+        send_attached_copy_mode_command(&handler, &target, &["copy-selection-and-cancel"]).await,
+        Response::SendKeys(rmux_proto::SendKeysResponse { key_count: 1 })
+    ));
+
+    assert_eq!(pane_mode_status(&handler, &alpha).await, "0:::\n");
+    let buffer = handler
+        .handle(Request::ShowBuffer(rmux_proto::ShowBufferRequest {
+            name: None,
+        }))
+        .await;
+    let output = buffer.command_output().expect("show-buffer returns output");
+    assert!(
+        String::from_utf8_lossy(output.stdout()).contains("needle"),
+        "copy-mode transfer should publish the selected text into the rmux buffer"
+    );
+    let frame = take_render_frame(control_rx.try_recv().expect("copy-mode exit refresh"));
+    assert!(
+        !frame.is_empty(),
+        "copy-mode copy-and-cancel should refresh the attached normal surface"
     );
 }
 
