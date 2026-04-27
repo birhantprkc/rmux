@@ -1,7 +1,9 @@
 use std::io;
 #[cfg(unix)]
 use std::os::unix::fs::FileTypeExt;
-use std::path::{Path, PathBuf};
+#[cfg(unix)]
+use std::path::Path;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use rmux_ipc::{LocalListener, LocalStream, PeerIdentity};
@@ -352,7 +354,7 @@ fn remove_socket_file_if_present(path: &Path) -> io::Result<()> {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
     use rmux_proto::{ErrorResponse, RmuxError, WaitForMode, WaitForRequest, WaitForResponse};

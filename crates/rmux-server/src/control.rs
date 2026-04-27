@@ -1,39 +1,39 @@
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 use std::collections::{HashMap, HashSet, VecDeque};
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 use std::io;
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 use std::sync::atomic::{AtomicBool, Ordering};
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 use std::sync::Arc;
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 use rmux_ipc::LocalStream;
 use rmux_proto::SessionName;
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 use rmux_proto::{
     format_exit_line, format_extended_output_line, format_guard_line, format_output_line,
     format_pause_line, ControlGuardKind, CONTROL_BUFFER_HIGH,
 };
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 use tokio::io::{AsyncReadExt, WriteHalf};
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 use tokio::sync::{broadcast, mpsc, watch};
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 use tokio::task::JoinHandle;
 
 #[cfg_attr(windows, allow(unused_imports))]
 pub(crate) use crate::control_mode::ControlModeUpgrade;
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 use crate::daemon::ShutdownHandle;
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 use crate::handler::RequestHandler;
 
 #[path = "control/output_queue.rs"]
 mod output_queue;
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 use output_queue::{ensure_control_newline, flush_output_queue, ControlOutputQueue};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -65,13 +65,13 @@ pub(crate) struct ControlCommandResult {
 }
 
 #[derive(Debug)]
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 pub(crate) struct ControlLifecycle {
     pub(crate) closing: Arc<AtomicBool>,
     pub(crate) shutdown_handle: ShutdownHandle,
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 pub(crate) async fn forward_control(
     stream: LocalStream,
     handler: Arc<RequestHandler>,
@@ -322,7 +322,7 @@ pub(crate) async fn forward_control(
     }
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 async fn handle_server_event(
     event: ControlServerEvent,
     context: &mut ServerEventContext<'_>,
@@ -397,7 +397,7 @@ async fn handle_server_event(
     Ok(false)
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 async fn flush_deferred_server_events(context: &mut ServerEventContext<'_>) -> io::Result<bool> {
     while let Some(line) = context.deferred.notifications.pop_front() {
         if handle_server_event(ControlServerEvent::Notification(line), context, false).await? {
@@ -412,7 +412,7 @@ async fn flush_deferred_server_events(context: &mut ServerEventContext<'_>) -> i
     Ok(false)
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 struct ServerEventContext<'a> {
     handler: &'a RequestHandler,
     requester_pid: u32,
@@ -428,14 +428,14 @@ struct ServerEventContext<'a> {
 }
 
 #[derive(Debug, Default)]
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 struct DeferredServerEvents {
     notifications: VecDeque<String>,
     exit_reason: Option<Option<String>>,
 }
 
 #[derive(Debug)]
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 struct ActiveControlCommand {
     timestamp: i64,
     command_number: u64,
@@ -443,7 +443,7 @@ struct ActiveControlCommand {
 }
 
 #[derive(Debug)]
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 enum PaneEvent {
     Data {
         pane_id: u32,
@@ -454,12 +454,12 @@ enum PaneEvent {
 }
 
 #[derive(Debug)]
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 struct PaneSubscription {
     stop_tx: tokio::sync::oneshot::Sender<()>,
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 async fn refresh_subscriptions(
     handler: &RequestHandler,
     session_name: Option<&SessionName>,
@@ -522,7 +522,7 @@ async fn refresh_subscriptions(
     }
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn extract_complete_control_lines(buffer: &mut Vec<u8>) -> Vec<String> {
     let mut lines = Vec::new();
 
@@ -540,7 +540,7 @@ fn extract_complete_control_lines(buffer: &mut Vec<u8>) -> Vec<String> {
     lines
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn handle_pane_event(
     event: PaneEvent,
     output_queue: &mut ControlOutputQueue,
@@ -579,7 +579,7 @@ fn handle_pane_event(
     Ok(())
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn drain_ready_pane_events(
     pane_event_rx: &mut mpsc::UnboundedReceiver<PaneEvent>,
     output_queue: &mut ControlOutputQueue,
@@ -595,7 +595,7 @@ fn drain_ready_pane_events(
     }
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 fn unix_epoch_seconds() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)

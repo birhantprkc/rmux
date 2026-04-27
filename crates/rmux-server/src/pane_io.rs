@@ -1,16 +1,16 @@
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 use rmux_ipc::LocalStream;
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 use rmux_proto::{AttachFrameDecoder, AttachMessage};
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 use std::sync::atomic::{AtomicBool, AtomicU64};
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 use std::sync::Arc;
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 use std::{collections::VecDeque, io, sync::atomic::Ordering};
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 use tokio::sync::mpsc;
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 use tokio::sync::watch;
 
 const READ_BUFFER_SIZE: usize = 8192;
@@ -20,13 +20,13 @@ mod reader;
 mod types;
 mod wire;
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 use control::{
     apply_pending_attach_controls, recv_attach_control,
     redraw_after_persistent_overlay_state_advance, should_emit_overlay, switch_attach_target,
     PendingAttachAction,
 };
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 use persistent_overlay::{
     accept_persistent_overlay_state, advance_persistent_overlay_state, clear_then_base_frame,
     discard_stale_persistent_overlays, is_stale_persistent_switch,
@@ -34,14 +34,14 @@ use persistent_overlay::{
     replacement_persistent_overlay_frame, update_persistent_overlay_cache,
 };
 pub(crate) use reader::spawn_pane_output_reader;
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 pub(crate) use types::LiveAttachInputContext;
 #[cfg_attr(windows, allow(unused_imports))]
 pub(crate) use types::{
     pane_output_channel, AttachControl, AttachTarget, HandleOutcome, OverlayFrame,
     PaneAlertCallback, PaneAlertEvent, PaneExitCallback, PaneExitEvent, PaneOutputSender,
 };
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 use wire::{
     emit_attach_bytes, emit_attach_frame, emit_attach_message, emit_attach_stop,
     emit_detached_message, emit_exited_message, emit_render_frame, invalid_attach_message,
@@ -50,7 +50,7 @@ use wire::{
 };
 
 #[allow(clippy::too_many_arguments)]
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 pub(crate) async fn forward_attach(
     stream: LocalStream,
     target: AttachTarget,
@@ -391,7 +391,7 @@ pub(crate) async fn forward_attach(
     result
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 async fn process_socket_messages(
     decoder: &mut AttachFrameDecoder,
     stream: &LocalStream,

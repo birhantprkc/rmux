@@ -7,7 +7,7 @@ use tokio::sync::{broadcast, mpsc};
 
 use crate::client_flags::ClientFlags;
 use crate::control_mode::ControlModeUpgrade;
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 use crate::handler::RequestHandler;
 use crate::outer_terminal::OuterTerminal;
 
@@ -113,7 +113,7 @@ pub(crate) struct AttachTarget {
     pub(crate) persistent_overlay_state_id: Option<u64>,
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 pub(crate) struct LiveAttachInputContext {
     pub(crate) handler: Arc<RequestHandler>,
     pub(crate) attach_pid: u32,
