@@ -19,6 +19,7 @@ fn argv_semicolons_build_an_ordered_command_queue() {
 #[cfg(unix)]
 #[test]
 fn command_arguments_reject_invalid_utf8_without_lossy_replacement() {
+    use std::ffi::OsString;
     use std::os::unix::ffi::OsStringExt;
 
     let error = parse(vec![

@@ -13,6 +13,8 @@ mod command_inventory;
 mod command_runner;
 #[path = "cli/config_commands.rs"]
 mod config_commands;
+#[path = "cli/diagnose.rs"]
+mod diagnose;
 #[path = "cli/dispatch.rs"]
 mod dispatch;
 #[path = "cli/error.rs"]
@@ -86,6 +88,9 @@ where
     let args: Vec<OsString> = args.into_iter().map(Into::into).collect();
     if let Some(error) = top_level_parse_failure(args.get(1..).unwrap_or(&[])) {
         return Err(error);
+    }
+    if let Some(invocation) = diagnose::parse_invocation(args.get(1..).unwrap_or(&[]))? {
+        return diagnose::run(invocation);
     }
 
     let mut cli = match parse(args.clone()) {
