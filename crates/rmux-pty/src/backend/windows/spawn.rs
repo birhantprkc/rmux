@@ -10,7 +10,8 @@ use std::ptr::{null, null_mut};
 use std::sync::Arc;
 
 use windows_sys::Win32::Foundation::{
-    GetLastError, ERROR_ACCESS_DENIED, HANDLE, WAIT_FAILED, WAIT_OBJECT_0, WAIT_TIMEOUT,
+    DuplicateHandle, GetLastError, DUPLICATE_SAME_ACCESS, ERROR_ACCESS_DENIED, HANDLE, WAIT_FAILED,
+    WAIT_OBJECT_0, WAIT_TIMEOUT,
 };
 use windows_sys::Win32::System::JobObjects::{
     AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
@@ -18,7 +19,7 @@ use windows_sys::Win32::System::JobObjects::{
     JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
 };
 use windows_sys::Win32::System::Threading::{
-    CreateProcessW, DeleteProcThreadAttributeList, GetExitCodeProcess,
+    CreateProcessW, DeleteProcThreadAttributeList, GetCurrentProcess, GetExitCodeProcess,
     InitializeProcThreadAttributeList, ResumeThread, TerminateProcess, UpdateProcThreadAttribute,
     WaitForSingleObject, CREATE_BREAKAWAY_FROM_JOB, CREATE_SUSPENDED, CREATE_UNICODE_ENVIRONMENT,
     EXTENDED_STARTUPINFO_PRESENT, LPPROC_THREAD_ATTRIBUTE_LIST, PROCESS_INFORMATION,
@@ -206,6 +207,16 @@ pub(crate) fn try_wait_child(child: &mut WindowsChild) -> Result<Option<ExitStat
     }
 }
 
+pub(crate) fn try_clone_child_for_wait(child: &WindowsChild) -> Result<WindowsChild> {
+    Ok(WindowsChild {
+        process: duplicate_handle(&child.process)?,
+        thread: duplicate_handle(&child.thread)?,
+        job: None,
+        pty: Arc::clone(&child.pty),
+        pid: child.pid,
+    })
+}
+
 pub(crate) fn interrupt_child(child: &WindowsChild) -> Result<()> {
     child.pty.write_all(b"\x03")?;
     Ok(())
@@ -231,6 +242,26 @@ fn terminate_process(process: &OwnedHandle, exit_code: u32) -> io::Result<()> {
         return Err(last_os_error());
     }
     Ok(())
+}
+
+fn duplicate_handle(handle: &OwnedHandle) -> io::Result<OwnedHandle> {
+    let current_process = unsafe { GetCurrentProcess() };
+    let mut duplicated: HANDLE = null_mut();
+    let ok = unsafe {
+        DuplicateHandle(
+            current_process,
+            handle.as_raw_handle() as HANDLE,
+            current_process,
+            &mut duplicated,
+            0,
+            0,
+            DUPLICATE_SAME_ACCESS,
+        )
+    };
+    if ok == 0 {
+        return Err(last_os_error());
+    }
+    Ok(unsafe { OwnedHandle::from_raw_handle(duplicated as _) })
 }
 
 fn exit_status(process: &OwnedHandle) -> Result<ExitStatus> {

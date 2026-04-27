@@ -1,6 +1,8 @@
 use std::io;
 
 use rmux_core::PaneId;
+#[cfg(windows)]
+use rmux_pty::PtyChild;
 use rmux_pty::PtyMaster;
 use tracing::warn;
 
@@ -44,6 +46,29 @@ pub(crate) fn spawn_pane_output_reader(
             );
         }
     });
+}
+
+#[cfg(windows)]
+pub(crate) fn spawn_pane_exit_watcher(
+    session_name: rmux_proto::SessionName,
+    pane_id: PaneId,
+    mut child: PtyChild,
+    generation: Option<u64>,
+    pane_exit_callback: Option<PaneExitCallback>,
+) {
+    let Some(pane_exit_callback) = pane_exit_callback else {
+        return;
+    };
+    let _ = std::thread::Builder::new()
+        .name(format!("rmux-pane-exit-{}", pane_id.as_u32()))
+        .spawn(move || {
+            let _ = child.wait();
+            pane_exit_callback(PaneExitEvent {
+                session_name,
+                pane_id,
+                generation,
+            });
+        });
 }
 
 #[allow(clippy::too_many_arguments)]

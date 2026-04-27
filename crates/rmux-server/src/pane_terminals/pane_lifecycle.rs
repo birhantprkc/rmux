@@ -14,7 +14,7 @@ use crate::terminal::TerminalProfile;
 
 use super::{
     pane_terminal_geometry_for_session, session_not_found, HandlerState, KilledPaneHookContext,
-    KilledPaneResult, WindowSpawnOptions,
+    KilledPaneResult, PaneOutputSpawn, WindowSpawnOptions,
 };
 
 #[path = "pane_lifecycle/preview.rs"]
@@ -63,6 +63,8 @@ impl HandlerState {
         let terminal =
             open_pane_terminal(pane_geometry, profile, runtime_window_name.clone(), command)?;
         let output_reader = clone_terminal_for_output_reader(&terminal, session_name, pane.id)?;
+        #[cfg(windows)]
+        let exit_watcher = clone_terminal_for_exit_watcher(&terminal, session_name, pane.id)?;
 
         self.apply_automatic_window_name(session_name, pane.window_index, automatic_window_name)?;
 
@@ -71,10 +73,14 @@ impl HandlerState {
         if let Err(error) = self.insert_pane_output(
             &runtime_session_name,
             pane.id,
-            pane_geometry,
-            output_reader,
-            pane_alert_callback,
-            pane_exit_callback,
+            PaneOutputSpawn {
+                geometry: pane_geometry,
+                output_reader,
+                #[cfg(windows)]
+                exit_watcher: Some(exit_watcher),
+                pane_alert_callback,
+                pane_exit_callback,
+            },
         ) {
             let _ = self.terminals.remove_session(&runtime_session_name);
             return Err(error);
@@ -151,6 +157,8 @@ impl HandlerState {
             spawn.command,
         )?;
         let output_reader = clone_terminal_for_output_reader(&terminal, session_name, pane_id)?;
+        #[cfg(windows)]
+        let exit_watcher = clone_terminal_for_exit_watcher(&terminal, session_name, pane_id)?;
 
         self.apply_automatic_window_name(session_name, window_index, automatic_window_name)?;
 
@@ -164,10 +172,14 @@ impl HandlerState {
         if let Err(error) = self.insert_pane_output(
             &runtime_session_name,
             pane_id,
-            pane_geometry,
-            output_reader,
-            spawn.pane_alert_callback,
-            spawn.pane_exit_callback,
+            PaneOutputSpawn {
+                geometry: pane_geometry,
+                output_reader,
+                #[cfg(windows)]
+                exit_watcher: Some(exit_watcher),
+                pane_alert_callback: spawn.pane_alert_callback,
+                pane_exit_callback: spawn.pane_exit_callback,
+            },
         ) {
             let _ = self.terminals.remove_pane(&runtime_session_name, pane_id);
             return Err(error);
@@ -261,6 +273,15 @@ impl HandlerState {
                     return Err(error);
                 }
             };
+        #[cfg(windows)]
+        let exit_watcher =
+            match clone_terminal_for_exit_watcher(&terminal, &session_name, new_pane_id) {
+                Ok(exit_watcher) => exit_watcher,
+                Err(error) => {
+                    self.replace_session(&session_name, previous_session)?;
+                    return Err(error);
+                }
+            };
 
         if let Err(error) = self.terminals.insert_pane(
             runtime_session_name.clone(),
@@ -275,10 +296,14 @@ impl HandlerState {
         if let Err(error) = self.insert_pane_output(
             &runtime_session_name,
             new_pane_id,
-            new_pane_geometry,
-            output_reader,
-            pane_alert_callback,
-            pane_exit_callback,
+            PaneOutputSpawn {
+                geometry: new_pane_geometry,
+                output_reader,
+                #[cfg(windows)]
+                exit_watcher: Some(exit_watcher),
+                pane_alert_callback,
+                pane_exit_callback,
+            },
         ) {
             let _ = self
                 .terminals
@@ -542,6 +567,8 @@ impl HandlerState {
             command.as_deref(),
         )?;
         let output_reader = clone_terminal_for_output_reader(&terminal, &session_name, pane_id)?;
+        #[cfg(windows)]
+        let exit_watcher = clone_terminal_for_exit_watcher(&terminal, &session_name, pane_id)?;
 
         if let Some(pipe) = self.remove_pane_pipe(&runtime_session_name, pane_id) {
             pipe.stop();
@@ -557,10 +584,14 @@ impl HandlerState {
         self.reset_pane_output(
             &runtime_session_name,
             pane_id,
-            pane_geometry,
-            output_reader,
-            pane_alert_callback,
-            pane_exit_callback,
+            PaneOutputSpawn {
+                geometry: pane_geometry,
+                output_reader,
+                #[cfg(windows)]
+                exit_watcher: Some(exit_watcher),
+                pane_alert_callback,
+                pane_exit_callback,
+            },
         )?;
         self.apply_automatic_window_name(&session_name, window_index, automatic_window_name)?;
 
@@ -576,6 +607,21 @@ fn clone_terminal_for_output_reader(
     terminal.clone_master().map_err(|error| {
         RmuxError::Server(format!(
             "failed to clone pane output reader for pane id {} in session {}: {error}",
+            pane_id.as_u32(),
+            session_name
+        ))
+    })
+}
+
+#[cfg(windows)]
+fn clone_terminal_for_exit_watcher(
+    terminal: &PaneTerminal,
+    session_name: &SessionName,
+    pane_id: PaneId,
+) -> Result<rmux_pty::PtyChild, RmuxError> {
+    terminal.clone_child_for_wait().map_err(|error| {
+        RmuxError::Server(format!(
+            "failed to clone pane exit watcher for pane id {} in session {}: {error}",
             pane_id.as_u32(),
             session_name
         ))

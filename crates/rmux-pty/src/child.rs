@@ -197,6 +197,15 @@ impl PtyChild {
         }
     }
 
+    /// Clones a wait-only handle for observing process exit.
+    #[cfg(windows)]
+    pub fn try_clone_for_wait(&self) -> Result<Self> {
+        Ok(Self {
+            child: backend::try_clone_child_for_wait(&self.child)?,
+            pid: self.pid,
+        })
+    }
+
     /// Sends an interrupt request to the PTY foreground process group.
     pub fn interrupt(&self) -> Result<()> {
         self.kill(Signal::INT)

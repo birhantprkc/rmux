@@ -42,7 +42,7 @@ mod window_links;
 mod window_support;
 
 pub(crate) use pane_outputs::PaneExitMetadata;
-use pane_outputs::{AttachedSubmittedLine, RemovedPaneOutputs};
+use pane_outputs::{AttachedSubmittedLine, PaneOutputSpawn, RemovedPaneOutputs};
 use pane_pipe::{ActivePanePipe, PanePipeStore};
 use pane_terminal_store::PaneTerminalStore;
 #[cfg_attr(windows, allow(unused_imports))]

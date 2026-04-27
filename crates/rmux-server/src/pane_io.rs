@@ -33,6 +33,8 @@ use persistent_overlay::{
     persistent_overlay_replacement_pending, prime_persistent_overlay_barriers,
     replacement_persistent_overlay_frame, update_persistent_overlay_cache,
 };
+#[cfg(windows)]
+pub(crate) use reader::spawn_pane_exit_watcher;
 pub(crate) use reader::spawn_pane_output_reader;
 #[cfg(any(unix, windows))]
 pub(crate) use types::LiveAttachInputContext;

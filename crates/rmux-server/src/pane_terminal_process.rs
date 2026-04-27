@@ -50,6 +50,11 @@ impl PaneTerminal {
         self.master.try_clone()
     }
 
+    #[cfg(windows)]
+    pub(crate) fn clone_child_for_wait(&self) -> rmux_pty::Result<PtyChild> {
+        self.child.try_clone_for_wait()
+    }
+
     pub(crate) fn pid(&self) -> u32 {
         self.child.pid().as_u32()
     }

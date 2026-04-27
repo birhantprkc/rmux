@@ -368,6 +368,10 @@ impl RequestHandler {
 }
 
 #[cfg(test)]
+#[path = "handler_send_keys_tests/input_capture.rs"]
+mod input_capture;
+
+#[cfg(test)]
 #[path = "handler_tests.rs"]
 mod tests;
 

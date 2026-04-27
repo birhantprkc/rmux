@@ -4,13 +4,16 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
+#[cfg(unix)]
+use rmux_proto::SendKeysExtRequest;
+use rmux_proto::{PaneTarget, Request, Response, SendKeysRequest, SendKeysResponse};
 use tokio::time::sleep;
 
-use super::*;
+use super::RequestHandler;
 
 static UNIQUE_ID: AtomicUsize = AtomicUsize::new(0);
 
-pub(super) struct PaneInputCapture {
+pub(in crate::handler) struct PaneInputCapture {
     output_path: PathBuf,
     #[cfg(windows)]
     ready_path: PathBuf,
@@ -19,7 +22,7 @@ pub(super) struct PaneInputCapture {
 }
 
 impl PaneInputCapture {
-    pub(super) async fn start(
+    pub(in crate::handler) async fn start(
         handler: &RequestHandler,
         session_name: &rmux_proto::SessionName,
         label: &str,
@@ -61,7 +64,7 @@ impl PaneInputCapture {
         }
     }
 
-    pub(super) async fn finish(
+    pub(in crate::handler) async fn finish(
         &self,
         handler: &RequestHandler,
         session_name: &rmux_proto::SessionName,
@@ -73,7 +76,7 @@ impl PaneInputCapture {
         let _ = (handler, session_name);
     }
 
-    pub(super) async fn assert_contents(self, expected: &[u8]) {
+    pub(in crate::handler) async fn assert_contents(self, expected: &[u8]) {
         wait_for_file_bytes(&self.output_path, expected)
             .await
             .expect("pane input capture contents");
@@ -95,7 +98,7 @@ impl PaneInputCapture {
 /// Unix can observe these through `cat` on a PTY. Native Windows console apps
 /// may consume VT input wrappers before user code can read them, so raw-byte
 /// assertions use a test-only writer spy there.
-pub(super) enum RawPaneInputProbe {
+pub(in crate::handler) enum RawPaneInputProbe {
     #[cfg(unix)]
     Console(PaneInputCapture),
     #[cfg(windows)]
@@ -103,7 +106,7 @@ pub(super) enum RawPaneInputProbe {
 }
 
 impl RawPaneInputProbe {
-    pub(super) async fn start(
+    pub(in crate::handler) async fn start(
         handler: &RequestHandler,
         session_name: &rmux_proto::SessionName,
         label: &str,
@@ -121,7 +124,7 @@ impl RawPaneInputProbe {
         }
     }
 
-    pub(super) async fn finish(
+    pub(in crate::handler) async fn finish(
         &self,
         handler: &RequestHandler,
         session_name: &rmux_proto::SessionName,
@@ -136,7 +139,11 @@ impl RawPaneInputProbe {
         }
     }
 
-    pub(super) async fn assert_contents(self, handler: &RequestHandler, expected: &[u8]) {
+    pub(in crate::handler) async fn assert_contents(
+        self,
+        handler: &RequestHandler,
+        expected: &[u8],
+    ) {
         #[cfg(unix)]
         let _ = handler;
 
@@ -150,13 +157,13 @@ impl RawPaneInputProbe {
 }
 
 #[cfg(windows)]
-pub(super) struct PaneInputSpy {
+pub(in crate::handler) struct PaneInputSpy {
     target: PaneTarget,
 }
 
 #[cfg(windows)]
 impl PaneInputSpy {
-    pub(super) async fn start(
+    pub(in crate::handler) async fn start(
         handler: &RequestHandler,
         session_name: &rmux_proto::SessionName,
     ) -> Self {
@@ -166,7 +173,11 @@ impl PaneInputSpy {
         Self { target }
     }
 
-    pub(super) async fn assert_contents(self, handler: &RequestHandler, expected: &[u8]) {
+    pub(in crate::handler) async fn assert_contents(
+        self,
+        handler: &RequestHandler,
+        expected: &[u8],
+    ) {
         let state = handler.state.lock().await;
         assert_eq!(
             state.pane_input_capture_for_test(&self.target),

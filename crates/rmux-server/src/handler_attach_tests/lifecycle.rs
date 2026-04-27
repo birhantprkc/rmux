@@ -177,34 +177,15 @@ async fn attached_prefix_prefix_dispatches_send_prefix_once_and_returns_to_root(
     let requester_pid = std::process::id();
     let alpha = session_name("alpha");
     let _control_rx = create_attached_session(&handler, requester_pid, &alpha).await;
-    let target = PaneTarget::new(alpha.clone(), 0);
-    assert!(matches!(
-        handler
-            .handle(Request::SendKeys(SendKeysRequest {
-                target: target.clone(),
-                keys: vec!["cat -v".to_owned(), "Enter".to_owned()],
-            }))
-            .await,
-        Response::SendKeys(_)
-    ));
-    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    let capture = RawPaneInputProbe::start(&handler, &alpha, "attached-prefix-default", 2).await;
 
     handler
         .handle_attached_live_input_for_test(requester_pid, b"\x02\x02x")
         .await
         .expect("prefix send-prefix input");
-    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
-    let capture = capture_pane_print(&handler, target).await;
-    assert_eq!(
-        capture.matches("^B").count(),
-        1,
-        "send-prefix should emit exactly one default prefix byte, got {capture:?}"
-    );
-    assert!(
-        capture.contains("^Bx"),
-        "literal input after send-prefix should return to root flow, got {capture:?}"
-    );
+    capture.finish(&handler, &alpha).await;
+    capture.assert_contents(&handler, b"\x02x").await;
     let active_attach = handler.active_attach.lock().await;
     assert_eq!(
         active_attach
@@ -221,7 +202,6 @@ async fn attached_send_prefix_emits_the_configured_prefix_byte() {
     let requester_pid = std::process::id();
     let alpha = session_name("alpha");
     let _control_rx = create_attached_session(&handler, requester_pid, &alpha).await;
-    let target = PaneTarget::new(alpha.clone(), 0);
     assert!(matches!(
         handler
             .handle(Request::SetOption(SetOptionRequest {
@@ -233,33 +213,15 @@ async fn attached_send_prefix_emits_the_configured_prefix_byte() {
             .await,
         Response::SetOption(_)
     ));
-    assert!(matches!(
-        handler
-            .handle(Request::SendKeys(SendKeysRequest {
-                target: target.clone(),
-                keys: vec!["cat -v".to_owned(), "Enter".to_owned()],
-            }))
-            .await,
-        Response::SendKeys(_)
-    ));
-    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    let capture = RawPaneInputProbe::start(&handler, &alpha, "attached-prefix-configured", 1).await;
 
     handler
         .handle_attached_live_input_for_test(requester_pid, b"\x01\x02")
         .await
         .expect("configured prefix send-prefix input");
-    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
-    let capture = capture_pane_print(&handler, target).await;
-    assert_eq!(
-        capture.matches("^A").count(),
-        1,
-        "send-prefix should emit exactly one configured prefix byte, got {capture:?}"
-    );
-    assert!(
-        !capture.contains("^B"),
-        "send-prefix must not hard-code the default prefix byte, got {capture:?}"
-    );
+    capture.finish(&handler, &alpha).await;
+    capture.assert_contents(&handler, b"\x01").await;
 }
 
 #[tokio::test]
@@ -272,27 +234,46 @@ async fn attached_live_input_preserves_split_utf8_sequences() {
     prepare_attached_shell_prompt(&handler, &target).await;
 
     let mut pending_input = Vec::new();
-    handler
-        .handle_attached_live_input(requester_pid, &mut pending_input, b"printf 'cafe \xe6")
-        .await
-        .expect("first utf-8 fragment");
-    handler
-        .handle_attached_live_input(requester_pid, &mut pending_input, b"\x96")
-        .await
-        .expect("second utf-8 fragment");
-    handler
-        .handle_attached_live_input(requester_pid, &mut pending_input, b"\x87\\n'\r")
-        .await
-        .expect("final utf-8 fragment");
+    let command = split_utf8_echo_command();
+    for (index, chunk) in command.chunks.iter().enumerate() {
+        handler
+            .handle_attached_live_input(requester_pid, &mut pending_input, chunk)
+            .await
+            .unwrap_or_else(|error| panic!("utf-8 fragment {index} failed: {error}"));
+    }
     let capture = wait_for_capture_containing(
         &handler,
         target,
-        "\ncafe 文",
+        command.output_needle,
         "attached input must preserve the split utf-8 output",
     )
     .await;
     assert!(
-        capture.contains("printf 'cafe 文\\n'"),
+        capture.contains(command.echoed_command),
         "attached input must preserve the split utf-8 command text, got {capture:?}"
     );
+}
+
+struct SplitUtf8EchoCommand {
+    chunks: Vec<&'static [u8]>,
+    output_needle: &'static str,
+    echoed_command: &'static str,
+}
+
+#[cfg(unix)]
+fn split_utf8_echo_command() -> SplitUtf8EchoCommand {
+    SplitUtf8EchoCommand {
+        chunks: vec![b"printf 'cafe \xe6", b"\x96", b"\x87\\n'\r"],
+        output_needle: "\ncafe 文",
+        echoed_command: "printf 'cafe 文\\n'",
+    }
+}
+
+#[cfg(windows)]
+fn split_utf8_echo_command() -> SplitUtf8EchoCommand {
+    SplitUtf8EchoCommand {
+        chunks: vec![b"echo cafe \xe6", b"\x96", b"\x87\r"],
+        output_needle: "\ncafe 文",
+        echoed_command: "echo cafe 文",
+    }
 }

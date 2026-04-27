@@ -18,6 +18,7 @@ use rmux_proto::{
     SessionName, SetOptionMode, SetOptionRequest, SplitWindowRequest, SplitWindowTarget,
     SwitchClientRequest, TerminalSize, WindowTarget,
 };
+#[cfg(unix)]
 use rmux_pty::{ChildCommand, TerminalSize as PtyTerminalSize};
 use std::path::Path;
 use std::time::Duration;
@@ -336,11 +337,12 @@ async fn wait_for_capture_containing(
 }
 
 async fn prepare_attached_shell_prompt(handler: &RequestHandler, target: &PaneTarget) {
+    let [set_prompt, clear_screen] = attached_shell_prompt_commands();
     assert!(matches!(
         handler
             .handle(Request::SendKeys(SendKeysRequest {
                 target: target.clone(),
-                keys: vec!["export PS1='PROMPT> '".to_owned(), "Enter".to_owned()],
+                keys: vec![set_prompt, "Enter".to_owned()],
             }))
             .await,
         Response::SendKeys(_)
@@ -349,7 +351,7 @@ async fn prepare_attached_shell_prompt(handler: &RequestHandler, target: &PaneTa
         handler
             .handle(Request::SendKeys(SendKeysRequest {
                 target: target.clone(),
-                keys: vec!["clear".to_owned(), "Enter".to_owned()],
+                keys: vec![clear_screen, "Enter".to_owned()],
             }))
             .await,
         Response::SendKeys(_)
@@ -361,6 +363,16 @@ async fn prepare_attached_shell_prompt(handler: &RequestHandler, target: &PaneTa
         "attached shell prompt must be ready",
     )
     .await;
+}
+
+#[cfg(unix)]
+fn attached_shell_prompt_commands() -> [String; 2] {
+    ["export PS1='PROMPT> '", "clear"].map(str::to_owned)
+}
+
+#[cfg(windows)]
+fn attached_shell_prompt_commands() -> [String; 2] {
+    ["prompt PROMPT$G ", "cls"].map(str::to_owned)
 }
 
 async fn wait_for_dead_pane(
@@ -405,6 +417,8 @@ async fn wait_for_session_removed(handler: &RequestHandler, session_name: &Sessi
         sleep(Duration::from_millis(25)).await;
     }
 }
+
+use super::input_capture::RawPaneInputProbe;
 
 async fn replace_transcript_contents(
     handler: &RequestHandler,

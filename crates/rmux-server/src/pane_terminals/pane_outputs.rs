@@ -5,8 +5,12 @@ use std::process::ExitStatus;
 
 use rmux_core::{PaneGeometry, PaneId, Utf8Config};
 use rmux_proto::{RmuxError, SessionName};
+#[cfg(windows)]
+use rmux_pty::PtyChild;
 use rmux_pty::PtyMaster;
 
+#[cfg(windows)]
+use crate::pane_io::spawn_pane_exit_watcher;
 use crate::pane_io::spawn_pane_output_reader;
 use crate::pane_io::{pane_output_channel, PaneAlertCallback, PaneExitCallback, PaneOutputSender};
 use crate::pane_terminal_lookup::{missing_pane_terminal, pane_id_for_target};
@@ -52,6 +56,15 @@ pub(super) struct RemovedPaneOutputs {
     pane_outputs: HashMap<PaneId, PaneOutputSender>,
     pane_output_generations: HashMap<PaneId, u64>,
     attached_submitted_rows: HashMap<PaneId, AttachedSubmittedLine>,
+}
+
+pub(in crate::pane_terminals) struct PaneOutputSpawn {
+    pub(in crate::pane_terminals) geometry: PaneGeometry,
+    pub(in crate::pane_terminals) output_reader: PtyMaster,
+    #[cfg(windows)]
+    pub(in crate::pane_terminals) exit_watcher: Option<PtyChild>,
+    pub(in crate::pane_terminals) pane_alert_callback: Option<PaneAlertCallback>,
+    pub(in crate::pane_terminals) pane_exit_callback: Option<PaneExitCallback>,
 }
 
 impl HandlerState {
@@ -199,16 +212,13 @@ impl HandlerState {
         &mut self,
         session_name: &SessionName,
         pane_id: PaneId,
-        geometry: PaneGeometry,
-        output_reader: PtyMaster,
-        pane_alert_callback: Option<PaneAlertCallback>,
-        pane_exit_callback: Option<PaneExitCallback>,
+        spawn: PaneOutputSpawn,
     ) -> Result<(), RmuxError> {
         let transcript = PaneTranscript::shared(
             self.history_limit_for_session(session_name),
             rmux_proto::TerminalSize {
-                cols: geometry.cols(),
-                rows: geometry.rows(),
+                cols: spawn.geometry.cols(),
+                rows: spawn.geometry.rows(),
             },
         );
         transcript
@@ -254,16 +264,26 @@ impl HandlerState {
         if let Some(dead_panes) = self.dead_panes.get_mut(session_name) {
             let _ = dead_panes.remove(&pane_id);
         }
+        #[cfg(windows)]
+        if let Some(exit_watcher) = spawn.exit_watcher {
+            spawn_pane_exit_watcher(
+                session_name.clone(),
+                pane_id,
+                exit_watcher,
+                Some(generation),
+                spawn.pane_exit_callback.clone(),
+            );
+        }
         self.clear_attached_submitted_line(session_name, pane_id);
         spawn_pane_output_reader(
             session_name.clone(),
             pane_id,
-            output_reader,
+            spawn.output_reader,
             transcript,
             pane_output,
             Some(generation),
-            pane_alert_callback,
-            pane_exit_callback,
+            spawn.pane_alert_callback,
+            spawn.pane_exit_callback,
         );
         Ok(())
     }
@@ -272,16 +292,13 @@ impl HandlerState {
         &mut self,
         session_name: &SessionName,
         pane_id: PaneId,
-        geometry: PaneGeometry,
-        output_reader: PtyMaster,
-        pane_alert_callback: Option<PaneAlertCallback>,
-        pane_exit_callback: Option<PaneExitCallback>,
+        spawn: PaneOutputSpawn,
     ) -> Result<(), RmuxError> {
         let transcript = PaneTranscript::shared(
             self.history_limit_for_session(session_name),
             rmux_proto::TerminalSize {
-                cols: geometry.cols(),
-                rows: geometry.rows(),
+                cols: spawn.geometry.cols(),
+                rows: spawn.geometry.rows(),
             },
         );
         transcript
@@ -308,16 +325,26 @@ impl HandlerState {
         if let Some(dead_panes) = self.dead_panes.get_mut(session_name) {
             let _ = dead_panes.remove(&pane_id);
         }
+        #[cfg(windows)]
+        if let Some(exit_watcher) = spawn.exit_watcher {
+            spawn_pane_exit_watcher(
+                session_name.clone(),
+                pane_id,
+                exit_watcher,
+                Some(generation),
+                spawn.pane_exit_callback.clone(),
+            );
+        }
         self.clear_attached_submitted_line(session_name, pane_id);
         spawn_pane_output_reader(
             session_name.clone(),
             pane_id,
-            output_reader,
+            spawn.output_reader,
             transcript,
             pane_output,
             Some(generation),
-            pane_alert_callback,
-            pane_exit_callback,
+            spawn.pane_alert_callback,
+            spawn.pane_exit_callback,
         );
         Ok(())
     }
