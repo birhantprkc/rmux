@@ -518,7 +518,6 @@ impl<'a> RuntimeFormatContext<'a> {
             .map(str::to_owned)
     }
 
-    #[cfg(unix)]
     fn pane_marked(&self) -> Option<String> {
         let session = self.session?;
         let window_index = self.window_index?;
@@ -532,11 +531,6 @@ impl<'a> RuntimeFormatContext<'a> {
         })))
     }
 
-    #[cfg(windows)]
-    fn pane_marked(&self) -> Option<String> {
-        Some(bool_string(false))
-    }
-
     fn pane_in_mode(&self) -> bool {
         let Some(session) = self.session else {
             return false;
@@ -548,19 +542,12 @@ impl<'a> RuntimeFormatContext<'a> {
             .is_some_and(|state| state.pane_in_mode(session.name(), pane.id()))
     }
 
-    #[cfg(unix)]
     fn marked_pane_set(&self) -> bool {
         self.state
             .and_then(|state| state.marked_pane_target())
             .is_some()
     }
 
-    #[cfg(windows)]
-    fn marked_pane_set(&self) -> bool {
-        false
-    }
-
-    #[cfg(unix)]
     fn session_marked(&self) -> bool {
         self.session_name().is_some_and(|session_name| {
             self.state
@@ -568,12 +555,6 @@ impl<'a> RuntimeFormatContext<'a> {
         })
     }
 
-    #[cfg(windows)]
-    fn session_marked(&self) -> bool {
-        false
-    }
-
-    #[cfg(unix)]
     fn window_marked(&self) -> bool {
         self.session_name()
             .zip(self.window_index)
@@ -581,11 +562,6 @@ impl<'a> RuntimeFormatContext<'a> {
                 self.state
                     .is_some_and(|state| state.window_has_marked_pane(session_name, window_index))
             })
-    }
-
-    #[cfg(windows)]
-    fn window_marked(&self) -> bool {
-        false
     }
 
     fn option_value_by_name(&self, name: &str) -> Option<String> {

@@ -13,12 +13,22 @@ fn session_name(value: &str) -> SessionName {
     SessionName::new(value).expect("valid session name")
 }
 
+#[cfg(unix)]
 fn default_shell_window_name() -> String {
     std::env::var_os("SHELL")
         .and_then(|shell| Path::new(&shell).file_name().map(|name| name.to_owned()))
         .map(|name| name.to_string_lossy().trim_start_matches('-').to_owned())
         .filter(|name| !name.is_empty())
         .unwrap_or_else(|| "sh".to_owned())
+}
+
+#[cfg(windows)]
+fn default_shell_window_name() -> String {
+    std::env::var_os("COMSPEC")
+        .and_then(|shell| Path::new(&shell).file_name().map(|name| name.to_owned()))
+        .map(|name| name.to_string_lossy().trim_start_matches('-').to_owned())
+        .filter(|name| !name.is_empty())
+        .unwrap_or_else(|| "cmd.exe".to_owned())
 }
 
 async fn recv_overlay_control(
