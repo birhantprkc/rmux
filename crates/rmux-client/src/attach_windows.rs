@@ -167,11 +167,10 @@ where
         .await
     });
 
-    if input_thread.is_finished() {
-        join_attach_thread(input_thread)??;
-    }
+    let input_result = join_attach_thread(input_thread)?;
 
-    output_result
+    output_result?;
+    input_result
 }
 
 fn input_loop<Input>(
