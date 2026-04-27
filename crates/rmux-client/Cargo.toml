@@ -12,6 +12,9 @@ rmux-proto = { path = "../rmux-proto" }
 rustix = { version = "1.1.4", features = ["event", "net", "process", "runtime", "termios", "thread"] }
 signal-hook = "0.3.18"
 
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_System_Console", "Win32_System_Threading"] }
+
 [dev-dependencies]
 rmux-pty = { path = "../rmux-pty" }
 rmux-server = { path = "../rmux-server" }

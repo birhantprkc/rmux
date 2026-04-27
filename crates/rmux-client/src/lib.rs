@@ -11,7 +11,7 @@
 #[cfg(unix)]
 pub mod attach;
 #[cfg(windows)]
-#[path = "attach_unsupported.rs"]
+#[path = "attach_windows.rs"]
 pub mod attach;
 pub mod auto_start;
 pub(crate) mod commands;

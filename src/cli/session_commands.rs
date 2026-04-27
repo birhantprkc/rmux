@@ -1,14 +1,11 @@
 use std::path::Path;
 
 use rmux_client::connect;
-#[cfg(unix)]
 use rmux_client::{detect_context, ClientContext};
-#[cfg(unix)]
 use rmux_proto::request::{AttachSessionExt2Request, SwitchClientExt3Request};
 use rmux_proto::request::{KillSessionRequest, ListSessionsRequest, NewSessionExtRequest};
 use rmux_proto::{ClientTerminalContext, ErrorResponse, Response};
 
-#[cfg(unix)]
 use super::{attach_with_connection, current_terminal_size, run_switch_client_on_connection};
 use super::{
     build_terminal_size, connect_with_startserver, expect_command_success, optional_client_flags,
@@ -28,7 +25,6 @@ pub(super) fn run_new_session(
 ) -> Result<i32, ExitFailure> {
     let mut connection = connect_with_startserver(socket_path, startup)?;
     let client_flags = optional_client_flags(args.flags.clone());
-    #[cfg(unix)]
     let client_size = current_terminal_size();
     let response = connection
         .new_session_extended(NewSessionExtRequest {
@@ -65,15 +61,6 @@ pub(super) fn run_new_session(
         return Ok(0);
     }
 
-    #[cfg(windows)]
-    {
-        let _ = client_terminal;
-        eprintln!("created session {target}; interactive attach is not enabled on Windows yet");
-        eprintln!("use `rmux list-sessions` to inspect sessions and `rmux kill-server` to stop the daemon");
-        Ok(0)
-    }
-
-    #[cfg(unix)]
     match detect_context() {
         ClientContext::Nested => run_switch_client_on_connection(
             &mut connection,

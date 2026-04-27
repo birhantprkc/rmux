@@ -6,7 +6,7 @@ use std::io;
 #[cfg(windows)]
 use std::io::{Read, Write};
 #[cfg(windows)]
-use std::os::windows::io::AsRawHandle;
+use std::os::windows::io::{AsRawHandle, RawHandle};
 #[cfg(unix)]
 use std::path::Path;
 #[cfg(windows)]
@@ -22,7 +22,9 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 #[cfg(windows)]
 use tokio::net::windows::named_pipe::{ClientOptions, NamedPipeClient};
 #[cfg(windows)]
-use windows_sys::Win32::Foundation::{CloseHandle, LocalFree, ERROR_PIPE_BUSY, HANDLE};
+use windows_sys::Win32::Foundation::{
+    CloseHandle, DuplicateHandle, LocalFree, DUPLICATE_SAME_ACCESS, ERROR_PIPE_BUSY, HANDLE,
+};
 #[cfg(windows)]
 use windows_sys::Win32::Security::Authorization::ConvertSidToStringSidW;
 #[cfg(windows)]
@@ -32,7 +34,7 @@ use windows_sys::Win32::Security::{
 #[cfg(windows)]
 use windows_sys::Win32::System::Pipes::{GetNamedPipeClientProcessId, ImpersonateNamedPipeClient};
 #[cfg(windows)]
-use windows_sys::Win32::System::Threading::{GetCurrentThread, OpenThreadToken};
+use windows_sys::Win32::System::Threading::{GetCurrentProcess, GetCurrentThread, OpenThreadToken};
 
 /// Identity of a connected local peer.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -68,6 +70,44 @@ pub struct BlockingLocalStream {
 impl std::fmt::Debug for BlockingLocalStream {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter.write_str("BlockingLocalStream(named pipe)")
+    }
+}
+
+#[cfg(windows)]
+impl BlockingLocalStream {
+    /// Duplicates the underlying named-pipe client handle for concurrent
+    /// attach/control readers and writers.
+    pub fn try_clone(&self) -> io::Result<Self> {
+        let process = unsafe {
+            // SAFETY: GetCurrentProcess returns a valid pseudo-handle for this process.
+            GetCurrentProcess()
+        };
+        let mut duplicated: HANDLE = null_mut();
+        let ok = unsafe {
+            // SAFETY: self.inner owns a valid pipe handle. DuplicateHandle initializes
+            // `duplicated` with another handle owned by this process on success.
+            DuplicateHandle(
+                process,
+                self.inner.as_raw_handle() as HANDLE,
+                process,
+                &mut duplicated,
+                0,
+                0,
+                DUPLICATE_SAME_ACCESS,
+            )
+        };
+        if ok == 0 {
+            return Err(io::Error::last_os_error());
+        }
+
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_io()
+            .build()?;
+        let inner = unsafe {
+            // SAFETY: `duplicated` is a newly owned duplicate of the pipe handle.
+            NamedPipeClient::from_raw_handle(duplicated as RawHandle)?
+        };
+        Ok(Self { inner, runtime })
     }
 }
 
