@@ -18,6 +18,8 @@ use crate::ClientError;
 mod screen;
 #[path = "attach_windows/terminal.rs"]
 mod terminal;
+#[path = "attach/terminal_cleanup.rs"]
+mod terminal_cleanup;
 
 use screen::{
     contains_subslice, AttachScreenTracker, AttachStopDetector, ALT_SCREEN_EXIT_FALLBACK,

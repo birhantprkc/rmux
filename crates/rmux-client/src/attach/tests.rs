@@ -225,9 +225,11 @@ fn attach_with_terminal_flushes_stale_mouse_input_before_forwarding_keys(
 fn fallback_attach_stop_sequence_disables_mouse_and_exits_alt_screen() {
     let stop = fallback_attach_stop_sequence("xterm-256color");
     let expected_alt_exit = alternate_screen_exit_sequence("xterm-256color");
-    assert!(stop
-        .windows(b"\x1b[?1000l\x1b[?1002l\x1b[?1006l".len())
-        .any(|window| window == b"\x1b[?1000l\x1b[?1002l\x1b[?1006l"));
+    assert_contains(&stop, b"\x1b[?1000l");
+    assert_contains(&stop, b"\x1b[?1002l");
+    assert_contains(&stop, b"\x1b[?1003l");
+    assert_contains(&stop, b"\x1b[?1005l");
+    assert_contains(&stop, b"\x1b[?1006l");
     assert!(
         stop.windows(expected_alt_exit.len())
             .any(|window| window == expected_alt_exit),
@@ -287,12 +289,11 @@ fn attach_with_terminal_restores_mouse_off_after_protocol_error(
         collected.extend_from_slice(&buffer[..bytes_read]);
     }
 
-    assert!(
-        collected
-            .windows(b"\x1b[?1000l\x1b[?1002l\x1b[?1006l".len())
-            .any(|window| window == b"\x1b[?1000l\x1b[?1002l\x1b[?1006l"),
-        "client fallback should disable mouse on protocol errors, collected={collected:?}"
-    );
+    assert_contains(&collected, b"\x1b[?1000l");
+    assert_contains(&collected, b"\x1b[?1002l");
+    assert_contains(&collected, b"\x1b[?1003l");
+    assert_contains(&collected, b"\x1b[?1005l");
+    assert_contains(&collected, b"\x1b[?1006l");
     assert!(
         collected
             .windows(b"\x1b[0m\x1b[H\x1b[2J".len())
@@ -300,4 +301,13 @@ fn attach_with_terminal_restores_mouse_off_after_protocol_error(
         "client fallback should redraw a clean terminal frame on protocol errors"
     );
     Ok(())
+}
+
+fn assert_contains(haystack: &[u8], needle: &[u8]) {
+    assert!(
+        haystack
+            .windows(needle.len())
+            .any(|window| window == needle),
+        "expected {needle:?} in {haystack:?}"
+    );
 }

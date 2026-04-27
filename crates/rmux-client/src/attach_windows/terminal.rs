@@ -6,7 +6,6 @@ use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
-use rmux_core::alternate_screen_exit_sequence;
 use rmux_proto::TerminalSize;
 use tokio::sync::mpsc;
 use windows_sys::Win32::Foundation::{
@@ -20,13 +19,7 @@ use windows_sys::Win32::System::Console::{
 };
 use windows_sys::Win32::System::Threading::WaitForSingleObject;
 
-const DISABLE_MOUSE_FALLBACK: &[u8] = b"\x1b[?1000l\x1b[?1002l\x1b[?1006l";
-const DISABLE_BRACKETED_PASTE_FALLBACK: &[u8] = b"\x1b[?2004l";
-const DISABLE_FOCUS_FALLBACK: &[u8] = b"\x1b[?1004l";
-const DISABLE_EXTENDED_KEYS_FALLBACK: &[u8] = b"\x1b[>4m";
-const DISABLE_MARGINS_FALLBACK: &[u8] = b"\x1b[?69l";
-const RESET_CURSOR_STYLE_FALLBACK: &[u8] = b"\x1b[2 q";
-const RESET_CURSOR_COLOUR_FALLBACK: &[u8] = b"\x1b]112\x07";
+use super::terminal_cleanup::fallback_attach_stop_sequence;
 
 /// Result type for raw-terminal lifecycle operations.
 pub type Result<T> = std::result::Result<T, AttachError>;
@@ -366,20 +359,6 @@ const fn raw_input_mode(original: u32) -> u32 {
 
 const fn raw_output_mode(original: u32) -> u32 {
     original | ENABLE_VIRTUAL_TERMINAL_PROCESSING
-}
-
-fn fallback_attach_stop_sequence(term: &str) -> Vec<u8> {
-    let mut bytes = Vec::new();
-    bytes.extend_from_slice(RESET_CURSOR_COLOUR_FALLBACK);
-    bytes.extend_from_slice(RESET_CURSOR_STYLE_FALLBACK);
-    bytes.extend_from_slice(DISABLE_FOCUS_FALLBACK);
-    bytes.extend_from_slice(DISABLE_EXTENDED_KEYS_FALLBACK);
-    bytes.extend_from_slice(DISABLE_MARGINS_FALLBACK);
-    bytes.extend_from_slice(DISABLE_MOUSE_FALLBACK);
-    bytes.extend_from_slice(DISABLE_BRACKETED_PASTE_FALLBACK);
-    bytes.extend_from_slice(b"\x1b[0m\x1b[H\x1b[2J");
-    bytes.extend_from_slice(alternate_screen_exit_sequence(term));
-    bytes
 }
 
 #[cfg(test)]

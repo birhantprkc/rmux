@@ -24,6 +24,8 @@ mod resize;
 mod screen;
 #[path = "attach/terminal.rs"]
 mod terminal;
+#[path = "attach/terminal_cleanup.rs"]
+mod terminal_cleanup;
 
 use resize::{terminal_size_from_fd, ResizeWatcher, SignalMaskGuard};
 use screen::{
@@ -34,7 +36,7 @@ use terminal::current_process_pid;
 pub use terminal::{AttachError, RawTerminal, Result};
 
 #[cfg(test)]
-use terminal::fallback_attach_stop_sequence;
+use terminal_cleanup::fallback_attach_stop_sequence;
 
 const READ_BUFFER_SIZE: usize = 8192;
 const POLL_TIMEOUT: Timespec = Timespec {

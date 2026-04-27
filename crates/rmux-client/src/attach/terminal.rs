@@ -11,27 +11,7 @@ use rustix::termios::{
     tcflush, tcgetattr, tcsetattr, OptionalActions, QueueSelector, SpecialCodeIndex, Termios,
 };
 
-const DISABLE_MOUSE_FALLBACK: &[u8] = b"\x1b[?1000l\x1b[?1002l\x1b[?1006l";
-const DISABLE_BRACKETED_PASTE_FALLBACK: &[u8] = b"\x1b[?2004l";
-const DISABLE_FOCUS_FALLBACK: &[u8] = b"\x1b[?1004l";
-const DISABLE_EXTENDED_KEYS_FALLBACK: &[u8] = b"\x1b[>4m";
-const DISABLE_MARGINS_FALLBACK: &[u8] = b"\x1b[?69l";
-const RESET_CURSOR_STYLE_FALLBACK: &[u8] = b"\x1b[2 q";
-const RESET_CURSOR_COLOUR_FALLBACK: &[u8] = b"\x1b]112\x07";
-
-pub(super) fn fallback_attach_stop_sequence(term: &str) -> Vec<u8> {
-    let mut bytes = Vec::new();
-    bytes.extend_from_slice(RESET_CURSOR_COLOUR_FALLBACK);
-    bytes.extend_from_slice(RESET_CURSOR_STYLE_FALLBACK);
-    bytes.extend_from_slice(DISABLE_FOCUS_FALLBACK);
-    bytes.extend_from_slice(DISABLE_EXTENDED_KEYS_FALLBACK);
-    bytes.extend_from_slice(DISABLE_MARGINS_FALLBACK);
-    bytes.extend_from_slice(DISABLE_MOUSE_FALLBACK);
-    bytes.extend_from_slice(DISABLE_BRACKETED_PASTE_FALLBACK);
-    bytes.extend_from_slice(b"\x1b[0m\x1b[H\x1b[2J");
-    bytes.extend_from_slice(alternate_screen_exit_sequence(term));
-    bytes
-}
+use super::terminal_cleanup::fallback_attach_stop_sequence;
 
 pub(super) fn current_process_pid() -> io::Result<Pid> {
     let raw = i32::try_from(std::process::id())
