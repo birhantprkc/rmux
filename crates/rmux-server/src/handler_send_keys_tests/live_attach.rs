@@ -398,6 +398,72 @@ async fn live_attach_mouse_sequences_dispatch_default_mouse_bindings() {
 }
 
 #[tokio::test]
+async fn live_attach_sgr_wheel_forwards_when_pane_mouse_any_is_enabled() {
+    let handler = RequestHandler::new();
+    let alpha = session_name("alpha");
+    let requester_pid = std::process::id();
+
+    let created = handler
+        .handle(Request::NewSession(NewSessionRequest {
+            session_name: alpha.clone(),
+            detached: true,
+            size: Some(TerminalSize { cols: 80, rows: 24 }),
+            environment: None,
+        }))
+        .await;
+    assert!(matches!(created, Response::NewSession(_)));
+
+    {
+        let mut state = handler.state.lock().await;
+        state
+            .append_bytes_to_pane_transcript_for_test(&alpha, 0, 0, b"\x1b[?1003h\x1b[?1006h")
+            .expect("mouse any and sgr transcript update");
+    }
+
+    let (control_tx, _control_rx) = mpsc::unbounded_channel();
+    let _attach_id = handler
+        .register_attach(requester_pid, alpha.clone(), control_tx)
+        .await;
+
+    let expected = encode_mouse_event(
+        mode::MODE_MOUSE_ALL | mode::MODE_MOUSE_SGR,
+        &MouseForwardEvent {
+            b: 64,
+            lb: 0,
+            x: 1,
+            y: 1,
+            lx: 0,
+            ly: 0,
+            sgr_b: 64,
+            sgr_type: 'M',
+            ignore: false,
+        },
+        1,
+        1,
+    )
+    .expect("sgr wheel encodes");
+    let capture =
+        RawPaneInputProbe::start(&handler, &alpha, "live-attach-sgr-wheel", expected.len()).await;
+
+    handler
+        .handle_attached_live_input_for_test(requester_pid, b"\x1b[<64;2;2M")
+        .await
+        .expect("live attach wheel input");
+
+    capture.finish(&handler, &alpha).await;
+    capture.assert_contents(&handler, &expected).await;
+
+    let active_attach = handler.active_attach.lock().await;
+    let event = active_attach
+        .by_pid
+        .get(&requester_pid)
+        .and_then(|active| active.mouse.current_event.as_ref())
+        .expect("current wheel event");
+    assert_eq!(event.location, MouseLocation::Pane);
+    assert_eq!(event.raw.b, 64);
+}
+
+#[tokio::test]
 async fn live_attach_manual_prompt_drag_sequence_does_not_error() {
     let handler = RequestHandler::new();
     let alpha = session_name("alpha");
