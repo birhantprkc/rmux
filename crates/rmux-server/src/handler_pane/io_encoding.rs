@@ -29,6 +29,7 @@ pub(super) fn write_bytes_to_target_io(
     let session_name = target.session_name().clone();
     let window_index = target.window_index();
     let pane_index = target.pane_index();
+    let master = state.pane_master_in_window(&session_name, window_index, pane_index)?;
     if bytes.is_empty() {
         return Ok(());
     }
@@ -36,7 +37,6 @@ pub(super) fn write_bytes_to_target_io(
     if state.append_pane_input_capture_for_test(target, bytes) {
         return Ok(());
     }
-    let master = state.pane_master_in_window(&session_name, window_index, pane_index)?;
     master.write_all(bytes).map_err(|error| {
         RmuxError::Server(format!(
             "failed to write to pane {}:{}.{}: {}",
