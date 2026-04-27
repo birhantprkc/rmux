@@ -9,6 +9,10 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
+#[cfg(windows)]
+use std::sync::mpsc;
+#[cfg(windows)]
+use std::thread;
 use std::time::Duration;
 #[cfg(windows)]
 use std::time::Instant;
@@ -343,28 +347,44 @@ fn windows_interactive_cmd_starts_in_profile_cwd_and_accepts_input() -> Result<(
         super::spawn_pane_process(PtyTerminalSize::new(100, 30), &profile, None)?;
     let io = master.try_clone_io()?;
     let cwd_marker = cwd.to_string_lossy().into_owned();
-    let mut output = read_until_io(&io, cwd_marker.as_bytes(), Duration::from_secs(3))?;
 
-    io.write_all(b"echo RMUX_WINDOWS_INTERACTIVE_OK\r\n")?;
-    output.extend(read_until_io(
-        &io,
-        b"RMUX_WINDOWS_INTERACTIVE_OK",
-        Duration::from_secs(3),
-    )?);
+    let output = (|| -> Result<Vec<u8>, Box<dyn Error>> {
+        io.write_all(b"cd\r\necho RMUX_WINDOWS_INTERACTIVE_OK\r\nexit\r\n")?;
+        read_until_io(&io, b"RMUX_WINDOWS_INTERACTIVE_OK", Duration::from_secs(5))
+    })();
 
-    child.terminate_forcefully()?;
-    let _ = child.wait()?;
+    reap_windows_test_child(&mut child)?;
     fs::remove_dir_all(&cwd)?;
 
+    let output = output?;
     let output = String::from_utf8_lossy(&output);
+    let unwrapped_output = output
+        .replace("\r\n", "")
+        .replace('\r', "")
+        .replace('\n', "");
     assert!(
-        output.contains(&cwd_marker),
-        "expected Windows shell prompt to start in {cwd_marker}, got {output:?}"
+        unwrapped_output.contains(&cwd_marker),
+        "expected Windows shell command to start in {cwd_marker}, got {output:?}"
     );
     assert!(
         output.contains("RMUX_WINDOWS_INTERACTIVE_OK"),
         "expected Windows interactive input marker, got {output:?}"
     );
+    Ok(())
+}
+
+#[cfg(windows)]
+fn reap_windows_test_child(child: &mut rmux_pty::PtyChild) -> Result<(), Box<dyn Error>> {
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while Instant::now() < deadline {
+        if child.try_wait()?.is_some() {
+            return Ok(());
+        }
+        thread::sleep(Duration::from_millis(20));
+    }
+
+    child.terminate_forcefully()?;
+    let _ = child.wait()?;
     Ok(())
 }
 
@@ -491,20 +511,53 @@ fn read_until_io(
     needle: &[u8],
     timeout: Duration,
 ) -> Result<Vec<u8>, Box<dyn Error>> {
-    let deadline = Instant::now() + timeout;
-    let mut output = Vec::new();
-    let mut buffer = [0_u8; 4096];
-
-    while Instant::now() < deadline {
-        let bytes_read = io.read(&mut buffer)?;
-        if bytes_read == 0 {
-            break;
-        }
-        output.extend_from_slice(&buffer[..bytes_read]);
-        if output.windows(needle.len()).any(|window| window == needle) {
-            return Ok(output);
-        }
+    if needle.is_empty() {
+        return Ok(Vec::new());
     }
 
-    Ok(output)
+    let reader = io.try_clone()?;
+    let expected = String::from_utf8_lossy(needle).into_owned();
+    let needle = needle.to_vec();
+    let (sender, receiver) = mpsc::channel();
+
+    thread::spawn(move || {
+        let mut output = Vec::new();
+        let mut buffer = [0_u8; 4096];
+
+        loop {
+            match reader.read(&mut buffer) {
+                Ok(0) => {
+                    let _ = sender.send(Ok(output));
+                    return;
+                }
+                Ok(bytes_read) => {
+                    output.extend_from_slice(&buffer[..bytes_read]);
+                    if output
+                        .windows(needle.len())
+                        .any(|window| window == needle.as_slice())
+                    {
+                        let _ = sender.send(Ok(output));
+                        return;
+                    }
+                }
+                Err(error) => {
+                    let _ = sender.send(Err(error));
+                    return;
+                }
+            }
+        }
+    });
+
+    match receiver.recv_timeout(timeout) {
+        Ok(Ok(output)) => Ok(output),
+        Ok(Err(error)) => Err(error.into()),
+        Err(mpsc::RecvTimeoutError::Timeout) => Err(io::Error::new(
+            io::ErrorKind::TimedOut,
+            format!("pty output did not contain {expected:?} within {timeout:?}"),
+        )
+        .into()),
+        Err(mpsc::RecvTimeoutError::Disconnected) => {
+            Err(io::Error::other("pty reader thread stopped before sending output").into())
+        }
+    }
 }

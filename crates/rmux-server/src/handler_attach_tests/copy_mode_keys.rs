@@ -55,23 +55,24 @@ async fn attached_copy_mode_emacs_slash_is_unbound_and_not_forwarded() {
         pane_mode_status(&handler, &alpha).await,
         "1:copy-mode:0:0\n"
     );
-    let before_slash = capture_pane_print(&handler, target.clone()).await;
-
-    handler
-        .handle_attached_live_input_for_test(requester_pid, b"/")
+    let mut pending_input = Vec::new();
+    let forwarded_to_pane = handler
+        .handle_attached_live_input_inner(requester_pid, &mut pending_input, b"/")
         .await
         .expect("copy-mode slash key");
-    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
     assert_eq!(
         pane_mode_status(&handler, &alpha).await,
         "1:copy-mode:0:0\n",
         "default emacs copy-mode must not treat / as a search prompt"
     );
-    assert_eq!(
-        capture_pane_print(&handler, target).await,
-        before_slash,
+    assert!(
+        !forwarded_to_pane,
         "unbound copy-mode keys must be consumed instead of leaking to the pane"
+    );
+    assert!(
+        pending_input.is_empty(),
+        "fully decoded key should not be buffered"
     );
 }
 
