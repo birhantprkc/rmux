@@ -1,10 +1,14 @@
-use super::{after_hook_format_values, RequestHandler, DEFAULT_SESSION_SIZE};
+use super::{
+    after_hook_format_values, AccessMode, RequestHandler, ServerAccessStore, DEFAULT_SESSION_SIZE,
+};
 use crate::control::ControlModeUpgrade;
 use crate::daemon::ShutdownHandle;
 use crate::pane_io::AttachControl;
 use rmux_core::{
     command_parser::parse_command_string, PaneGeometry, WINDOW_ALERTFLAGS, WINLINK_ALERTFLAGS,
 };
+use rmux_ipc::PeerIdentity;
+use rmux_os::identity::UserIdentity;
 use rmux_proto::{
     ControlMode, ErrorResponse, HasSessionRequest, HookName, KillPaneRequest, KillSessionRequest,
     LayoutName, ListPanesRequest, ListSessionsRequest, NewSessionExtRequest, NewSessionRequest,
@@ -47,3 +51,34 @@ mod copy_mode_tests;
 
 #[path = "handler_overlay_tests.rs"]
 mod overlay_tests;
+
+#[test]
+fn access_mode_for_peer_uses_user_identity_not_pid() {
+    let owner = UserIdentity::Sid("S-1-5-21-1000".into());
+    let handler = RequestHandler::new();
+    *handler
+        .server_access
+        .lock()
+        .expect("server access mutex must not be poisoned") =
+        ServerAccessStore::new_for_identity(0, owner.clone());
+
+    let owner_peer = PeerIdentity {
+        pid: 4242,
+        uid: 0,
+        user: owner,
+    };
+    let untrusted_peer_with_reused_pid = PeerIdentity {
+        pid: owner_peer.pid,
+        uid: 0,
+        user: UserIdentity::Sid("S-1-5-21-2000".into()),
+    };
+
+    assert_eq!(
+        handler.access_mode_for_peer(&owner_peer),
+        Some(AccessMode::ReadWrite)
+    );
+    assert_eq!(
+        handler.access_mode_for_peer(&untrusted_peer_with_reused_pid),
+        None
+    );
+}
