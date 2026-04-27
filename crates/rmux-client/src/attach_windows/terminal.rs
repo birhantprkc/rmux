@@ -1,9 +1,14 @@
 use std::error::Error as StdError;
 use std::fmt;
 use std::io::{self, Write};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use std::thread;
+use std::time::Duration;
 
 use rmux_core::alternate_screen_exit_sequence;
 use rmux_proto::TerminalSize;
+use tokio::sync::mpsc;
 use windows_sys::Win32::Foundation::{
     GetLastError, ERROR_INVALID_HANDLE, HANDLE, INVALID_HANDLE_VALUE, WAIT_OBJECT_0, WAIT_TIMEOUT,
 };
@@ -255,6 +260,68 @@ pub(super) fn current_size() -> Option<TerminalSize> {
     let cols = u16::try_from(width).ok()?;
     let rows = u16::try_from(height).ok()?;
     (cols > 0 && rows > 0).then_some(TerminalSize { cols, rows })
+}
+
+#[derive(Debug)]
+pub(super) struct ResizeWatcher {
+    stop: Arc<AtomicBool>,
+    thread: Option<thread::JoinHandle<()>>,
+}
+
+impl ResizeWatcher {
+    pub(super) fn spawn(
+        initial_size: Option<TerminalSize>,
+        resize_tx: mpsc::UnboundedSender<TerminalSize>,
+    ) -> Option<Self> {
+        let initial_size = initial_size?;
+
+        let stop = Arc::new(AtomicBool::new(false));
+        let thread_stop = Arc::clone(&stop);
+        let thread = thread::spawn(move || {
+            let mut deduper = ResizeDeduper::new(Some(initial_size));
+            while !thread_stop.load(Ordering::SeqCst) && !resize_tx.is_closed() {
+                thread::sleep(Duration::from_millis(100));
+                if let Some(size) = deduper.observe(current_size()) {
+                    if resize_tx.send(size).is_err() {
+                        return;
+                    }
+                }
+            }
+        });
+
+        Some(Self {
+            stop,
+            thread: Some(thread),
+        })
+    }
+}
+
+impl Drop for ResizeWatcher {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::SeqCst);
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
+}
+
+#[derive(Debug)]
+struct ResizeDeduper {
+    last: Option<TerminalSize>,
+}
+
+impl ResizeDeduper {
+    const fn new(initial: Option<TerminalSize>) -> Self {
+        Self { last: initial }
+    }
+
+    fn observe(&mut self, size: Option<TerminalSize>) -> Option<TerminalSize> {
+        if size.is_some() && size != self.last {
+            self.last = size;
+            return size;
+        }
+        None
+    }
 }
 
 pub(super) fn wait_for_input(handle: HANDLE, timeout_ms: u32) -> io::Result<bool> {

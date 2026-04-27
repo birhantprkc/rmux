@@ -115,6 +115,32 @@ fn flush_pending_input_ignores_redirected_input() -> Result<()> {
     Ok(())
 }
 
+#[test]
+fn resize_deduper_reports_only_real_size_changes() {
+    let initial = Some(TerminalSize { cols: 80, rows: 24 });
+    let mut deduper = ResizeDeduper::new(initial);
+
+    assert_eq!(deduper.observe(initial), None);
+    assert_eq!(deduper.observe(None), None);
+    assert_eq!(
+        deduper.observe(Some(TerminalSize {
+            cols: 100,
+            rows: 30
+        })),
+        Some(TerminalSize {
+            cols: 100,
+            rows: 30
+        })
+    );
+    assert_eq!(
+        deduper.observe(Some(TerminalSize {
+            cols: 100,
+            rows: 30
+        })),
+        None
+    );
+}
+
 #[derive(Clone, Debug)]
 struct FakeConsole {
     state: Rc<RefCell<FakeConsoleState>>,

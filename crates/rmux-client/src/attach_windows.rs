@@ -7,6 +7,7 @@ use std::thread;
 use rmux_ipc::BlockingLocalStream;
 use rmux_proto::{
     encode_attach_message, AttachFrameDecoder, AttachMessage, AttachedKeystroke, RmuxError,
+    TerminalSize,
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::mpsc;
@@ -100,11 +101,21 @@ where
     Input: Read + AsRawHandle + Send + 'static,
     Output: Write + Send + 'static,
 {
-    if let Some(size) = terminal::current_size() {
+    let initial_size = terminal::current_size();
+    if let Some(size) = initial_size {
         write_attach_message(&mut stream, AttachMessage::Resize(size))?;
     }
+    let (resize_tx, resize_rx) = mpsc::unbounded_channel();
+    let _resize_watcher = terminal::ResizeWatcher::spawn(initial_size, resize_tx);
 
-    drive_attach_stream_inner(stream, initial_bytes, screen_tracker.clone(), input, output)
+    drive_attach_stream_inner(
+        stream,
+        initial_bytes,
+        screen_tracker.clone(),
+        input,
+        output,
+        resize_rx,
+    )
 }
 
 /// Drives raw attach-stream byte forwarding over an upgraded local stream.
@@ -123,6 +134,7 @@ where
         AttachScreenTracker::default(),
         input,
         output,
+        closed_resize_rx(),
     )
 }
 
@@ -132,6 +144,7 @@ fn drive_attach_stream_inner<Input, Output>(
     screen_tracker: AttachScreenTracker,
     input: Input,
     output: Output,
+    resize_rx: mpsc::UnboundedReceiver<TerminalSize>,
 ) -> std::result::Result<(), ClientError>
 where
     Input: Read + AsRawHandle + Send + 'static,
@@ -147,6 +160,7 @@ where
             writer,
             initial_bytes,
             input_rx,
+            resize_rx,
             output,
             screen_tracker,
         )
@@ -196,6 +210,7 @@ async fn drive_async_attach<Reader, Writer, Output>(
     mut writer: Writer,
     initial_bytes: Vec<u8>,
     mut input_rx: mpsc::UnboundedReceiver<Vec<u8>>,
+    mut resize_rx: mpsc::UnboundedReceiver<TerminalSize>,
     mut output: Output,
     screen_tracker: AttachScreenTracker,
 ) -> std::result::Result<(), ClientError>
@@ -231,6 +246,15 @@ where
                 write_async_attach_message(
                     &mut writer,
                     AttachMessage::Keystroke(AttachedKeystroke::new(bytes)),
+                ).await?;
+            }
+            size = resize_rx.recv() => {
+                let Some(size) = size else {
+                    continue;
+                };
+                write_async_attach_message(
+                    &mut writer,
+                    AttachMessage::Resize(size),
                 ).await?;
             }
             read = reader.read(&mut read_buffer) => {
@@ -333,6 +357,12 @@ fn write_attach_message(
 ) -> std::result::Result<(), ClientError> {
     let frame = encode_attach_message(&message).map_err(ClientError::from)?;
     stream.write_all(&frame).map_err(ClientError::Io)
+}
+
+fn closed_resize_rx() -> mpsc::UnboundedReceiver<TerminalSize> {
+    let (resize_tx, resize_rx) = mpsc::unbounded_channel();
+    drop(resize_tx);
+    resize_rx
 }
 
 async fn write_async_attach_message<Writer>(
