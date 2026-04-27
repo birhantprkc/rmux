@@ -1,15 +1,18 @@
 //! Blocking tmux-compatible control-mode client transport.
 
 use std::io::{self, Read, Write};
-use std::net::Shutdown;
-use std::os::unix::net::UnixStream;
 use std::sync::mpsc;
 use std::thread;
 
+use rmux_ipc::BlockingLocalStream;
 use rmux_proto::{
     ClientTerminalContext, ControlMode, ControlModeRequest, Request, Response, CONTROL_CONTROL_END,
     CONTROL_CONTROL_START,
 };
+#[cfg(windows)]
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+#[cfg(windows)]
+use tokio::sync::mpsc as tokio_mpsc;
 
 use crate::{
     connection::{read_response_frame_exact, Connection, ControlModeUpgrade, ControlTransition},
@@ -17,7 +20,7 @@ use crate::{
 };
 
 impl Connection {
-    /// Requests a control-mode upgrade and, on success, yields the raw Unix
+    /// Requests a control-mode upgrade and, on success, yields the raw local
     /// stream for tmux-compatible text control traffic.
     pub fn begin_control_mode(
         mut self,
@@ -53,7 +56,7 @@ pub fn drive_control_mode(
 pub fn drive_control_mode_with_stdio<R, W>(
     upgrade: ControlModeUpgrade,
     initial_commands: &[String],
-    mut input: R,
+    input: R,
     mut output: W,
 ) -> Result<(), ClientError>
 where
@@ -69,24 +72,81 @@ where
     }
 
     let stream = upgrade.into_stream();
-    write_initial_commands(&stream, initial_commands)?;
-    stream.set_nonblocking(false).map_err(ClientError::Io)?;
-    let mut writer = stream.try_clone().map_err(ClientError::Io)?;
-    let (stdin_done_tx, stdin_done_rx) = mpsc::sync_channel(1);
-    let stdin_thread = thread::spawn(move || {
-        let result = io::copy(&mut input, &mut writer).map(|_| ());
-        let _ = writer.shutdown(Shutdown::Write);
-        let _ = stdin_done_tx.send(result);
-    });
-
-    let copy_result = copy_control_output(stream, &mut output).map_err(ClientError::Io);
-    let stdin_result = poll_input_thread(&stdin_done_rx)?;
+    let copy_result = drive_control_stream(stream, initial_commands, input, &mut output);
     if copy_result.is_ok() && output_needs_suffix(mode) {
         output
             .write_all(CONTROL_CONTROL_END.as_bytes())
             .map_err(ClientError::Io)?;
         output.flush().map_err(ClientError::Io)?;
     }
+
+    copy_result
+}
+
+#[cfg(unix)]
+fn drive_control_stream<R, W>(
+    stream: BlockingLocalStream,
+    initial_commands: &[String],
+    mut input: R,
+    output: &mut W,
+) -> Result<(), ClientError>
+where
+    R: Read + Send + 'static,
+    W: Write,
+{
+    write_initial_commands(&stream, initial_commands)?;
+    ensure_blocking(&stream).map_err(ClientError::Io)?;
+    let mut writer = stream.try_clone().map_err(ClientError::Io)?;
+    let (stdin_done_tx, stdin_done_rx) = mpsc::sync_channel(1);
+    let stdin_thread = thread::spawn(move || {
+        let result = io::copy(&mut input, &mut writer).map(|_| ());
+        let _ = shutdown_write(&writer);
+        let _ = stdin_done_tx.send(result);
+    });
+
+    let copy_result = copy_control_output(stream, output).map_err(ClientError::Io);
+    let stdin_result = poll_input_thread(&stdin_done_rx)?;
+    if stdin_result.is_some() {
+        stdin_thread
+            .join()
+            .map_err(|_| ClientError::Io(io::Error::other("control input thread panicked")))?;
+    }
+
+    copy_result?;
+    if let Some(stdin_result) = stdin_result {
+        stdin_result.map_err(ClientError::Io)?;
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn drive_control_stream<R, W>(
+    stream: BlockingLocalStream,
+    initial_commands: &[String],
+    input: R,
+    output: &mut W,
+) -> Result<(), ClientError>
+where
+    R: Read + Send + 'static,
+    W: Write,
+{
+    let (input_tx, input_rx) = tokio_mpsc::unbounded_channel();
+    let (stdin_done_tx, stdin_done_rx) = mpsc::sync_channel(1);
+    let stdin_thread = thread::spawn(move || {
+        let result = copy_control_input(input, input_tx);
+        let _ = stdin_done_tx.send(result);
+    });
+
+    let (pipe, runtime) = stream.into_async_parts();
+    let copy_result = runtime
+        .block_on(drive_async_control(
+            pipe,
+            initial_commands,
+            input_rx,
+            output,
+        ))
+        .map_err(ClientError::Io);
+    let stdin_result = poll_input_thread(&stdin_done_rx)?;
 
     if stdin_result.is_some() {
         stdin_thread
@@ -117,8 +177,9 @@ fn poll_input_thread(
     }
 }
 
+#[cfg(unix)]
 fn write_initial_commands(
-    stream: &UnixStream,
+    stream: &BlockingLocalStream,
     initial_commands: &[String],
 ) -> Result<(), ClientError> {
     if initial_commands.is_empty() {
@@ -135,7 +196,8 @@ fn write_initial_commands(
     Ok(())
 }
 
-fn copy_control_output(mut stream: UnixStream, output: &mut impl Write) -> io::Result<()> {
+#[cfg(unix)]
+fn copy_control_output(mut stream: BlockingLocalStream, output: &mut impl Write) -> io::Result<()> {
     let mut buffer = [0_u8; 8192];
 
     loop {
@@ -148,7 +210,95 @@ fn copy_control_output(mut stream: UnixStream, output: &mut impl Write) -> io::R
     }
 }
 
-#[cfg(test)]
+#[cfg(unix)]
+fn ensure_blocking(stream: &BlockingLocalStream) -> io::Result<()> {
+    stream.set_nonblocking(false)
+}
+
+#[cfg(unix)]
+fn shutdown_write(stream: &BlockingLocalStream) -> io::Result<()> {
+    stream.shutdown(std::net::Shutdown::Write)
+}
+
+#[cfg(windows)]
+fn copy_control_input<R>(
+    mut input: R,
+    input_tx: tokio_mpsc::UnboundedSender<Vec<u8>>,
+) -> io::Result<()>
+where
+    R: Read,
+{
+    let mut buffer = [0_u8; 8192];
+    loop {
+        let bytes_read = match input.read(&mut buffer) {
+            Ok(0) => return Ok(()),
+            Ok(bytes_read) => bytes_read,
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+            Err(error) => return Err(error),
+        };
+
+        if input_tx.send(buffer[..bytes_read].to_vec()).is_err() {
+            return Ok(());
+        }
+    }
+}
+
+#[cfg(windows)]
+async fn drive_async_control<Stream, W>(
+    stream: Stream,
+    initial_commands: &[String],
+    mut input_rx: tokio_mpsc::UnboundedReceiver<Vec<u8>>,
+    output: &mut W,
+) -> io::Result<()>
+where
+    Stream: AsyncRead + AsyncWrite + Unpin,
+    W: Write,
+{
+    let (mut reader, mut writer) = tokio::io::split(stream);
+    write_async_initial_commands(&mut writer, initial_commands).await?;
+    let mut input_closed = false;
+    let mut buffer = [0_u8; 8192];
+
+    loop {
+        tokio::select! {
+            input = input_rx.recv(), if !input_closed => {
+                match input {
+                    Some(bytes) => writer.write_all(&bytes).await?,
+                    None => {
+                        writer.flush().await?;
+                        input_closed = true;
+                    }
+                }
+            }
+            bytes_read = reader.read(&mut buffer) => {
+                let bytes_read = bytes_read?;
+                if bytes_read == 0 {
+                    return Ok(());
+                }
+                output.write_all(&buffer[..bytes_read])?;
+                output.flush()?;
+            }
+        }
+    }
+}
+
+#[cfg(windows)]
+async fn write_async_initial_commands<Writer>(
+    writer: &mut Writer,
+    initial_commands: &[String],
+) -> io::Result<()>
+where
+    Writer: AsyncWrite + Unpin,
+{
+    for command in initial_commands {
+        writer.write_all(command.as_bytes()).await?;
+        writer.write_all(b"\n").await?;
+    }
+    writer.flush().await?;
+    Ok(())
+}
+
+#[cfg(all(test, unix))]
 mod tests {
     use std::io::{Cursor, Write};
     use std::sync::mpsc;

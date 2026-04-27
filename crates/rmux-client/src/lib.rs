@@ -1,12 +1,12 @@
 #![deny(missing_docs)]
 
-//! Blocking Unix-socket client for the RMUX detached RPC protocol.
+//! Blocking local client for the RMUX detached RPC protocol.
 //!
 //! This crate provides the transport layer for sending [`rmux_proto::Request`]
 //! frames and receiving [`rmux_proto::Response`] frames over a blocking
-//! `std::os::unix::net::UnixStream`. It also exposes nested-session detection
-//! through the `$RMUX` environment variable and raw-terminal lifecycle
-//! management for attach-mode clients.
+//! local stream. It also exposes nested-session detection through the `$RMUX`
+//! environment variable and raw-terminal lifecycle management for attach-mode
+//! clients.
 
 #[cfg(unix)]
 pub mod attach;
@@ -16,10 +16,6 @@ pub mod attach;
 pub mod auto_start;
 pub(crate) mod commands;
 pub mod connection;
-#[cfg(unix)]
-pub mod control;
-#[cfg(windows)]
-#[path = "control_unsupported.rs"]
 pub mod control;
 pub mod nested;
 
@@ -49,7 +45,7 @@ use std::fmt;
 /// Client-side errors for transport and protocol failures.
 #[derive(Debug)]
 pub enum ClientError {
-    /// An I/O error occurred on the Unix socket.
+    /// An I/O error occurred on the local client stream.
     Io(std::io::Error),
     /// A protocol framing or encoding error occurred.
     Protocol(RmuxError),

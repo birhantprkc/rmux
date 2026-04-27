@@ -233,7 +233,6 @@ impl Connection {
         }
     }
 
-    #[cfg(unix)]
     pub(crate) fn stream_mut(&mut self) -> &mut BlockingLocalStream {
         &mut self.stream
     }
@@ -253,7 +252,6 @@ impl Connection {
         })
     }
 
-    #[cfg(unix)]
     pub(crate) fn into_control_upgrade(
         self,
         response: ControlModeResponse,
@@ -268,7 +266,6 @@ impl Connection {
     }
 }
 
-#[cfg(unix)]
 pub(crate) fn read_response_frame_exact(
     stream: &mut BlockingLocalStream,
 ) -> Result<Response, ClientError> {
@@ -287,7 +284,6 @@ pub(crate) fn read_response_frame_exact(
     }
 }
 
-#[cfg(unix)]
 fn read_exact_or_eof(
     stream: &mut BlockingLocalStream,
     buffer: &mut [u8],
