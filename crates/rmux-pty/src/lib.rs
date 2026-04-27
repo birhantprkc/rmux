@@ -20,6 +20,8 @@ use std::ffi::NulError;
 use std::fmt;
 
 pub use child::{ChildCommand, PtyChild, SpawnedPty};
+#[cfg(unix)]
+pub use pty::PtySlave;
 pub use pty::{PtyIo, PtyMaster, PtyPair};
 pub use size::TerminalSize;
 

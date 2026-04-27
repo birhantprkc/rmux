@@ -11,21 +11,39 @@ use crate::PtyError;
 use crate::{Result, TerminalSize};
 
 #[cfg(unix)]
+/// The slave endpoint of a Unix pseudoterminal pair.
 #[derive(Debug)]
-pub(crate) struct PtySlave {
+pub struct PtySlave {
     fd: OwnedFd,
 }
 
 #[cfg(unix)]
 impl PtySlave {
-    pub(crate) fn try_clone(&self) -> Result<Self> {
+    /// Duplicates the slave terminal endpoint.
+    pub fn try_clone(&self) -> Result<Self> {
         Ok(Self {
             fd: self.fd.try_clone()?,
         })
     }
 
-    pub(crate) fn into_owned_fd(self) -> OwnedFd {
+    /// Consumes the slave endpoint and returns the owned file descriptor.
+    #[must_use]
+    pub fn into_owned_fd(self) -> OwnedFd {
         self.fd
+    }
+}
+
+#[cfg(unix)]
+impl AsFd for PtySlave {
+    fn as_fd(&self) -> BorrowedFd<'_> {
+        self.fd.as_fd()
+    }
+}
+
+#[cfg(unix)]
+impl AsRawFd for PtySlave {
+    fn as_raw_fd(&self) -> RawFd {
+        self.fd.as_raw_fd()
     }
 }
 
@@ -258,6 +276,13 @@ impl PtyMaster {
         self.io
     }
 
+    /// Consumes this Unix PTY master and returns the owned file descriptor.
+    #[cfg(unix)]
+    #[must_use]
+    pub fn into_owned_fd(self) -> OwnedFd {
+        self.io.fd
+    }
+
     /// Returns the PTY I/O endpoint.
     #[must_use]
     pub fn io(&self) -> &PtyIo {
@@ -329,9 +354,17 @@ impl PtyPair {
         &self.master
     }
 
+    /// Returns the slave endpoint.
     #[cfg(unix)]
+    #[must_use]
+    pub fn slave(&self) -> &PtySlave {
+        &self.slave
+    }
+
+    /// Consumes this Unix PTY pair into its master and slave endpoints.
     #[cfg(unix)]
-    pub(crate) fn into_split(self) -> (PtyMaster, PtySlave) {
+    #[must_use]
+    pub fn into_split(self) -> (PtyMaster, PtySlave) {
         (self.master, self.slave)
     }
 
