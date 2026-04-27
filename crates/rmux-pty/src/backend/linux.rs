@@ -2,11 +2,11 @@ use std::os::fd::{BorrowedFd, OwnedFd, RawFd};
 
 use std::io;
 
-use rustix::fs::{fcntl_getfl, fcntl_setfl, OFlags};
+use rustix::fs::{fcntl_getfl, fcntl_setfl, open, Mode, OFlags};
 use rustix::process::{
     getpid, ioctl_tiocsctty, kill_process as rustix_kill_process, kill_process_group, setsid,
 };
-use rustix::pty::{grantpt, ioctl_tiocgptpeer, openpt, unlockpt, OpenptFlags};
+use rustix::pty::{grantpt, ioctl_tiocgptpeer, openpt, ptsname, unlockpt, OpenptFlags};
 use rustix::termios::{tcgetwinsize, tcsetpgrp, tcsetwinsize};
 
 use crate::{size, ProcessId, Result, Signal, TerminalSize};
@@ -16,12 +16,28 @@ pub(crate) fn open_pty_pair() -> Result<(OwnedFd, OwnedFd)> {
     grantpt(&master)?;
     unlockpt(&master)?;
 
-    let slave = ioctl_tiocgptpeer(
-        &master,
-        OpenptFlags::RDWR | OpenptFlags::NOCTTY | OpenptFlags::CLOEXEC,
-    )?;
+    let slave = open_slave(&master)?;
 
     Ok((master, slave))
+}
+
+fn open_slave(master: &OwnedFd) -> Result<OwnedFd> {
+    match ioctl_tiocgptpeer(
+        master,
+        OpenptFlags::RDWR | OpenptFlags::NOCTTY | OpenptFlags::CLOEXEC,
+    ) {
+        Ok(slave) => Ok(slave),
+        Err(peer_error) => open_slave_by_name(master).map_err(|_| peer_error.into()),
+    }
+}
+
+fn open_slave_by_name(master: &OwnedFd) -> Result<OwnedFd> {
+    let slave_name = ptsname(master, Vec::new())?;
+    Ok(open(
+        slave_name.as_c_str(),
+        OFlags::RDWR | OFlags::NOCTTY | OFlags::CLOEXEC,
+        Mode::empty(),
+    )?)
 }
 
 pub(crate) fn query_size(fd: BorrowedFd<'_>) -> Result<TerminalSize> {

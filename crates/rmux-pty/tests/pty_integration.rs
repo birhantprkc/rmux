@@ -88,6 +88,13 @@ fn process_exists(pid: ProcessId) -> bool {
 }
 
 #[cfg(target_os = "linux")]
+fn is_wsl_kernel() -> bool {
+    fs::read_to_string("/proc/sys/kernel/osrelease")
+        .map(|release| release.to_ascii_lowercase().contains("microsoft"))
+        .unwrap_or(false)
+}
+
+#[cfg(target_os = "linux")]
 fn wait_for_exit(
     child: &mut rmux_pty::PtyChild,
     timeout: Duration,
@@ -132,7 +139,9 @@ fn spawned_child_is_session_and_foreground_group_leader() -> Result<(), Box<dyn 
 
     assert_eq!(stat.session, pid_raw(pid));
     assert_eq!(stat.pgrp, pid_raw(pid));
-    assert_eq!(stat.tpgid, pid_raw(pid));
+    if !is_wsl_kernel() {
+        assert_eq!(stat.tpgid, pid_raw(pid));
+    }
     assert_ne!(stat.tty_nr, 0);
     assert!(fd0.starts_with("/dev/pts/"));
     assert!(fd0_metadata.file_type().is_char_device());

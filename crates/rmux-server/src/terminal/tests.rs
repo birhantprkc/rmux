@@ -306,10 +306,13 @@ fn resolve_shell_path_prefers_default_shell_option_before_shell_env_fallback() {
     let options = OptionStore::new();
     let environment = HashMap::from([("SHELL".to_owned(), "/bin/sh".to_owned())]);
     let resolved = super::resolve_shell_path(&options, None, &environment);
+    let expected = options
+        .resolve(None, OptionName::DefaultShell)
+        .expect("default-shell has a table default");
 
     assert_eq!(
         resolved,
-        super::normalize_shell_path(super::default_shell_path())
+        super::normalize_shell_path(PathBuf::from(expected))
     );
 }
 
