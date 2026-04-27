@@ -5,6 +5,7 @@ use super::super::io_other;
 use super::super::pane_prompt_input::{
     decode_utf8_char, is_extended_key_prefix, is_utf8_lead_byte, utf8_expected_len,
 };
+use super::bracketed_paste::{decode_bracketed_paste, BracketedPasteDecode};
 use super::{is_enter_key, is_mouse_prefix};
 use crate::input_keys::{decode_extended_key, decode_mouse, ExtendedKeyDecode, MouseDecode};
 use crate::key_table::{decode_attached_key, AttachedKeyDecode, PREFIX_TABLE};
@@ -102,6 +103,30 @@ impl RequestHandler {
 
         while offset < pending_input.len() {
             let slice = &pending_input[offset..];
+            match decode_bracketed_paste(slice) {
+                BracketedPasteDecode::Matched { size } => {
+                    if raw_start < offset {
+                        self.write_attached_bytes(attach_pid, &pending_input[raw_start..offset])
+                            .await?;
+                    }
+                    self.write_attached_bytes(attach_pid, &pending_input[offset..offset + size])
+                        .await?;
+                    forwarded_to_pane = true;
+                    offset += size;
+                    raw_start = offset;
+                    continue;
+                }
+                BracketedPasteDecode::Partial => {
+                    if raw_start < offset {
+                        self.write_attached_bytes(attach_pid, &pending_input[raw_start..offset])
+                            .await?;
+                        forwarded_to_pane = true;
+                    }
+                    pending_input.drain(..offset);
+                    return Ok(forwarded_to_pane);
+                }
+                BracketedPasteDecode::NotPaste => {}
+            }
             if is_mouse_prefix(slice) {
                 if raw_start < offset {
                     self.write_attached_bytes(attach_pid, &pending_input[raw_start..offset])

@@ -16,6 +16,8 @@ use crate::key_table::{decode_attached_key, AttachedKeyDecode};
 use crate::mouse::{classify_mouse_event, layout_for_session};
 use crate::pane_io::{AttachControl, OverlayFrame};
 
+#[path = "attached_input/bracketed_paste.rs"]
+mod bracketed_paste;
 #[path = "attached_input/live.rs"]
 mod live;
 

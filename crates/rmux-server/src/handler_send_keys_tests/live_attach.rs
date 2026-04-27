@@ -239,6 +239,55 @@ async fn live_attach_bracketed_paste_sequences_pass_through_unchanged_when_chunk
 }
 
 #[tokio::test]
+async fn live_attach_bracketed_paste_preserves_multiline_special_payload() {
+    let handler = RequestHandler::new();
+    let alpha = session_name("alpha");
+    let requester_pid = std::process::id();
+
+    let created = handler
+        .handle(Request::NewSession(NewSessionRequest {
+            session_name: alpha.clone(),
+            detached: true,
+            size: Some(TerminalSize { cols: 80, rows: 24 }),
+            environment: None,
+        }))
+        .await;
+    assert!(matches!(created, Response::NewSession(_)));
+
+    let (control_tx, _control_rx) = mpsc::unbounded_channel();
+    let _attach_id = handler
+        .register_attach(requester_pid, alpha.clone(), control_tx)
+        .await;
+
+    let expected = b"\x1b[200~line one\r\nline\ttwo \x02 literal \xe6\x9d\xb1\xe4\xba\xac\x1b[201~";
+    let capture = RawPaneInputProbe::start(
+        &handler,
+        &alpha,
+        "live-attach-bracketed-paste-special",
+        expected.len(),
+    )
+    .await;
+
+    let mut pending_input = Vec::new();
+    for chunk in [
+        &expected[..4],
+        &expected[4..17],
+        &expected[17..31],
+        &expected[31..expected.len() - 3],
+        &expected[expected.len() - 3..],
+    ] {
+        handler
+            .handle_attached_live_input(requester_pid, &mut pending_input, chunk)
+            .await
+            .expect("bracketed paste chunk");
+    }
+    assert!(pending_input.is_empty());
+
+    capture.finish(&handler, &alpha).await;
+    capture.assert_contents(&handler, expected).await;
+}
+
+#[tokio::test]
 async fn live_attach_focus_sequences_pass_through_unchanged() {
     let handler = RequestHandler::new();
     let alpha = session_name("alpha");

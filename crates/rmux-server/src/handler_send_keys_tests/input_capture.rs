@@ -206,7 +206,10 @@ async fn start_unix_capture(
         .handle(Request::SendKeys(SendKeysRequest {
             target: PaneTarget::new(session_name.clone(), 0),
             keys: vec![
-                format!("cat > {}", sh_single_quote(path)),
+                format!(
+                    "stty -echo -icrnl; cat > {}; stty echo icrnl",
+                    sh_single_quote(path)
+                ),
                 "Enter".to_owned(),
             ],
         }))
