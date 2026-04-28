@@ -260,10 +260,19 @@ pub(crate) fn validate_server_access_request(
         }
         return Ok(());
     }
-    if request.user.is_none() {
-        return Err(RmuxError::Server("missing user argument".to_owned()));
+    #[cfg(windows)]
+    {
+        Err(RmuxError::Server(
+            "server-access user mutations are unsupported on Windows; named-pipe access is scoped to the current Windows SID".to_owned(),
+        ))
     }
-    Ok(())
+    #[cfg(not(windows))]
+    {
+        if request.user.is_none() {
+            return Err(RmuxError::Server("missing user argument".to_owned()));
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -322,5 +331,37 @@ mod tests {
         let store = ServerAccessStore::new(current_owner_uid());
 
         assert_eq!(store.mode_for_identity(&owner), Some(AccessMode::ReadWrite));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn server_access_user_mutations_are_explicitly_unsupported_on_windows() {
+        let error = validate_server_access_request(&ServerAccessRequest {
+            add: true,
+            deny: false,
+            list: false,
+            read_only: false,
+            write: false,
+            user: Some("someone".to_owned()),
+        })
+        .expect_err("Windows cannot safely map server-access users to Unix UIDs");
+
+        assert!(error
+            .to_string()
+            .contains("unsupported on Windows; named-pipe access"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn server_access_list_still_validates_on_windows() {
+        validate_server_access_request(&ServerAccessRequest {
+            add: false,
+            deny: false,
+            list: true,
+            read_only: false,
+            write: false,
+            user: None,
+        })
+        .expect("server-access -l remains read-only and portable");
     }
 }

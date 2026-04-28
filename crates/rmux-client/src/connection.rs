@@ -370,34 +370,16 @@ fn connect_stream_with_timeout(
     )
 }
 
-#[cfg(unix)]
 fn read_timeout(stream: &BlockingLocalStream) -> io::Result<Option<Duration>> {
     stream.read_timeout()
 }
 
-#[cfg(windows)]
-fn read_timeout(_stream: &BlockingLocalStream) -> io::Result<Option<Duration>> {
-    Ok(None)
-}
-
-#[cfg(unix)]
 fn set_read_timeout(stream: &BlockingLocalStream, timeout: Option<Duration>) -> io::Result<()> {
     stream.set_read_timeout(timeout)
 }
 
-#[cfg(windows)]
-fn set_read_timeout(_stream: &BlockingLocalStream, _timeout: Option<Duration>) -> io::Result<()> {
-    Ok(())
-}
-
-#[cfg(unix)]
 fn set_write_timeout(stream: &BlockingLocalStream, timeout: Option<Duration>) -> io::Result<()> {
     stream.set_write_timeout(timeout)
-}
-
-#[cfg(windows)]
-fn set_write_timeout(_stream: &BlockingLocalStream, _timeout: Option<Duration>) -> io::Result<()> {
-    Ok(())
 }
 
 /// Returns `true` for I/O errors that indicate the server is not running.

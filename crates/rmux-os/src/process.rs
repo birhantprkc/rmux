@@ -314,33 +314,36 @@ fn environment_impl(_pid: u32) -> io::Result<Option<HashMap<String, String>>> {
 
 #[cfg(windows)]
 fn windows_is_live(pid: u32) -> io::Result<Option<bool>> {
-    use windows_sys::Win32::Foundation::STILL_ACTIVE;
-    use windows_sys::Win32::System::Threading::{
-        GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
+    use windows_sys::Win32::Foundation::{
+        ERROR_ACCESS_DENIED, ERROR_INVALID_PARAMETER, WAIT_FAILED, WAIT_OBJECT_0, WAIT_TIMEOUT,
     };
+    use windows_sys::Win32::Storage::FileSystem::SYNCHRONIZE;
+    use windows_sys::Win32::System::Threading::{OpenProcess, WaitForSingleObject};
 
     let handle = unsafe {
         // SAFETY: OpenProcess validates the pid and returns either a handle or null.
-        OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid)
+        OpenProcess(SYNCHRONIZE, 0, pid)
     };
     if handle.is_null() {
         let error = io::Error::last_os_error();
         return match error.raw_os_error() {
-            Some(87) => Ok(Some(false)),
+            Some(code) if code == ERROR_INVALID_PARAMETER as i32 => Ok(Some(false)),
+            Some(code) if code == ERROR_ACCESS_DENIED as i32 => Ok(None),
             _ => Err(error),
         };
     }
     let _guard = WindowsHandle(handle);
 
-    let mut exit_code = 0;
-    let ok = unsafe {
-        // SAFETY: `handle` is a live process handle and `exit_code` is writable.
-        GetExitCodeProcess(handle, &mut exit_code)
+    let wait = unsafe {
+        // SAFETY: `handle` is a live process handle and a zero timeout only observes state.
+        WaitForSingleObject(handle, 0)
     };
-    if ok == 0 {
-        return Err(io::Error::last_os_error());
+    match wait {
+        WAIT_TIMEOUT => Ok(Some(true)),
+        WAIT_OBJECT_0 => Ok(Some(false)),
+        WAIT_FAILED => Err(io::Error::last_os_error()),
+        _ => Err(io::Error::other("unexpected Windows process wait result")),
     }
-    Ok(Some(exit_code == STILL_ACTIVE as u32))
 }
 
 #[cfg(windows)]
@@ -522,94 +525,5 @@ fn executable_name(path: &str) -> Option<String> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn fd_path_rejects_negative_descriptors() {
-        assert_eq!(fd_path(std::process::id(), -1), None);
-    }
-
-    #[test]
-    fn current_process_is_live() {
-        assert_eq!(
-            ProcessInspector
-                .is_live(std::process::id())
-                .expect("liveness query"),
-            Some(true)
-        );
-        assert!(is_live(std::process::id()));
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn current_process_path_is_available() {
-        let path = current_path(std::process::id()).expect("current process cwd should be visible");
-        assert!(!path.is_empty());
-    }
-
-    #[test]
-    fn current_process_command_name_is_available() {
-        let name =
-            command_name(std::process::id()).expect("current process command should be visible");
-        assert!(!name.is_empty());
-    }
-
-    #[test]
-    #[cfg(unix)]
-    fn current_process_environment_is_available() {
-        let environment =
-            environment(std::process::id()).expect("current process environment should be visible");
-        assert!(!environment.is_empty());
-    }
-
-    #[cfg(windows)]
-    #[test]
-    fn windows_reports_unavailable_environment_as_ok_none() {
-        assert_eq!(
-            ProcessInspector
-                .environment(std::process::id())
-                .expect("environment query should not fail"),
-            None
-        );
-    }
-
-    #[cfg(windows)]
-    #[test]
-    fn windows_reports_unavailable_fd_path_as_ok_none() {
-        assert_eq!(
-            ProcessInspector
-                .fd_path(std::process::id(), 0)
-                .expect("fd path query should not fail"),
-            None
-        );
-    }
-
-    #[test]
-    fn parses_nul_separated_environment() {
-        let environment = environment_from_nul_entries(b"A=1\0B=two\0\0").expect("environment");
-
-        assert_eq!(environment.get("A").map(String::as_str), Some("1"));
-        assert_eq!(environment.get("B").map(String::as_str), Some("two"));
-    }
-
-    #[cfg(target_os = "macos")]
-    #[test]
-    fn parses_macos_procargs_environment() {
-        let mut buffer = Vec::new();
-        let argc: libc::c_int = 2;
-        buffer.extend_from_slice(&argc.to_ne_bytes());
-        buffer.extend_from_slice(b"/bin/zsh\0");
-        buffer.extend_from_slice(b"\0\0");
-        buffer.extend_from_slice(b"zsh\0-l\0");
-        buffer.extend_from_slice(b"RMUX_PANE=%1\0LANG=en_US.UTF-8\0\0");
-
-        let environment = environment_from_macos_procargs(&buffer).expect("environment");
-
-        assert_eq!(environment.get("RMUX_PANE").map(String::as_str), Some("%1"));
-        assert_eq!(
-            environment.get("LANG").map(String::as_str),
-            Some("en_US.UTF-8")
-        );
-    }
-}
+#[path = "process_tests.rs"]
+mod tests;

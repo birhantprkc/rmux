@@ -32,27 +32,34 @@ impl WindowsPty {
     }
 
     pub(crate) fn read(&self, buffer: &mut [u8]) -> io::Result<usize> {
-        let state = self
-            .state
-            .read()
-            .map_err(|_| io::Error::other("ConPTY state lock poisoned"))?;
-        let bytes_read = super::io::read(&state.output_read, buffer)?;
-        drop(state);
-        let mut dsr_bootstrap = self
-            .dsr_bootstrap
-            .lock()
-            .map_err(|_| io::Error::other("ConPTY DSR mutex poisoned"))?;
-        let Some(dsr) = dsr_bootstrap.as_mut() else {
-            return Ok(bytes_read);
-        };
+        loop {
+            if let Some(len) = self.drain_deferred_dsr_bytes(buffer)? {
+                return Ok(len);
+            }
 
-        let filtered = dsr.filter(&mut buffer[..bytes_read]);
-        let len = filtered.bytes.len();
-        if let Some(response) = filtered.response {
-            self.write_all(response)?;
-            *dsr_bootstrap = None;
+            let state = self
+                .state
+                .read()
+                .map_err(|_| io::Error::other("ConPTY state lock poisoned"))?;
+            let bytes_read = super::io::read(&state.output_read, buffer)?;
+            drop(state);
+            let mut dsr_bootstrap = self
+                .dsr_bootstrap
+                .lock()
+                .map_err(|_| io::Error::other("ConPTY DSR mutex poisoned"))?;
+            let Some(dsr) = dsr_bootstrap.as_mut() else {
+                return Ok(bytes_read);
+            };
+
+            let filtered = dsr.filter(buffer, bytes_read);
+            if let Some(response) = filtered.response {
+                self.write_all(response)?;
+                *dsr_bootstrap = None;
+            }
+            if filtered.len > 0 || bytes_read == 0 {
+                return Ok(filtered.len);
+            }
         }
-        Ok(len)
     }
 
     pub(crate) fn write_all(&self, bytes: &[u8]) -> io::Result<()> {
@@ -70,6 +77,16 @@ impl WindowsPty {
             .map_err(|_| io::Error::other("ConPTY DSR mutex poisoned"))?;
         *dsr = Some(DsrBootstrap::from_env());
         Ok(())
+    }
+
+    fn drain_deferred_dsr_bytes(&self, buffer: &mut [u8]) -> io::Result<Option<usize>> {
+        let mut dsr_bootstrap = self
+            .dsr_bootstrap
+            .lock()
+            .map_err(|_| io::Error::other("ConPTY DSR mutex poisoned"))?;
+        Ok(dsr_bootstrap
+            .as_mut()
+            .and_then(|dsr| dsr.drain_deferred(buffer)))
     }
 
     pub(crate) fn uses_passthrough(&self) -> bool {

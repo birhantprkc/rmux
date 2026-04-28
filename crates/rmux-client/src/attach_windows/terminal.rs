@@ -1,6 +1,7 @@
 use std::error::Error as StdError;
 use std::fmt;
 use std::io::{self, Write};
+use std::mem::MaybeUninit;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread;
@@ -13,9 +14,10 @@ use windows_sys::Win32::Foundation::{
 };
 use windows_sys::Win32::System::Console::{
     FlushConsoleInputBuffer, GetConsoleMode, GetConsoleScreenBufferInfo, GetStdHandle,
-    SetConsoleMode, CONSOLE_SCREEN_BUFFER_INFO, ENABLE_ECHO_INPUT, ENABLE_LINE_INPUT,
-    ENABLE_PROCESSED_INPUT, ENABLE_VIRTUAL_TERMINAL_INPUT, ENABLE_VIRTUAL_TERMINAL_PROCESSING,
-    STD_INPUT_HANDLE, STD_OUTPUT_HANDLE,
+    PeekConsoleInputW, ReadConsoleInputW, SetConsoleMode, CONSOLE_SCREEN_BUFFER_INFO,
+    ENABLE_ECHO_INPUT, ENABLE_LINE_INPUT, ENABLE_PROCESSED_INPUT, ENABLE_VIRTUAL_TERMINAL_INPUT,
+    ENABLE_VIRTUAL_TERMINAL_PROCESSING, INPUT_RECORD, KEY_EVENT, STD_INPUT_HANDLE,
+    STD_OUTPUT_HANDLE,
 };
 use windows_sys::Win32::System::Threading::WaitForSingleObject;
 
@@ -317,15 +319,67 @@ impl ResizeDeduper {
     }
 }
 
-pub(super) fn wait_for_input(handle: HANDLE, timeout_ms: u32) -> io::Result<bool> {
+pub(super) fn wait_for_key_input(handle: HANDLE, timeout_ms: u32) -> io::Result<bool> {
     match unsafe {
         // SAFETY: handle is borrowed only for the duration of this wait.
         WaitForSingleObject(handle, timeout_ms)
     } {
-        WAIT_OBJECT_0 => Ok(true),
+        WAIT_OBJECT_0 => discard_non_key_console_events(handle),
         WAIT_TIMEOUT => Ok(false),
         _ => Err(io::Error::last_os_error()),
     }
+}
+
+fn discard_non_key_console_events(handle: HANDLE) -> io::Result<bool> {
+    loop {
+        let mut record = MaybeUninit::<INPUT_RECORD>::zeroed();
+        let mut read = 0;
+        let ok = unsafe {
+            // SAFETY: record points to writable storage for one console input record.
+            PeekConsoleInputW(handle, record.as_mut_ptr(), 1, &mut read)
+        };
+        if ok == 0 {
+            return invalid_console_input_as_readable();
+        }
+        if read == 0 {
+            return Ok(false);
+        }
+
+        let mut record = unsafe {
+            // SAFETY: PeekConsoleInputW initialized one record when read is non-zero.
+            record.assume_init()
+        };
+        if is_key_down_event(&record) {
+            return Ok(true);
+        }
+
+        let ok = unsafe {
+            // SAFETY: record is initialized and the call consumes exactly one non-key event.
+            ReadConsoleInputW(handle, &mut record, 1, &mut read)
+        };
+        if ok == 0 {
+            return invalid_console_input_as_readable();
+        }
+    }
+}
+
+fn is_key_down_event(record: &INPUT_RECORD) -> bool {
+    if u32::from(record.EventType) != KEY_EVENT {
+        return false;
+    }
+    let key = unsafe {
+        // SAFETY: EventType is KEY_EVENT, so the KeyEvent union field is active.
+        record.Event.KeyEvent
+    };
+    key.bKeyDown != 0
+}
+
+fn invalid_console_input_as_readable() -> io::Result<bool> {
+    let error = io::Error::last_os_error();
+    if error.raw_os_error() == Some(ERROR_INVALID_HANDLE as i32) {
+        return Ok(true);
+    }
+    Err(error)
 }
 
 fn std_handle(handle_id: u32) -> Result<Option<HANDLE>> {

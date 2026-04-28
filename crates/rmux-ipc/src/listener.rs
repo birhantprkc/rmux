@@ -1,6 +1,8 @@
 //! Local listener handles.
 
 #[cfg(windows)]
+use std::collections::VecDeque;
+#[cfg(windows)]
 use std::ffi::OsString;
 use std::io;
 #[cfg(windows)]
@@ -33,8 +35,11 @@ pub struct LocalListener {
 #[derive(Debug)]
 pub struct LocalListener {
     pipe_name: OsString,
-    pending: tokio::sync::Mutex<Option<NamedPipeServer>>,
+    pending: tokio::sync::Mutex<VecDeque<NamedPipeServer>>,
 }
+
+#[cfg(windows)]
+const NAMED_PIPE_BACKLOG: usize = 4;
 
 impl LocalListener {
     /// Binds a local listener.
@@ -58,10 +63,10 @@ fn bind_impl(endpoint: &LocalEndpoint) -> io::Result<LocalListener> {
 #[cfg(windows)]
 fn bind_impl(endpoint: &LocalEndpoint) -> io::Result<LocalListener> {
     let pipe_name = endpoint.as_pipe_name().to_owned();
-    let pending = create_server(&pipe_name, true)?;
+    let pending = create_pending_servers(&pipe_name)?;
     Ok(LocalListener {
         pipe_name,
-        pending: tokio::sync::Mutex::new(Some(pending)),
+        pending: tokio::sync::Mutex::new(pending),
     })
 }
 
@@ -74,20 +79,34 @@ async fn accept_impl(listener: &LocalListener) -> io::Result<(LocalStream, PeerI
 
 #[cfg(windows)]
 async fn accept_impl(listener: &LocalListener) -> io::Result<(LocalStream, PeerIdentity)> {
-    let mut pending = listener.pending.lock().await;
-    let server = pending
-        .as_ref()
-        .ok_or_else(|| io::Error::other("named-pipe accept already in progress"))?;
-
+    let server = {
+        let mut pending = listener.pending.lock().await;
+        pending
+            .pop_front()
+            .ok_or_else(|| io::Error::other("named-pipe backlog was exhausted"))?
+    };
     server.connect().await?;
-    let server = pending
-        .take()
-        .ok_or_else(|| io::Error::other("connected named pipe was not retained"))?;
     let peer = PeerIdentity::from_windows_pipe(&server);
-    let next = create_server(&listener.pipe_name, false)?;
-    *pending = Some(next);
+    replenish_pending_server(listener).await?;
 
     Ok((server, peer?))
+}
+
+#[cfg(windows)]
+fn create_pending_servers(pipe_name: &OsString) -> io::Result<VecDeque<NamedPipeServer>> {
+    let mut pending = VecDeque::with_capacity(NAMED_PIPE_BACKLOG);
+    for index in 0..NAMED_PIPE_BACKLOG {
+        pending.push_back(create_server(pipe_name, index == 0)?);
+    }
+    Ok(pending)
+}
+
+#[cfg(windows)]
+async fn replenish_pending_server(listener: &LocalListener) -> io::Result<()> {
+    let next = create_server(&listener.pipe_name, false)?;
+    let mut pending = listener.pending.lock().await;
+    pending.push_back(next);
+    Ok(())
 }
 
 #[cfg(windows)]
@@ -117,7 +136,7 @@ impl SameUserSecurityAttributes {
                 ));
             }
         };
-        let sddl = wide_null(&format!("D:P(A;;GA;;;{sid})"));
+        let sddl = wide_null(&format!("O:{sid}G:{sid}D:P(A;;GA;;;{sid})"));
         let mut descriptor = std::ptr::null_mut();
 
         // SAFETY: sddl is null-terminated UTF-16 and descriptor is an out pointer

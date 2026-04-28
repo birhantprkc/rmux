@@ -7,6 +7,7 @@ use std::time::Duration;
 use rmux_ipc::{connect_blocking, endpoint_for_label, wait_for_peer_close, LocalListener};
 use rmux_os::identity::{IdentityResolver, UserIdentity};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::windows::named_pipe::ClientOptions;
 use tokio::net::windows::named_pipe::ServerOptions;
 use tokio::time::timeout;
 
@@ -65,6 +66,44 @@ async fn named_pipe_roundtrip_uses_bound_endpoint() -> std::io::Result<()> {
 }
 
 #[tokio::test]
+async fn named_pipe_read_timeout_bounds_silent_server() -> std::io::Result<()> {
+    let endpoint = endpoint_for_label(format!("read-timeout-{}", std::process::id()))?;
+    let listener = LocalListener::bind(&endpoint)?;
+
+    let accept = tokio::spawn(async move {
+        let (_stream, _peer) = listener.accept().await?;
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        std::io::Result::Ok(())
+    });
+
+    tokio::task::yield_now().await;
+
+    let endpoint_for_client = endpoint.clone();
+    timeout(
+        Duration::from_secs(2),
+        tokio::task::spawn_blocking(move || {
+            let mut client = connect_blocking(&endpoint_for_client, Duration::from_secs(2))?;
+            client.set_read_timeout(Some(Duration::from_millis(100)))?;
+            let mut byte = [0_u8; 1];
+            let error = client
+                .read_exact(&mut byte)
+                .expect_err("silent server should hit the read timeout");
+            assert_eq!(error.kind(), ErrorKind::TimedOut);
+            std::io::Result::Ok(())
+        }),
+    )
+    .await
+    .expect("client read task timed out")
+    .expect("client read task")?;
+
+    timeout(Duration::from_secs(2), accept)
+        .await
+        .expect("accept task timed out")
+        .expect("accept task")?;
+    Ok(())
+}
+
+#[tokio::test]
 async fn wait_for_peer_close_resolves_when_named_pipe_client_disconnects() -> std::io::Result<()> {
     let endpoint = endpoint_for_label(format!("peer-close-{}", std::process::id()))?;
     let listener = LocalListener::bind(&endpoint)?;
@@ -100,12 +139,63 @@ async fn wait_for_peer_close_resolves_when_named_pipe_client_disconnects() -> st
 }
 
 #[tokio::test]
+async fn wait_for_peer_close_keeps_polling_after_buffered_bytes() -> std::io::Result<()> {
+    let endpoint = endpoint_for_label(format!("peer-close-buffered-{}", std::process::id()))?;
+    let listener = LocalListener::bind(&endpoint)?;
+
+    let accept = tokio::spawn(async move {
+        let (stream, _peer) = listener.accept().await?;
+        timeout(Duration::from_secs(2), wait_for_peer_close(&stream))
+            .await
+            .expect("peer close wait timed out after buffered bytes")?;
+        std::io::Result::Ok(())
+    });
+
+    tokio::task::yield_now().await;
+
+    let endpoint_for_client = endpoint.clone();
+    timeout(
+        Duration::from_secs(2),
+        tokio::task::spawn_blocking(move || {
+            let mut client = connect_blocking(&endpoint_for_client, Duration::from_secs(2))?;
+            client.write_all(b"buffered")?;
+            std::thread::sleep(Duration::from_millis(100));
+            drop(client);
+            std::io::Result::Ok(())
+        }),
+    )
+    .await
+    .expect("client write/drop timed out")
+    .expect("client write/drop task")?;
+
+    timeout(Duration::from_secs(2), accept)
+        .await
+        .expect("accept task timed out")
+        .expect("accept task")?;
+    Ok(())
+}
+
+#[tokio::test]
 async fn first_pipe_instance_rejects_second_listener() -> std::io::Result<()> {
     let endpoint = endpoint_for_label(format!("squat-{}", std::process::id()))?;
     let _first = LocalListener::bind(&endpoint)?;
     let second = LocalListener::bind(&endpoint).expect_err("second listener should fail");
 
     assert_bind_conflict(second);
+    Ok(())
+}
+
+#[tokio::test]
+async fn listener_preallocates_pipe_instances_for_connect_bursts() -> std::io::Result<()> {
+    let endpoint = endpoint_for_label(format!("burst-{}", std::process::id()))?;
+    let _listener = LocalListener::bind(&endpoint)?;
+
+    let mut clients = Vec::new();
+    for _ in 0..4 {
+        clients.push(ClientOptions::new().open(endpoint.as_pipe_name())?);
+    }
+
+    drop(clients);
     Ok(())
 }
 

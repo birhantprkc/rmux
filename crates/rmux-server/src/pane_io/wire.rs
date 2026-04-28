@@ -1,7 +1,7 @@
 use std::future::pending;
 use std::io;
 
-use rmux_ipc::LocalStream;
+use rmux_ipc::{is_peer_disconnect, LocalStream};
 use rmux_proto::{encode_attach_message, AttachFrameDecoder, AttachMessage};
 #[cfg(unix)]
 use rmux_pty::PtyIo;
@@ -218,14 +218,7 @@ async fn write_all_to_stream(stream: &LocalStream, mut bytes: &[u8]) -> io::Resu
             Ok(bytes_written) => bytes = &bytes[bytes_written..],
             Err(error) if error.kind() == io::ErrorKind::WouldBlock => continue,
             Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
-            Err(error)
-                if matches!(
-                    error.kind(),
-                    io::ErrorKind::BrokenPipe | io::ErrorKind::ConnectionReset
-                ) =>
-            {
-                return Ok(());
-            }
+            Err(error) if is_peer_disconnect(&error) => return Ok(()),
             Err(error) => return Err(error),
         }
     }

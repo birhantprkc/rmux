@@ -6,6 +6,8 @@ use std::ffi::OsString;
 use std::io;
 #[cfg(unix)]
 use std::os::unix::ffi::{OsStrExt, OsStringExt};
+#[cfg(windows)]
+use std::os::windows::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 
 #[cfg(windows)]
@@ -108,7 +110,7 @@ pub fn resolve_endpoint(
     socket_path: Option<&Path>,
 ) -> io::Result<LocalEndpoint> {
     if let Some(socket_path) = socket_path {
-        return Ok(LocalEndpoint::from_path(socket_path.to_path_buf()));
+        return endpoint_for_socket_path(socket_path);
     }
     if let Some(socket_name) = socket_name {
         return endpoint_for_label(socket_name);
@@ -118,6 +120,23 @@ pub fn resolve_endpoint(
     }
 
     default_endpoint()
+}
+
+#[cfg(unix)]
+fn endpoint_for_socket_path(socket_path: &Path) -> io::Result<LocalEndpoint> {
+    Ok(LocalEndpoint::from_path(socket_path.to_path_buf()))
+}
+
+#[cfg(windows)]
+fn endpoint_for_socket_path(socket_path: &Path) -> io::Result<LocalEndpoint> {
+    if socket_path_is_rmux_owned(socket_path) {
+        return Ok(LocalEndpoint::from_path(socket_path.to_path_buf()));
+    }
+
+    Err(io::Error::new(
+        io::ErrorKind::InvalidInput,
+        "Windows -S requires an explicit \\\\.\\pipe\\rmux-... endpoint; use -L for labels",
+    ))
 }
 
 /// Resolves the root directory used for RMUX sockets.
@@ -158,12 +177,34 @@ fn socket_path_from_rmux_env(rmux: Option<&OsStr>) -> Option<PathBuf> {
 }
 
 fn socket_path_is_rmux_owned(path: &Path) -> bool {
+    socket_path_is_rmux_owned_impl(path)
+}
+
+#[cfg(unix)]
+fn socket_path_is_rmux_owned_impl(path: &Path) -> bool {
     path.parent()
         .and_then(Path::file_name)
         .and_then(OsStr::to_str)
         .is_some_and(|name| {
             name.starts_with(SOCKET_DIR_PREFIX) && name[SOCKET_DIR_PREFIX.len()..].starts_with('-')
         })
+}
+
+#[cfg(windows)]
+fn socket_path_is_rmux_owned_impl(path: &Path) -> bool {
+    let value = path.as_os_str().to_string_lossy();
+    let Some(rest) = strip_ascii_prefix(&value, PIPE_PREFIX) else {
+        return false;
+    };
+    rest.starts_with(SOCKET_DIR_PREFIX) && rest[SOCKET_DIR_PREFIX.len()..].starts_with('-')
+}
+
+#[cfg(windows)]
+fn strip_ascii_prefix<'a>(value: &'a str, prefix: &str) -> Option<&'a str> {
+    value
+        .get(..prefix.len())
+        .is_some_and(|head| head.eq_ignore_ascii_case(prefix))
+        .then(|| &value[prefix.len()..])
 }
 
 #[cfg(unix)]
@@ -194,11 +235,12 @@ fn path_buf_from_bytes(bytes: Vec<u8>) -> PathBuf {
 #[cfg(windows)]
 fn pipe_component(value: &OsStr) -> String {
     let mut component = String::new();
-    for ch in value.to_string_lossy().chars() {
-        if ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.') {
-            component.push(ch);
+    for unit in value.encode_wide() {
+        if is_pipe_component_unit(unit) {
+            component.push(char::from_u32(u32::from(unit)).expect("ASCII unit"));
         } else {
-            component.push('_');
+            component.push('~');
+            component.push_str(&format!("{unit:04X}"));
         }
     }
     if component.is_empty() {
@@ -206,6 +248,14 @@ fn pipe_component(value: &OsStr) -> String {
     } else {
         component
     }
+}
+
+#[cfg(windows)]
+fn is_pipe_component_unit(unit: u16) -> bool {
+    matches!(
+        unit,
+        0x30..=0x39 | 0x41..=0x5A | 0x61..=0x7A | 0x2D | 0x5F | 0x2E
+    )
 }
 
 #[cfg(test)]
@@ -250,10 +300,37 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
-    fn pipe_labels_are_sanitized() {
+    fn pipe_labels_are_injective() {
+        assert_ne!(
+            pipe_component(OsStr::new("alpha/beta")),
+            pipe_component(OsStr::new("alpha:beta"))
+        );
         assert_eq!(
             pipe_component(OsStr::new("alpha/beta:gamma")),
-            "alpha_beta_gamma"
+            "alpha~002Fbeta~003Agamma"
         );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn rmux_env_accepts_windows_named_pipe_endpoint() {
+        let path = socket_path_from_rmux_env(Some(OsStr::new(
+            r"\\.\pipe\rmux-S-1-5-21-1000-default,123,0",
+        )))
+        .expect("rmux pipe endpoint");
+
+        assert_eq!(
+            path.to_string_lossy(),
+            r"\\.\pipe\rmux-S-1-5-21-1000-default"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_socket_path_rejects_non_rmux_pipe() {
+        let error = endpoint_for_socket_path(Path::new(r"\\.\pipe\external-peer-default"))
+            .expect_err("non-rmux pipe should be rejected");
+
+        assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
     }
 }

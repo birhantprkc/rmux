@@ -185,7 +185,7 @@ where
     let input_handle = input.as_raw_handle();
 
     loop {
-        if !terminal::wait_for_input(input_handle, 50).map_err(ClientError::Io)? {
+        if !terminal::wait_for_key_input(input_handle, 50).map_err(ClientError::Io)? {
             if input_tx.is_closed() {
                 return Ok(());
             }

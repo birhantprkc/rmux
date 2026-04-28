@@ -34,9 +34,38 @@ pub(super) fn client_terminal_context_from_cli(cli: &Cli) -> ClientTerminalConte
         terminal_features.push("256".to_owned());
     }
 
-    ClientTerminalContext {
+    let mut context = ClientTerminalContext {
         terminal_features,
         utf8: cli.utf8,
+    };
+    apply_detected_client_terminal_features(&mut context);
+    context
+}
+
+fn apply_detected_client_terminal_features(context: &mut ClientTerminalContext) {
+    #[cfg(windows)]
+    if std::env::var_os("WT_SESSION").is_some_and(|value| !value.is_empty()) {
+        apply_windows_terminal_features(context);
+    }
+    #[cfg(not(windows))]
+    let _ = context;
+}
+
+#[cfg(windows)]
+fn apply_windows_terminal_features(context: &mut ClientTerminalContext) {
+    context.utf8 = true;
+    push_unique_terminal_feature(&mut context.terminal_features, "sync");
+    push_unique_terminal_feature(&mut context.terminal_features, "bpaste");
+    push_unique_terminal_feature(&mut context.terminal_features, "mouse");
+}
+
+#[cfg(windows)]
+fn push_unique_terminal_feature(features: &mut Vec<String>, feature: &str) {
+    if !features
+        .iter()
+        .any(|value| value.eq_ignore_ascii_case(feature))
+    {
+        features.push(feature.to_owned());
     }
 }
 
@@ -299,4 +328,34 @@ pub(super) fn attach_with_connection(
 
 pub(super) fn optional_client_flags(flags: Vec<String>) -> Option<Vec<String>> {
     (!flags.is_empty()).then_some(flags)
+}
+
+#[cfg(all(test, windows))]
+mod tests {
+    use rmux_proto::ClientTerminalContext;
+
+    use super::apply_windows_terminal_features;
+
+    #[test]
+    fn windows_terminal_features_are_sent_by_client_context() {
+        let mut context = ClientTerminalContext::default();
+
+        apply_windows_terminal_features(&mut context);
+
+        assert!(context.utf8);
+        assert_eq!(context.terminal_features, vec!["sync", "bpaste", "mouse"]);
+    }
+
+    #[test]
+    fn detected_windows_terminal_features_are_not_duplicated() {
+        let mut context = ClientTerminalContext {
+            terminal_features: vec!["SYNC".to_owned(), "BPASTE".to_owned(), "MOUSE".to_owned()],
+            utf8: false,
+        };
+
+        apply_windows_terminal_features(&mut context);
+
+        assert!(context.utf8);
+        assert_eq!(context.terminal_features, vec!["SYNC", "BPASTE", "MOUSE"]);
+    }
 }

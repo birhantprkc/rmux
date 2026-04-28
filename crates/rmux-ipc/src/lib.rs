@@ -13,5 +13,6 @@ mod stream;
 pub use endpoint::{default_endpoint, endpoint_for_label, resolve_endpoint, LocalEndpoint};
 pub use listener::LocalListener;
 pub use stream::{
-    connect_blocking, wait_for_peer_close, BlockingLocalStream, LocalStream, PeerIdentity,
+    connect_blocking, is_peer_disconnect, wait_for_peer_close, BlockingLocalStream, LocalStream,
+    PeerIdentity,
 };

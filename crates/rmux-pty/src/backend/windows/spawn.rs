@@ -1,8 +1,5 @@
-use std::collections::BTreeMap;
-use std::ffi::{OsStr, OsString};
 use std::io;
 use std::mem::size_of;
-use std::os::windows::ffi::OsStrExt;
 use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
 use std::os::windows::process::ExitStatusExt;
 use std::process::ExitStatus;
@@ -28,7 +25,8 @@ use windows_sys::Win32::System::Threading::{
 
 use crate::{ChildCommand, ProcessId, Result, Signal};
 
-use super::{process_tree, should_enable_dsr_bootstrap, WindowsPty};
+use super::command_line::{command_line, environment_block, wide_null};
+use super::{should_enable_dsr_bootstrap, WindowsPty};
 
 #[derive(Debug)]
 pub(crate) struct WindowsChild {
@@ -81,11 +79,12 @@ fn spawn_child_breakaway(command: ChildCommand, pty: Arc<WindowsPty>) -> Result<
         Ok(process) => match job.assign(&process.process) {
             Ok(()) => resume_as_child(process, Some(job), pty),
             Err(error) if error.raw_os_error() == Some(ERROR_ACCESS_DENIED as i32) => {
-                tracing::warn!(
+                tracing::error!(
                     target: "rmux::conpty",
-                    "breakaway job assignment denied; falling back to direct process cleanup"
+                    "breakaway job assignment denied; refusing to run unguarded ConPTY child"
                 );
-                resume_as_child(process, None, pty)
+                let _ = terminate_process(&process.process, 1);
+                Err(job_required_error("breakaway job assignment denied", error).into())
             }
             Err(error) => {
                 let _ = terminate_process(&process.process, 1);
@@ -93,12 +92,11 @@ fn spawn_child_breakaway(command: ChildCommand, pty: Arc<WindowsPty>) -> Result<
             }
         },
         Err(error) if error.raw_os_error() == Some(ERROR_ACCESS_DENIED as i32) => {
-            tracing::warn!(
+            tracing::error!(
                 target: "rmux::conpty",
-                "breakaway process creation denied; falling back to direct process cleanup"
+                "breakaway process creation denied; refusing to run unguarded ConPTY child"
             );
-            let process = create_suspended_process_with_conpty_fallback(&command, &pty, 0)?;
-            resume_as_child(process, None, pty)
+            Err(job_required_error("breakaway process creation denied", error).into())
         }
         Err(error) => Err(error.into()),
     }
@@ -259,7 +257,10 @@ pub(crate) fn kill_child(child: &WindowsChild, signal: Signal) -> Result<()> {
             if let Some(job) = &child.job {
                 job.terminate(1)?;
             } else {
-                process_tree::terminate_process_tree(child.pid, &child.process, 1)?;
+                return Err(io::Error::other(
+                    "Windows child has no Job Object cleanup guard; refusing unsafe fallback kill",
+                )
+                .into());
             }
             Ok(())
         }
@@ -278,6 +279,13 @@ fn terminate_process(process: &OwnedHandle, exit_code: u32) -> io::Result<()> {
 
 fn is_invalid_parameter(error: &io::Error) -> bool {
     error.raw_os_error() == Some(ERROR_INVALID_PARAMETER as i32)
+}
+
+fn job_required_error(stage: &'static str, source: io::Error) -> io::Error {
+    io::Error::new(
+        source.kind(),
+        format!("{stage}; refusing to run ConPTY child without Job Object cleanup: {source}"),
+    )
 }
 
 fn duplicate_handle(handle: &OwnedHandle) -> io::Result<OwnedHandle> {
@@ -438,75 +446,6 @@ impl Drop for AttributeList {
         // and `Drop` runs exactly once for the backing storage.
         unsafe { DeleteProcThreadAttributeList(self.as_mut_ptr()) };
     }
-}
-
-fn command_line(command: &ChildCommand) -> Vec<u16> {
-    let mut parts = Vec::with_capacity(command.args.len() + 1);
-    parts.push(quote_arg(
-        command
-            .arg0
-            .as_deref()
-            .unwrap_or_else(|| command.program.as_os_str()),
-    ));
-    parts.extend(command.args.iter().map(|arg| quote_arg(arg)));
-    wide_null(OsString::from(parts.join(" ")).as_os_str())
-}
-
-fn environment_block(command: &ChildCommand) -> Option<Vec<u16>> {
-    if !command.clear_env && command.env.is_empty() {
-        return None;
-    }
-
-    let mut env = BTreeMap::<OsString, OsString>::new();
-    if !command.clear_env {
-        env.extend(std::env::vars_os());
-    }
-    env.extend(command.env.iter().cloned());
-
-    let mut block = Vec::new();
-    for (key, value) in env {
-        block.extend(key.encode_wide());
-        block.push(b'=' as u16);
-        block.extend(value.encode_wide());
-        block.push(0);
-    }
-    block.push(0);
-    Some(block)
-}
-
-fn quote_arg(arg: &OsStr) -> String {
-    let raw = arg.to_string_lossy();
-    if raw.is_empty() {
-        return "\"\"".to_string();
-    }
-    if !raw.bytes().any(|byte| matches!(byte, b' ' | b'\t' | b'"')) {
-        return raw.into_owned();
-    }
-
-    let mut quoted = String::from("\"");
-    let mut backslashes = 0;
-    for ch in raw.chars() {
-        match ch {
-            '\\' => backslashes += 1,
-            '"' => {
-                quoted.extend(std::iter::repeat_n('\\', backslashes * 2 + 1));
-                quoted.push('"');
-                backslashes = 0;
-            }
-            _ => {
-                quoted.extend(std::iter::repeat_n('\\', backslashes));
-                backslashes = 0;
-                quoted.push(ch);
-            }
-        }
-    }
-    quoted.extend(std::iter::repeat_n('\\', backslashes * 2));
-    quoted.push('"');
-    quoted
-}
-
-fn wide_null(value: &OsStr) -> Vec<u16> {
-    value.encode_wide().chain(std::iter::once(0)).collect()
 }
 
 fn last_os_error() -> io::Error {

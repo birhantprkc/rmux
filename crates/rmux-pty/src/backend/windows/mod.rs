@@ -1,7 +1,7 @@
+mod command_line;
 mod dsr;
 mod flags;
 mod io;
-mod process_tree;
 mod pty;
 mod spawn;
 mod version;
