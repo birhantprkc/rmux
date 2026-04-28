@@ -5,6 +5,8 @@ use std::ffi::OsString;
 use std::io;
 #[cfg(windows)]
 use std::io::{Read, Write};
+#[cfg(all(unix, not(target_os = "linux")))]
+use std::os::fd::AsRawFd;
 #[cfg(windows)]
 use std::os::windows::io::AsRawHandle;
 #[cfg(unix)]
@@ -263,9 +265,6 @@ pub fn connect_blocking(
     endpoint: &LocalEndpoint,
     timeout: Duration,
 ) -> io::Result<BlockingLocalStream> {
-    #[cfg(not(target_os = "linux"))]
-    use std::os::fd::AsRawFd;
-
     use rustix::event::{poll, PollFd, PollFlags, Timespec};
     use rustix::net::sockopt::socket_error;
     use rustix::net::{
