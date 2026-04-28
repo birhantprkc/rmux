@@ -1,6 +1,6 @@
 use std::io;
 use std::os::windows::io::{AsRawHandle, OwnedHandle};
-use std::sync::Mutex;
+use std::sync::{Mutex, RwLock};
 
 use windows_sys::Win32::Foundation::{GetLastError, ERROR_BROKEN_PIPE, E_HANDLE, HANDLE, S_OK};
 use windows_sys::Win32::System::Console::{
@@ -9,25 +9,35 @@ use windows_sys::Win32::System::Console::{
 
 use crate::{Result, TerminalSize};
 
-use super::io::create_pipe;
+use super::flags::{
+    conpty_flags_without_passthrough, selected_conpty_flags, standard_conpty_flags, ConptyFlags,
+};
+use super::io::{create_pipe, PipePair};
 use super::DsrBootstrap;
 
 #[derive(Debug)]
 pub(crate) struct WindowsPty {
-    hpc: OwnedHpcon,
-    input_write: OwnedHandle,
-    output_read: OwnedHandle,
+    state: RwLock<WindowsPtyState>,
     size: Mutex<TerminalSize>,
     dsr_bootstrap: Mutex<Option<DsrBootstrap>>,
 }
 
 impl WindowsPty {
     pub(crate) fn hpc(&self) -> HPCON {
-        self.hpc.raw()
+        self.state
+            .read()
+            .expect("ConPTY state lock poisoned")
+            .hpc
+            .raw()
     }
 
     pub(crate) fn read(&self, buffer: &mut [u8]) -> io::Result<usize> {
-        let bytes_read = super::io::read(&self.output_read, buffer)?;
+        let state = self
+            .state
+            .read()
+            .map_err(|_| io::Error::other("ConPTY state lock poisoned"))?;
+        let bytes_read = super::io::read(&state.output_read, buffer)?;
+        drop(state);
         let mut dsr_bootstrap = self
             .dsr_bootstrap
             .lock()
@@ -39,14 +49,18 @@ impl WindowsPty {
         let filtered = dsr.filter(&mut buffer[..bytes_read]);
         let len = filtered.bytes.len();
         if let Some(response) = filtered.response {
-            super::io::write_all(&self.input_write, response)?;
+            self.write_all(response)?;
             *dsr_bootstrap = None;
         }
         Ok(len)
     }
 
     pub(crate) fn write_all(&self, bytes: &[u8]) -> io::Result<()> {
-        super::io::write_all(&self.input_write, bytes)
+        let state = self
+            .state
+            .read()
+            .map_err(|_| io::Error::other("ConPTY state lock poisoned"))?;
+        super::io::write_all(&state.input_write, bytes)
     }
 
     pub(crate) fn enable_dsr_bootstrap(&self) -> io::Result<()> {
@@ -55,6 +69,33 @@ impl WindowsPty {
             .lock()
             .map_err(|_| io::Error::other("ConPTY DSR mutex poisoned"))?;
         *dsr = Some(DsrBootstrap::from_env());
+        Ok(())
+    }
+
+    pub(crate) fn uses_passthrough(&self) -> bool {
+        self.state
+            .read()
+            .map(|state| state.flags.uses_passthrough())
+            .unwrap_or(false)
+    }
+
+    pub(crate) fn recreate_without_passthrough(&self) -> Result<()> {
+        let size = *self
+            .size
+            .lock()
+            .map_err(|_| io::Error::other("ConPTY size mutex poisoned"))?;
+        let state = create_pty_state(size, conpty_flags_without_passthrough())?;
+        let mut current = self
+            .state
+            .write()
+            .map_err(|_| io::Error::other("ConPTY state lock poisoned"))?;
+        *current = state;
+        tracing::warn!(
+            target: "rmux::conpty",
+            cols = size.cols,
+            rows = size.rows,
+            "recreated ConPTY without passthrough"
+        );
         Ok(())
     }
 }
@@ -66,26 +107,17 @@ pub(crate) fn open_pty_pair(size: TerminalSize) -> Result<WindowsPty> {
         rows = size.rows,
         "creating ConPTY"
     );
-    let input = create_pipe(64 * 1024)?;
-    let output = create_pipe(64 * 1024)?;
-    let hpc = create_pseudo_console(
-        size,
-        input.read.as_raw_handle() as HANDLE,
-        output.write.as_raw_handle() as HANDLE,
-    )?;
-    drop(input.read);
-    drop(output.write);
+    let state = create_pty_state_with_fallback(size, selected_conpty_flags())?;
     tracing::debug!(
         target: "rmux::conpty",
         cols = size.cols,
         rows = size.rows,
+        flags = state.flags.bits(),
         "ConPTY created"
     );
 
     Ok(WindowsPty {
-        hpc,
-        input_write: input.write,
-        output_read: output.read,
+        state: RwLock::new(state),
         size: Mutex::new(size),
         dsr_bootstrap: Mutex::new(None),
     })
@@ -107,9 +139,14 @@ pub(crate) fn apply_size(pty: &WindowsPty, size: TerminalSize) -> Result<()> {
         "resizing ConPTY"
     );
     let coord = coord_from_size(size)?;
-    // SAFETY: `pty.hpc` is an owned live ConPTY handle for the lifetime of
-    // `pty`, and `coord` was range-checked from `TerminalSize`.
-    let hr = unsafe { ResizePseudoConsole(pty.hpc.raw(), coord) };
+    let state = pty
+        .state
+        .read()
+        .map_err(|_| io::Error::other("ConPTY state lock poisoned"))?;
+    // SAFETY: `state.hpc` is an owned live ConPTY handle while the read lock is
+    // held, and `coord` was range-checked from `TerminalSize`.
+    let hr = unsafe { ResizePseudoConsole(state.hpc.raw(), coord) };
+    drop(state);
     if hr != S_OK {
         if is_benign_resize_after_exit(hr) {
             tracing::debug!(
@@ -135,16 +172,70 @@ pub(crate) fn apply_size(pty: &WindowsPty, size: TerminalSize) -> Result<()> {
     Ok(())
 }
 
-fn create_pseudo_console(size: TerminalSize, input: HANDLE, output: HANDLE) -> Result<OwnedHpcon> {
+fn create_pty_state_with_fallback(
+    size: TerminalSize,
+    selected: ConptyFlags,
+) -> Result<WindowsPtyState> {
+    match create_pty_state(size, selected) {
+        Ok(state) => Ok(state),
+        Err(error) if selected.uses_passthrough() => {
+            tracing::warn!(
+                target: "rmux::conpty",
+                flags = selected.bits(),
+                "CreatePseudoConsole with passthrough failed; retrying without passthrough: {error}"
+            );
+            create_pty_state_with_fallback(size, conpty_flags_without_passthrough())
+        }
+        Err(error) if selected.bits() != 0 => {
+            tracing::warn!(
+                target: "rmux::conpty",
+                flags = selected.bits(),
+                "CreatePseudoConsole with extended flags failed; retrying standard flags: {error}"
+            );
+            create_pty_state(size, standard_conpty_flags())
+        }
+        Err(error) => Err(error),
+    }
+}
+
+fn create_pty_state(size: TerminalSize, flags: ConptyFlags) -> Result<WindowsPtyState> {
+    let input = create_pipe(64 * 1024)?;
+    let output = create_pipe(64 * 1024)?;
+    let hpc = create_pseudo_console(size, &input, &output, flags)?;
+    drop(input.read);
+    drop(output.write);
+    Ok(WindowsPtyState {
+        hpc,
+        input_write: input.write,
+        output_read: output.read,
+        flags,
+    })
+}
+
+fn create_pseudo_console(
+    size: TerminalSize,
+    input: &PipePair,
+    output: &PipePair,
+    flags: ConptyFlags,
+) -> Result<OwnedHpcon> {
     let mut hpc = 0_isize;
     // SAFETY: `input` and `output` are valid pipe handles owned by the caller,
     // `hpc` is a valid out-pointer, and `coord_from_size` range-checks the
     // dimensions before the API call.
-    let hr = unsafe { CreatePseudoConsole(coord_from_size(size)?, input, output, 0, &mut hpc) };
+    let hr = unsafe {
+        CreatePseudoConsole(
+            coord_from_size(size)?,
+            input.read.as_raw_handle() as HANDLE,
+            output.write.as_raw_handle() as HANDLE,
+            flags.bits(),
+            &mut hpc,
+        )
+    };
     if hr != S_OK {
         tracing::warn!(
             target: "rmux::conpty",
             hresult = hr,
+            flags = flags.bits(),
             "CreatePseudoConsole failed"
         );
         return Err(hresult_error(hr).into());
@@ -166,6 +257,14 @@ fn coord_from_size(size: TerminalSize) -> Result<COORD> {
         )
     })?;
     Ok(COORD { X: cols, Y: rows })
+}
+
+#[derive(Debug)]
+struct WindowsPtyState {
+    hpc: OwnedHpcon,
+    input_write: OwnedHandle,
+    output_read: OwnedHandle,
+    flags: ConptyFlags,
 }
 
 #[derive(Debug)]

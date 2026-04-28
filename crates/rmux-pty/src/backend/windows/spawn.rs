@@ -10,8 +10,8 @@ use std::ptr::{null, null_mut};
 use std::sync::Arc;
 
 use windows_sys::Win32::Foundation::{
-    DuplicateHandle, GetLastError, DUPLICATE_SAME_ACCESS, ERROR_ACCESS_DENIED, HANDLE, WAIT_FAILED,
-    WAIT_OBJECT_0, WAIT_TIMEOUT,
+    DuplicateHandle, GetLastError, DUPLICATE_SAME_ACCESS, ERROR_ACCESS_DENIED,
+    ERROR_INVALID_PARAMETER, HANDLE, WAIT_FAILED, WAIT_OBJECT_0, WAIT_TIMEOUT,
 };
 use windows_sys::Win32::System::JobObjects::{
     AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
@@ -56,7 +56,7 @@ pub(crate) fn spawn_child(command: ChildCommand, pty: Arc<WindowsPty>) -> Result
     }
 
     let job = JobObjectGuard::new()?;
-    let process = create_suspended_process(&command, &pty, 0)?;
+    let process = create_suspended_process_with_conpty_fallback(&command, &pty, 0)?;
 
     match job.assign(&process.process) {
         Ok(()) => resume_as_child(process, Some(job), pty),
@@ -77,7 +77,7 @@ pub(crate) fn spawn_child(command: ChildCommand, pty: Arc<WindowsPty>) -> Result
 
 fn spawn_child_breakaway(command: ChildCommand, pty: Arc<WindowsPty>) -> Result<WindowsChild> {
     let job = JobObjectGuard::new()?;
-    match create_suspended_process(&command, &pty, CREATE_BREAKAWAY_FROM_JOB) {
+    match create_suspended_process_with_conpty_fallback(&command, &pty, CREATE_BREAKAWAY_FROM_JOB) {
         Ok(process) => match job.assign(&process.process) {
             Ok(()) => resume_as_child(process, Some(job), pty),
             Err(error) if error.raw_os_error() == Some(ERROR_ACCESS_DENIED as i32) => {
@@ -97,10 +97,29 @@ fn spawn_child_breakaway(command: ChildCommand, pty: Arc<WindowsPty>) -> Result<
                 target: "rmux::conpty",
                 "breakaway process creation denied; falling back to direct process cleanup"
             );
-            let process = create_suspended_process(&command, &pty, 0)?;
+            let process = create_suspended_process_with_conpty_fallback(&command, &pty, 0)?;
             resume_as_child(process, None, pty)
         }
         Err(error) => Err(error.into()),
+    }
+}
+
+fn create_suspended_process_with_conpty_fallback(
+    command: &ChildCommand,
+    pty: &WindowsPty,
+    extra_creation_flags: u32,
+) -> io::Result<SuspendedProcess> {
+    match create_suspended_process(command, pty, extra_creation_flags) {
+        Err(error) if is_invalid_parameter(&error) && pty.uses_passthrough() => {
+            tracing::warn!(
+                target: "rmux::conpty",
+                "CreateProcessW rejected passthrough ConPTY; retrying without passthrough"
+            );
+            pty.recreate_without_passthrough()
+                .map_err(io::Error::other)?;
+            create_suspended_process(command, pty, extra_creation_flags)
+        }
+        other => other,
     }
 }
 
@@ -255,6 +274,10 @@ fn terminate_process(process: &OwnedHandle, exit_code: u32) -> io::Result<()> {
         return Err(last_os_error());
     }
     Ok(())
+}
+
+fn is_invalid_parameter(error: &io::Error) -> bool {
+    error.raw_os_error() == Some(ERROR_INVALID_PARAMETER as i32)
 }
 
 fn duplicate_handle(handle: &OwnedHandle) -> io::Result<OwnedHandle> {

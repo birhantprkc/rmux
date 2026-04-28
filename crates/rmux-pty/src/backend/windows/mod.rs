@@ -1,8 +1,10 @@
 mod dsr;
+mod flags;
 mod io;
 mod process_tree;
 mod pty;
 mod spawn;
+mod version;
 
 pub(crate) use dsr::{should_enable_dsr_bootstrap, DsrBootstrap};
 pub(crate) use pty::{apply_size, open_pty_pair, query_size, WindowsPty};
