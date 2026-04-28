@@ -8,7 +8,8 @@ use std::sync::Arc;
 
 use windows_sys::Win32::Foundation::{
     DuplicateHandle, GetLastError, DUPLICATE_SAME_ACCESS, ERROR_ACCESS_DENIED,
-    ERROR_INVALID_PARAMETER, HANDLE, WAIT_FAILED, WAIT_OBJECT_0, WAIT_TIMEOUT,
+    ERROR_INVALID_PARAMETER, HANDLE, INVALID_HANDLE_VALUE, WAIT_FAILED, WAIT_OBJECT_0,
+    WAIT_TIMEOUT,
 };
 use windows_sys::Win32::System::JobObjects::{
     AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
@@ -130,6 +131,9 @@ fn create_suspended_process(
     let mut startup = STARTUPINFOEXW::default();
     startup.StartupInfo.cb = size_of::<STARTUPINFOEXW>() as u32;
     startup.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
+    startup.StartupInfo.hStdInput = INVALID_HANDLE_VALUE;
+    startup.StartupInfo.hStdOutput = INVALID_HANDLE_VALUE;
+    startup.StartupInfo.hStdError = INVALID_HANDLE_VALUE;
     startup.lpAttributeList = attributes.as_mut_ptr();
 
     let application = wide_null(command.program.as_os_str());

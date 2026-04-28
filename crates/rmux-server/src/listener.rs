@@ -5,8 +5,9 @@ use std::os::unix::fs::FileTypeExt;
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 
-use rmux_ipc::{wait_for_peer_close, LocalListener, LocalStream, PeerIdentity};
+use rmux_ipc::{LocalListener, LocalStream, PeerIdentity};
 use rmux_proto::{encode_frame, ErrorResponse, FrameDecoder, Request, Response};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::{oneshot, watch};
@@ -48,7 +49,14 @@ pub(crate) async fn serve(
     loop {
         tokio::select! {
             result = listener.accept() => {
-                let (stream, requester) = result?;
+                let (stream, requester) = match result {
+                    Ok(accepted) => accepted,
+                    Err(error) => {
+                        warn!("client accept failed; keeping server accept loop alive: {error}");
+                        tokio::time::sleep(Duration::from_millis(25)).await;
+                        continue;
+                    }
+                };
                 let handler = Arc::clone(&handler);
                 let connection_shutdown = connection_shutdown_rx.clone();
                 let shutdown_handle = shutdown_handle.clone();
@@ -120,7 +128,7 @@ async fn serve_connection(
                         }
                         return Ok(());
                     }
-                    result = wait_for_peer_close(&conn.stream) => {
+                    result = conn.read_until_peer_close() => {
                         result?;
                         debug!("closing client connection after peer disconnect");
                         return Ok(());
@@ -261,6 +269,16 @@ impl Connection {
                 return Ok(None);
             }
 
+            self.decoder.push_bytes(&self.read_buffer[..bytes_read]);
+        }
+    }
+
+    async fn read_until_peer_close(&mut self) -> io::Result<()> {
+        loop {
+            let bytes_read = self.stream.read(&mut self.read_buffer).await?;
+            if bytes_read == 0 {
+                return Ok(());
+            }
             self.decoder.push_bytes(&self.read_buffer[..bytes_read]);
         }
     }

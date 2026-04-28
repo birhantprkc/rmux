@@ -157,7 +157,7 @@ pub(super) fn source_inputs_for_path(
         };
         return Ok(vec![SourceInput {
             current_file: "-".to_owned(),
-            contents: stdin.to_owned(),
+            contents: strip_utf8_bom(stdin.to_owned()),
         }]);
     }
 
@@ -179,7 +179,7 @@ pub(super) fn source_inputs_for_path(
         match std::fs::read_to_string(&entry) {
             Ok(contents) => inputs.push(SourceInput {
                 current_file: source_entry_display_path(&entry),
-                contents,
+                contents: strip_utf8_bom(contents),
             }),
             Err(error) if quiet && error.kind() == io::ErrorKind::NotFound => {}
             Err(error) => {
@@ -192,6 +192,13 @@ pub(super) fn source_inputs_for_path(
     }
 
     Ok(inputs)
+}
+
+fn strip_utf8_bom(mut contents: String) -> String {
+    if contents.starts_with('\u{feff}') {
+        contents.replace_range(..'\u{feff}'.len_utf8(), "");
+    }
+    contents
 }
 
 #[cfg(windows)]
@@ -257,8 +264,51 @@ pub(super) fn source_parse_error(input: &SourceInput, error: CommandParseError) 
 
 #[cfg(test)]
 mod tests {
+    use std::time::{SystemTime, UNIX_EPOCH};
+
     #[cfg(windows)]
     use super::glob_pattern_for_source_path;
+
+    use super::{source_inputs_for_path, strip_utf8_bom};
+
+    #[test]
+    fn strips_utf8_bom_from_source_text() {
+        assert_eq!(
+            strip_utf8_bom("\u{feff}set -g status off".to_owned()),
+            "set -g status off"
+        );
+        assert_eq!(
+            strip_utf8_bom("set -g status off".to_owned()),
+            "set -g status off"
+        );
+    }
+
+    #[test]
+    fn source_file_stdin_strips_utf8_bom() {
+        let inputs = source_inputs_for_path("-", None, false, Some("\u{feff}set -g status off"))
+            .expect("stdin source should load");
+
+        assert_eq!(inputs[0].contents, "set -g status off");
+    }
+
+    #[test]
+    fn source_file_path_strips_utf8_bom() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time before unix epoch")
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!(
+            "rmux-source-bom-{}-{unique}.conf",
+            std::process::id()
+        ));
+        std::fs::write(&path, "\u{feff}set -g status-left ok").expect("write source file");
+
+        let inputs = source_inputs_for_path(&path.to_string_lossy(), None, false, None)
+            .expect("file source should load");
+        let _ = std::fs::remove_file(&path);
+
+        assert_eq!(inputs[0].contents, "set -g status-left ok");
+    }
 
     #[cfg(windows)]
     #[test]

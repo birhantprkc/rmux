@@ -20,28 +20,54 @@ fn enter_applies_raw_input_and_vt_output_flags() -> Result<()> {
 
     let _guard = RawTerminalGuard::enter(console.clone())?;
 
-    assert_eq!(
-        console.mode(INPUT_HANDLE),
-        Some(PRESERVED_INPUT_FLAG | ENABLE_VIRTUAL_TERMINAL_INPUT)
-    );
-    assert_eq!(
-        console.mode(OUTPUT_HANDLE),
-        Some(PRESERVED_OUTPUT_FLAG | ENABLE_VIRTUAL_TERMINAL_PROCESSING)
-    );
+    let expected_input = raw_input_mode(input_original);
+    let expected_output = raw_output_mode(output_original);
+
+    assert_eq!(console.mode(INPUT_HANDLE), Some(expected_input));
+    assert_eq!(console.mode(OUTPUT_HANDLE), Some(expected_output));
     assert_eq!(
         console.set_calls(),
         vec![
-            (
-                INPUT_HANDLE,
-                PRESERVED_INPUT_FLAG | ENABLE_VIRTUAL_TERMINAL_INPUT
-            ),
-            (
-                OUTPUT_HANDLE,
-                PRESERVED_OUTPUT_FLAG | ENABLE_VIRTUAL_TERMINAL_PROCESSING
-            ),
+            (INPUT_HANDLE, expected_input),
+            (OUTPUT_HANDLE, expected_output)
         ]
     );
     Ok(())
+}
+
+#[test]
+fn raw_modes_disable_console_host_interceptors() {
+    let input_original = ENABLE_LINE_INPUT
+        | ENABLE_ECHO_INPUT
+        | ENABLE_PROCESSED_INPUT
+        | ENABLE_QUICK_EDIT_MODE
+        | ENABLE_INSERT_MODE
+        | PRESERVED_INPUT_FLAG;
+    let input_mode = raw_input_mode(input_original);
+
+    assert_ne!(input_mode & ENABLE_EXTENDED_FLAGS, 0);
+    assert_ne!(input_mode & ENABLE_VIRTUAL_TERMINAL_INPUT, 0);
+    assert_eq!(input_mode & ENABLE_QUICK_EDIT_MODE, 0);
+    assert_eq!(input_mode & ENABLE_INSERT_MODE, 0);
+    assert_eq!(input_mode & ENABLE_LINE_INPUT, 0);
+    assert_eq!(input_mode & ENABLE_ECHO_INPUT, 0);
+    assert_eq!(input_mode & ENABLE_PROCESSED_INPUT, 0);
+    assert_ne!(input_mode & PRESERVED_INPUT_FLAG, 0);
+
+    let output_mode = raw_output_mode(PRESERVED_OUTPUT_FLAG);
+    assert_ne!(output_mode & ENABLE_VIRTUAL_TERMINAL_PROCESSING, 0);
+    assert_ne!(output_mode & DISABLE_NEWLINE_AUTO_RETURN, 0);
+    assert_ne!(output_mode & PRESERVED_OUTPUT_FLAG, 0);
+}
+
+#[test]
+fn console_control_handler_restores_for_process_exit_events() {
+    assert!(should_restore_for_console_event(CTRL_C_EVENT));
+    assert!(should_restore_for_console_event(CTRL_BREAK_EVENT));
+    assert!(should_restore_for_console_event(CTRL_CLOSE_EVENT));
+    assert!(should_restore_for_console_event(CTRL_LOGOFF_EVENT));
+    assert!(should_restore_for_console_event(CTRL_SHUTDOWN_EVENT));
+    assert!(!should_restore_for_console_event(u32::MAX));
 }
 
 #[test]
@@ -76,11 +102,11 @@ fn reapply_raw_mode_restores_raw_flags_after_explicit_restore() -> Result<()> {
 
     assert_eq!(
         console.mode(INPUT_HANDLE),
-        Some(PRESERVED_INPUT_FLAG | ENABLE_VIRTUAL_TERMINAL_INPUT)
+        Some(raw_input_mode(input_original))
     );
     assert_eq!(
         console.mode(OUTPUT_HANDLE),
-        Some(PRESERVED_OUTPUT_FLAG | ENABLE_VIRTUAL_TERMINAL_PROCESSING)
+        Some(raw_output_mode(output_original))
     );
     Ok(())
 }

@@ -49,7 +49,7 @@ impl ServerAccessStore {
     #[must_use]
     pub(crate) fn new_for_identity(owner_uid: u32, owner_identity: UserIdentity) -> Self {
         let mut entries = BTreeMap::new();
-        entries.insert(UserIdentity::Uid(0), AccessMode::ReadWrite);
+        insert_platform_superuser_access(&mut entries);
         entries.insert(owner_identity.clone(), AccessMode::ReadWrite);
         Self {
             owner_uid,
@@ -90,7 +90,7 @@ impl ServerAccessStore {
     pub(crate) fn render_list(&self) -> CommandOutput {
         let mut stdout = Vec::new();
         for (identity, mode) in &self.entries {
-            if *identity == UserIdentity::Uid(0) {
+            if is_reserved_superuser_identity(identity) {
                 continue;
             }
             let line = format!(
@@ -104,13 +104,31 @@ impl ServerAccessStore {
     }
 
     fn ensure_mutable_identity(&self, identity: &UserIdentity) -> Result<(), RmuxError> {
-        if *identity == UserIdentity::Uid(0) || *identity == self.owner_identity {
+        if is_reserved_superuser_identity(identity) || *identity == self.owner_identity {
             return Err(RmuxError::Server(
                 "root and the server owner cannot be modified".to_owned(),
             ));
         }
         Ok(())
     }
+}
+
+#[cfg(unix)]
+fn insert_platform_superuser_access(entries: &mut BTreeMap<UserIdentity, AccessMode>) {
+    entries.insert(UserIdentity::Uid(0), AccessMode::ReadWrite);
+}
+
+#[cfg(windows)]
+fn insert_platform_superuser_access(_entries: &mut BTreeMap<UserIdentity, AccessMode>) {}
+
+#[cfg(unix)]
+fn is_reserved_superuser_identity(identity: &UserIdentity) -> bool {
+    *identity == UserIdentity::Uid(0)
+}
+
+#[cfg(windows)]
+fn is_reserved_superuser_identity(_identity: &UserIdentity) -> bool {
+    false
 }
 
 pub(crate) fn current_owner_uid() -> u32 {
@@ -322,6 +340,28 @@ mod tests {
         assert_eq!(
             store.mode_for_identity(&UserIdentity::Sid("S-1-5-21-2000".into())),
             None
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn access_store_does_not_trust_uid_zero_on_windows() {
+        let owner = UserIdentity::Sid("S-1-5-21-1000".into());
+        let store = ServerAccessStore::new_for_identity(0, owner.clone());
+
+        assert_eq!(store.mode_for_identity(&owner), Some(AccessMode::ReadWrite));
+        assert_eq!(store.mode_for_identity(&UserIdentity::Uid(0)), None);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn access_store_trusts_uid_zero_only_on_unix() {
+        let owner = UserIdentity::Uid(1000);
+        let store = ServerAccessStore::new_for_identity(1000, owner);
+
+        assert_eq!(
+            store.mode_for_identity(&UserIdentity::Uid(0)),
+            Some(AccessMode::ReadWrite)
         );
     }
 

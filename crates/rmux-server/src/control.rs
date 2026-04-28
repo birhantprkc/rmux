@@ -36,6 +36,9 @@ mod output_queue;
 #[cfg(any(unix, windows))]
 use output_queue::{ensure_control_newline, flush_output_queue, ControlOutputQueue};
 
+#[cfg(any(unix, windows))]
+const MAX_DEFERRED_CONTROL_NOTIFICATIONS: usize = 1024;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(crate) struct ControlClientFlags {
     pub(crate) pause_after_millis: Option<u64>,
@@ -350,7 +353,7 @@ async fn handle_server_event(
         }
         ControlServerEvent::Notification(line) => {
             if command_active || context.deferred.exit_reason.is_some() {
-                context.deferred.notifications.push_back(line);
+                context.deferred.defer_notification(line);
                 return Ok(false);
             }
             drain_ready_pane_events(
@@ -432,6 +435,21 @@ struct ServerEventContext<'a> {
 struct DeferredServerEvents {
     notifications: VecDeque<String>,
     exit_reason: Option<Option<String>>,
+}
+
+#[cfg(any(unix, windows))]
+impl DeferredServerEvents {
+    fn defer_notification(&mut self, line: String) {
+        if self.exit_reason.is_some() {
+            return;
+        }
+        if self.notifications.len() >= MAX_DEFERRED_CONTROL_NOTIFICATIONS {
+            self.notifications.clear();
+            self.exit_reason = Some(Some("control notification queue exceeded".to_owned()));
+            return;
+        }
+        self.notifications.push_back(line);
+    }
 }
 
 #[derive(Debug)]
@@ -601,6 +619,37 @@ fn unix_epoch_seconds() -> i64 {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs() as i64
+}
+
+#[cfg(all(test, any(unix, windows)))]
+mod deferred_tests {
+    use super::{DeferredServerEvents, MAX_DEFERRED_CONTROL_NOTIFICATIONS};
+
+    #[test]
+    fn deferred_control_notifications_are_bounded() {
+        let mut deferred = DeferredServerEvents::default();
+
+        for index in 0..MAX_DEFERRED_CONTROL_NOTIFICATIONS {
+            deferred.defer_notification(format!("%message {index}"));
+        }
+
+        assert_eq!(
+            deferred.notifications.len(),
+            MAX_DEFERRED_CONTROL_NOTIFICATIONS
+        );
+        assert!(deferred.exit_reason.is_none());
+
+        deferred.defer_notification("%message overflow".to_owned());
+
+        assert!(deferred.notifications.is_empty());
+        assert_eq!(
+            deferred.exit_reason,
+            Some(Some("control notification queue exceeded".to_owned()))
+        );
+
+        deferred.defer_notification("%message after-overflow".to_owned());
+        assert!(deferred.notifications.is_empty());
+    }
 }
 
 #[cfg(all(test, unix))]

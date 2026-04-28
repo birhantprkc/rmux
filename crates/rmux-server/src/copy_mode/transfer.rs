@@ -1,7 +1,9 @@
 use std::path::PathBuf;
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 
+use crate::terminal::shell_tokio_command;
 use rmux_proto::RmuxError;
+use tokio::io::AsyncWriteExt;
 
 use super::args::{
     ensure_max_positional, ensure_no_extra_args, parse_flagged_args, parse_positionals,
@@ -344,7 +346,7 @@ impl CopyModeState {
     }
 }
 
-pub(crate) fn run_pipe_command(
+pub(crate) async fn run_pipe_command(
     shell: &str,
     command: &str,
     working_directory: Option<&PathBuf>,
@@ -354,8 +356,12 @@ pub(crate) fn run_pipe_command(
         return Ok(());
     }
 
-    let mut child = shell_command(shell, command);
+    let cwd = working_directory
+        .map(PathBuf::as_path)
+        .unwrap_or_else(|| std::path::Path::new("."));
+    let mut child = shell_tokio_command(std::path::Path::new(shell), cwd, command);
     child.stdin(Stdio::piped());
+    child.kill_on_drop(true);
     if let Some(directory) = working_directory {
         child.current_dir(directory);
     }
@@ -363,12 +369,14 @@ pub(crate) fn run_pipe_command(
         RmuxError::Server(format!("failed to spawn pipe command '{command}': {error}"))
     })?;
     if let Some(mut stdin) = child.stdin.take() {
-        use std::io::Write;
-        stdin.write_all(data).map_err(|error| {
+        stdin.write_all(data).await.map_err(|error| {
             RmuxError::Server(format!("failed to write selection to '{command}': {error}"))
         })?;
+        stdin.shutdown().await.map_err(|error| {
+            RmuxError::Server(format!("failed to close stdin for '{command}': {error}"))
+        })?;
     }
-    let status = child.wait().map_err(|error| {
+    let status = child.wait().await.map_err(|error| {
         RmuxError::Server(format!(
             "failed to wait for pipe command '{command}': {error}"
         ))
@@ -382,27 +390,40 @@ pub(crate) fn run_pipe_command(
     }
 }
 
-#[cfg(unix)]
-fn shell_command(shell: &str, command: &str) -> Command {
-    let mut child = Command::new(shell);
-    child.arg("-c").arg(command);
-    child
-}
+#[cfg(test)]
+mod tests {
+    use super::run_pipe_command;
+    use std::time::{Duration, Instant};
 
-#[cfg(windows)]
-fn shell_command(shell: &str, command: &str) -> Command {
-    let mut child = Command::new(shell);
-    let shell_name = std::path::Path::new(shell)
-        .file_stem()
-        .and_then(|name| name.to_str())
-        .map(str::to_ascii_lowercase);
-    match shell_name.as_deref() {
-        Some("powershell" | "pwsh") => {
-            child.arg("-NoProfile").arg("-Command").arg(command);
+    #[tokio::test(flavor = "current_thread")]
+    async fn pipe_command_wait_does_not_block_the_runtime() {
+        let (shell, command) = slow_shell_command();
+        let start = Instant::now();
+        let pipe = run_pipe_command(&shell, command, None, b"");
+        tokio::pin!(pipe);
+
+        tokio::select! {
+            result = &mut pipe => panic!("pipe command completed before the runtime liveness probe: {result:?}"),
+            _ = tokio::time::sleep(Duration::from_millis(50)) => {}
         }
-        _ => {
-            child.arg("/C").arg(command);
-        }
+
+        assert!(
+            start.elapsed() < Duration::from_millis(250),
+            "Tokio timer was starved while waiting for copy-pipe helper"
+        );
+        pipe.await.expect("slow pipe command should finish");
     }
-    child
+
+    #[cfg(windows)]
+    fn slow_shell_command() -> (String, &'static str) {
+        (
+            std::env::var("COMSPEC").unwrap_or_else(|_| "cmd.exe".to_owned()),
+            "ping -n 2 127.0.0.1 >NUL",
+        )
+    }
+
+    #[cfg(unix)]
+    fn slow_shell_command() -> (String, &'static str) {
+        ("/bin/sh".to_owned(), "sleep 0.3")
+    }
 }

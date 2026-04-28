@@ -1,13 +1,13 @@
 use std::io::{self, Write};
-use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use rmux_proto::{encode_attach_message, AttachFrameDecoder, AttachMessage};
+use rmux_proto::{encode_attach_message, AttachFrameDecoder, AttachMessage, AttachedKeystroke};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::mpsc;
 
 use super::super::action::{run_attach_action, AttachActionExecutor};
+use super::super::lock_state::AttachLockState;
 use super::*;
 
 #[tokio::test]
@@ -68,6 +68,20 @@ async fn detach_exec_runs_action_before_exit() -> Result<(), Box<dyn std::error:
 }
 
 #[tokio::test]
+async fn closed_input_and_resize_channels_still_process_server_detach(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut scenario = AttachScenario::new(RecordingActions::default());
+    let actions = scenario.actions.clone();
+    let mut server = scenario.take_server();
+
+    write_server_message(&mut server, AttachMessage::DetachKill).await?;
+    scenario.join().await?;
+
+    assert_eq!(actions.calls(), vec!["detach-kill"]);
+    Ok(())
+}
+
+#[tokio::test]
 async fn data_frames_are_hidden_while_lock_command_runs() -> Result<(), Box<dyn std::error::Error>>
 {
     let actions = RecordingActions {
@@ -95,6 +109,82 @@ async fn data_frames_are_hidden_while_lock_command_runs() -> Result<(), Box<dyn 
     Ok(())
 }
 
+#[tokio::test]
+async fn keystrokes_received_while_locked_are_dropped_after_unlock(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut scenario = AttachScenario::new(RecordingActions {
+        lock_blocks_for: Duration::from_millis(80),
+        ..RecordingActions::default()
+    });
+    let mut server = scenario.take_server();
+    let input_tx = scenario.input_tx();
+
+    write_server_message(&mut server, AttachMessage::Lock("pause".to_owned())).await?;
+    scenario
+        .actions
+        .wait_for_call("lock:pause", Duration::from_secs(1))
+        .await?;
+    input_tx
+        .send(b"secret".to_vec())
+        .expect("send locked input");
+
+    assert_eq!(
+        read_client_message(&mut server).await?,
+        AttachMessage::Unlock
+    );
+    input_tx
+        .send(b"visible".to_vec())
+        .expect("send unlocked input");
+
+    assert_eq!(
+        read_client_message(&mut server).await?,
+        AttachMessage::Keystroke(AttachedKeystroke::new(b"visible".to_vec()))
+    );
+
+    write_server_message(&mut server, AttachMessage::DetachKill).await?;
+    scenario.join().await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn input_eof_keeps_attach_stream_until_server_detach(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut scenario = AttachScenario::new(RecordingActions::default());
+    let mut server = scenario.take_server();
+    scenario.close_input();
+
+    write_server_message(&mut server, AttachMessage::Data(b"still-attached".to_vec())).await?;
+    write_server_message(&mut server, AttachMessage::DetachKill).await?;
+
+    let output = scenario.join().await?;
+    assert_eq!(output, b"still-attached");
+    Ok(())
+}
+
+#[tokio::test]
+async fn split_detached_banner_marks_stream_stopped_before_eof(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut scenario = AttachScenario::new(RecordingActions::default());
+    let mut server = scenario.take_server();
+    let split = 12;
+
+    write_server_message(
+        &mut server,
+        AttachMessage::Data(DETACHED_BANNER_PREFIX[..split].to_vec()),
+    )
+    .await?;
+    write_server_message(
+        &mut server,
+        AttachMessage::Data(DETACHED_BANNER_PREFIX[split..].to_vec()),
+    )
+    .await?;
+    drop(server);
+
+    let output = scenario.join().await?;
+    assert_eq!(output, DETACHED_BANNER_PREFIX);
+    Ok(())
+}
+
 #[derive(Debug)]
 struct AttachScenario {
     client: tokio::task::JoinHandle<std::result::Result<(), crate::ClientError>>,
@@ -102,15 +192,16 @@ struct AttachScenario {
     actions: RecordingActions,
     output: SharedOutput,
     server: Option<tokio::io::DuplexStream>,
+    input_tx: Option<mpsc::UnboundedSender<Vec<u8>>>,
 }
 
 impl AttachScenario {
     fn new(actions: RecordingActions) -> Self {
         let (client_stream, server) = tokio::io::duplex(4096);
         let (reader, writer) = tokio::io::split(client_stream);
-        let (_input_tx, input_rx) = mpsc::unbounded_channel();
+        let (input_tx, input_rx) = mpsc::unbounded_channel();
         let (_resize_tx, resize_rx) = mpsc::unbounded_channel();
-        let locked = Arc::new(AtomicBool::new(false));
+        let locked = Arc::new(AttachLockState::default());
         let client_actions = actions.clone();
         let (action_tx, action_rx) = std::sync::mpsc::channel();
         let (completion_tx, completion_rx) = mpsc::unbounded_channel();
@@ -146,11 +237,23 @@ impl AttachScenario {
             actions,
             output,
             server: Some(server),
+            input_tx: Some(input_tx),
         }
     }
 
     fn take_server(&mut self) -> tokio::io::DuplexStream {
         self.server.take().expect("server stream should be present")
+    }
+
+    fn input_tx(&self) -> mpsc::UnboundedSender<Vec<u8>> {
+        self.input_tx
+            .as_ref()
+            .expect("input sender should be present")
+            .clone()
+    }
+
+    fn close_input(&mut self) {
+        drop(self.input_tx.take());
     }
 
     async fn join(self) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
@@ -205,6 +308,21 @@ impl RecordingActions {
             .lock()
             .expect("calls mutex poisoned")
             .push(call.into());
+    }
+
+    async fn wait_for_call(
+        &self,
+        expected: &str,
+        timeout: Duration,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let deadline = tokio::time::Instant::now() + timeout;
+        while tokio::time::Instant::now() < deadline {
+            if self.calls().iter().any(|call| call == expected) {
+                return Ok(());
+            }
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+        Err(format!("timed out waiting for attach action call {expected:?}").into())
     }
 }
 

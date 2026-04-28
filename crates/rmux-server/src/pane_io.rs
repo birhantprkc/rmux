@@ -158,7 +158,10 @@ pub(crate) async fn forward_attach(
                 loop {
                     match try_read_socket_bytes(&stream, &mut decoder, &mut socket_read_buffer)? {
                         TrySocketRead::Read => {}
-                        TrySocketRead::Closed => return Ok(()),
+                        TrySocketRead::Closed => {
+                            let _ = emit_attach_stop(&stream, &current_target).await;
+                            return Ok(());
+                        }
                         TrySocketRead::WouldBlock => break,
                     }
                 }
@@ -250,6 +253,7 @@ pub(crate) async fn forward_attach(
                 }
                 result = read_socket_bytes(&stream, &mut decoder, &mut socket_read_buffer) => {
                     if !result? {
+                        let _ = emit_attach_stop(&stream, &current_target).await;
                         return Ok(());
                     }
                 }

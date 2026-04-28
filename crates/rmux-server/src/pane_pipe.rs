@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::io;
 use std::process::Stdio;
 
 use rmux_core::PaneId;
@@ -345,7 +346,10 @@ async fn forward_pipe_output_to_pane<R>(
                 match read {
                     Ok(0) | Err(_) => break,
                     Ok(size) => {
-                        if pane_master.write_all(&buffer[..size]).is_err() {
+                        if write_pipe_output_to_pane(&pane_master, buffer[..size].to_vec())
+                            .await
+                            .is_err()
+                        {
                             break;
                         }
                     }
@@ -353,4 +357,17 @@ async fn forward_pipe_output_to_pane<R>(
             }
         }
     }
+}
+
+#[cfg(windows)]
+async fn write_pipe_output_to_pane(pane_master: &PtyMaster, bytes: Vec<u8>) -> io::Result<()> {
+    let pane_master = pane_master.try_clone().map_err(io::Error::other)?;
+    tokio::task::spawn_blocking(move || pane_master.write_all(&bytes))
+        .await
+        .map_err(|error| io::Error::other(format!("pipe-pane write task failed: {error}")))?
+}
+
+#[cfg(not(windows))]
+async fn write_pipe_output_to_pane(pane_master: &PtyMaster, bytes: Vec<u8>) -> io::Result<()> {
+    pane_master.write_all(&bytes)
 }

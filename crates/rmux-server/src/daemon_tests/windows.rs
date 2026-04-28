@@ -1,4 +1,4 @@
-use super::{DaemonConfig, ServerDaemon};
+use super::{windows_pipe_responds, DaemonConfig, ServerDaemon};
 use rmux_proto::{
     encode_frame, ErrorResponse, FrameDecoder, HasSessionRequest, KillServerRequest,
     KillSessionRequest, ListClientsRequest, ListPanesRequest, ListSessionsRequest,
@@ -198,12 +198,32 @@ async fn windows_daemon_reports_preexisting_pipe_as_in_use() -> io::Result<()> {
         .await
         .expect_err("preexisting pipe must reject daemon bind");
 
-    assert_eq!(error.kind(), io::ErrorKind::AddrInUse);
+    assert_ne!(
+        error.kind(),
+        io::ErrorKind::AddrInUse,
+        "raw pipe must not be reported as a responsive rmux server"
+    );
     assert!(
-        error.to_string().contains("already held"),
+        !error.to_string().contains("rmux-compatible"),
         "unexpected bind error: {error}"
     );
     Ok(())
+}
+
+#[tokio::test]
+async fn windows_pipe_probe_accepts_real_rmux_protocol_only() -> io::Result<()> {
+    let endpoint = unique_endpoint()?;
+    let socket_path = endpoint.clone().into_path();
+    let handle = ServerDaemon::new(DaemonConfig::new(socket_path))
+        .bind()
+        .await?;
+
+    let responds = tokio::task::spawn_blocking(move || windows_pipe_responds(&endpoint))
+        .await
+        .map_err(io::Error::other)?;
+
+    assert!(responds, "real rmux daemon must satisfy the protocol probe");
+    handle.shutdown().await
 }
 
 fn unique_endpoint() -> io::Result<rmux_ipc::LocalEndpoint> {

@@ -1,7 +1,9 @@
 use rmux_core::{key_code_lookup_bits, key_string_lookup_key};
 use rmux_proto::{
-    ErrorResponse, OptionName, PaneTarget, Response, RmuxError, SendKeysResponse, Target,
+    ErrorResponse, OptionName, PaneTarget, Response, RmuxError, SendKeysResponse, SessionName,
+    Target,
 };
+use rmux_pty::PtyMaster;
 
 use super::display_message_context;
 use crate::format_runtime::render_runtime_template;
@@ -9,40 +11,126 @@ use crate::input_keys::{encode_key, encode_mouse_event, ExtendedKeyFormat};
 use crate::keys::parse_key_code;
 use crate::pane_terminals::{session_not_found, HandlerState};
 
-pub(super) fn write_bytes_to_target(
+pub(super) struct PaneInputWrite {
+    session_name: SessionName,
+    window_index: u32,
+    pane_index: u32,
+    sink: PaneInputSink,
+}
+
+enum PaneInputSink {
+    Pty(PtyMaster),
+    CapturedForTest,
+}
+
+pub(super) fn prepare_pane_input_write(
     state: &HandlerState,
     target: &PaneTarget,
     bytes: &[u8],
+) -> Result<PaneInputWrite, RmuxError> {
+    let session_name = target.session_name().clone();
+    let window_index = target.window_index();
+    let pane_index = target.pane_index();
+    let master = state.pane_master_in_window(&session_name, window_index, pane_index)?;
+    #[cfg(not(all(test, windows)))]
+    let _ = bytes;
+    #[cfg(all(test, windows))]
+    if state.append_pane_input_capture_for_test(target, bytes) {
+        return Ok(PaneInputWrite {
+            session_name,
+            window_index,
+            pane_index,
+            sink: PaneInputSink::CapturedForTest,
+        });
+    }
+    Ok(PaneInputWrite {
+        session_name,
+        window_index,
+        pane_index,
+        sink: PaneInputSink::Pty(master),
+    })
+}
+
+pub(super) async fn write_bytes_to_target(
+    write: PaneInputWrite,
+    bytes: Vec<u8>,
     key_count: usize,
 ) -> Response {
-    match write_bytes_to_target_io(state, target, bytes) {
+    match write_bytes_to_target_io(write, bytes).await {
         Ok(()) => Response::SendKeys(SendKeysResponse { key_count }),
         Err(error) => Response::Error(ErrorResponse { error }),
     }
 }
 
-pub(super) fn write_bytes_to_target_io(
-    state: &HandlerState,
-    target: &PaneTarget,
-    bytes: &[u8],
+pub(super) async fn write_bytes_to_target_io(
+    write: PaneInputWrite,
+    bytes: Vec<u8>,
 ) -> Result<(), RmuxError> {
-    let session_name = target.session_name().clone();
-    let window_index = target.window_index();
-    let pane_index = target.pane_index();
-    let master = state.pane_master_in_window(&session_name, window_index, pane_index)?;
     if bytes.is_empty() {
         return Ok(());
     }
-    #[cfg(all(test, windows))]
-    if state.append_pane_input_capture_for_test(target, bytes) {
+    let PaneInputWrite {
+        session_name,
+        window_index,
+        pane_index,
+        sink,
+    } = write;
+    let PaneInputSink::Pty(master) = sink else {
         return Ok(());
-    }
-    master.write_all(bytes).map_err(|error| {
+    };
+    write_pane_bytes(master, bytes).await.map_err(|error| {
         RmuxError::Server(format!(
             "failed to write to pane {}:{}.{}: {}",
             session_name, window_index, pane_index, error
         ))
     })
+}
+
+#[cfg(windows)]
+async fn write_pane_bytes(master: PtyMaster, bytes: Vec<u8>) -> std::io::Result<()> {
+    tokio::task::spawn_blocking(move || master.write_all(&bytes))
+        .await
+        .map_err(|error| std::io::Error::other(format!("pane write task failed: {error}")))?
+}
+
+#[cfg(not(windows))]
+async fn write_pane_bytes(master: PtyMaster, bytes: Vec<u8>) -> std::io::Result<()> {
+    master.write_all(&bytes)
+}
+
+pub(in crate::handler) async fn write_bracketed_pane_payload(
+    master: PtyMaster,
+    payload: Vec<u8>,
+    bracketed: bool,
+) -> std::io::Result<()> {
+    #[cfg(windows)]
+    {
+        tokio::task::spawn_blocking(move || {
+            write_bracketed_pane_payload_blocking(&master, &payload, bracketed)
+        })
+        .await
+        .map_err(|error| std::io::Error::other(format!("pane paste task failed: {error}")))?
+    }
+
+    #[cfg(not(windows))]
+    {
+        write_bracketed_pane_payload_blocking(&master, &payload, bracketed)
+    }
+}
+
+fn write_bracketed_pane_payload_blocking(
+    master: &PtyMaster,
+    payload: &[u8],
+    bracketed: bool,
+) -> std::io::Result<()> {
+    if bracketed {
+        master.write_all(b"\x1b[200~")?;
+    }
+    master.write_all(payload)?;
+    if bracketed {
+        master.write_all(b"\x1b[201~")?;
+    }
+    Ok(())
 }
 
 pub(super) fn encode_tokens_for_target(

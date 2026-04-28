@@ -5,6 +5,7 @@ use std::mem::MaybeUninit;
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::Mutex;
 use std::thread;
 use std::time::Duration;
 
@@ -16,10 +17,12 @@ use windows_sys::Win32::Foundation::{
 };
 use windows_sys::Win32::System::Console::{
     FlushConsoleInputBuffer, GetConsoleMode, GetConsoleScreenBufferInfo, GetStdHandle,
-    PeekConsoleInputW, ReadConsoleInputW, SetConsoleMode, CONSOLE_SCREEN_BUFFER_INFO,
-    ENABLE_ECHO_INPUT, ENABLE_LINE_INPUT, ENABLE_PROCESSED_INPUT, ENABLE_VIRTUAL_TERMINAL_INPUT,
-    ENABLE_VIRTUAL_TERMINAL_PROCESSING, INPUT_RECORD, KEY_EVENT, STD_INPUT_HANDLE,
-    STD_OUTPUT_HANDLE,
+    PeekConsoleInputW, ReadConsoleInputW, SetConsoleCtrlHandler, SetConsoleMode,
+    CONSOLE_SCREEN_BUFFER_INFO, CTRL_BREAK_EVENT, CTRL_CLOSE_EVENT, CTRL_C_EVENT,
+    CTRL_LOGOFF_EVENT, CTRL_SHUTDOWN_EVENT, DISABLE_NEWLINE_AUTO_RETURN, ENABLE_ECHO_INPUT,
+    ENABLE_EXTENDED_FLAGS, ENABLE_INSERT_MODE, ENABLE_LINE_INPUT, ENABLE_PROCESSED_INPUT,
+    ENABLE_QUICK_EDIT_MODE, ENABLE_VIRTUAL_TERMINAL_INPUT, ENABLE_VIRTUAL_TERMINAL_PROCESSING,
+    INPUT_RECORD, KEY_EVENT, STD_INPUT_HANDLE, STD_OUTPUT_HANDLE,
 };
 use windows_sys::Win32::System::Threading::WaitForSingleObject;
 
@@ -63,21 +66,22 @@ impl From<io::Error> for AttachError {
 #[must_use = "keep the guard alive for as long as raw terminal mode is required"]
 pub struct RawTerminal {
     inner: RawTerminalGuard<Win32Console>,
+    _ctrl_handler: ConsoleControlHandlerGuard,
 }
 
 // SAFETY: RawTerminal stores process-wide Win32 console HANDLE values and
 // immutable mode snapshots only. The attach lifecycle serializes semantic
-// ownership by joining the action worker before dropping the guard.
+// ownership by moving the guard into the attach action worker.
 unsafe impl Send for RawTerminal {}
-// SAFETY: RawTerminal methods operate through Win32 console APIs using shared
-// references; there is no Rust-managed mutable state behind those references.
-unsafe impl Sync for RawTerminal {}
 
 impl RawTerminal {
     /// Enters raw mode for process stdin/stdout console handles.
     pub fn enter() -> Result<Self> {
+        let inner = RawTerminalGuard::enter(Win32Console)?;
+        let ctrl_handler = ConsoleControlHandlerGuard::install(&inner)?;
         Ok(Self {
-            inner: RawTerminalGuard::enter(Win32Console)?,
+            inner,
+            _ctrl_handler: ctrl_handler,
         })
     }
 
@@ -89,7 +93,10 @@ impl RawTerminal {
     pub(super) fn run_lock_command(&self, command: &str) -> Result<()> {
         self.restore()?;
         let command_result = run_shell_command(command);
-        let raw_result = self.inner.reapply_raw_mode();
+        let raw_result = self
+            .inner
+            .flush_pending_input()
+            .and_then(|()| self.inner.reapply_raw_mode());
         if let Err(error) = command_result {
             raw_result?;
             return Err(error);
@@ -111,17 +118,132 @@ impl RawTerminal {
         run_shell_command(command)
     }
 
-    pub(super) fn restore_attach_terminal_state(&self) -> Result<()> {
-        let mut stdout = io::stdout();
-        let term = std::env::var("TERM").unwrap_or_default();
-        stdout.write_all(&fallback_attach_stop_sequence(&term))?;
-        stdout.flush()?;
-        Ok(())
-    }
-
     pub(super) fn flush_pending_input(&self) -> Result<()> {
         self.inner.flush_pending_input()
     }
+}
+
+impl Drop for RawTerminal {
+    fn drop(&mut self) {
+        let _ = self.flush_pending_input();
+    }
+}
+
+#[derive(Debug)]
+struct ConsoleControlHandlerGuard;
+
+impl ConsoleControlHandlerGuard {
+    fn install(terminal: &RawTerminalGuard<Win32Console>) -> Result<Self> {
+        let snapshot = ConsoleModeSnapshot::from_terminal(terminal);
+        let mut state = CTRL_HANDLER_STATE
+            .lock()
+            .expect("console control handler state poisoned");
+        *state = Some(snapshot);
+
+        let ok = unsafe {
+            // SAFETY: `raw_terminal_ctrl_handler` is a process-static callback
+            // with the Win32 signature required by SetConsoleCtrlHandler.
+            SetConsoleCtrlHandler(Some(raw_terminal_ctrl_handler), 1)
+        };
+        if ok == 0 {
+            *state = None;
+            return Err(AttachError::Io(io::Error::last_os_error()));
+        }
+        Ok(Self)
+    }
+}
+
+impl Drop for ConsoleControlHandlerGuard {
+    fn drop(&mut self) {
+        if let Ok(mut state) = CTRL_HANDLER_STATE.lock() {
+            *state = None;
+        }
+        let _ = unsafe {
+            // SAFETY: The callback was installed by this guard and the process
+            // remains alive while the guard is being dropped.
+            SetConsoleCtrlHandler(Some(raw_terminal_ctrl_handler), 0)
+        };
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+struct ConsoleModeSnapshot {
+    input: Option<ConsoleRestorePoint>,
+    output: Option<ConsoleRestorePoint>,
+}
+
+impl ConsoleModeSnapshot {
+    fn from_terminal(terminal: &RawTerminalGuard<Win32Console>) -> Self {
+        Self {
+            input: terminal.input.as_ref().map(ConsoleRestorePoint::from_mode),
+            output: terminal.output.as_ref().map(ConsoleRestorePoint::from_mode),
+        }
+    }
+
+    fn restore(self) {
+        if let Some(input) = self.input {
+            input.restore();
+        }
+        if let Some(output) = self.output {
+            output.restore();
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+struct ConsoleRestorePoint {
+    handle: isize,
+    mode: u32,
+}
+
+impl ConsoleRestorePoint {
+    fn from_mode(mode: &ConsoleMode<HANDLE>) -> Self {
+        Self {
+            handle: mode.handle as isize,
+            mode: mode.original,
+        }
+    }
+
+    fn restore(self) {
+        let _ = unsafe {
+            // SAFETY: The handle and mode were captured from a successful
+            // GetConsoleMode call while entering raw mode. Restoration is best
+            // effort because this may run from a console-control callback.
+            SetConsoleMode(self.handle as HANDLE, self.mode)
+        };
+    }
+}
+
+static CTRL_HANDLER_STATE: Mutex<Option<ConsoleModeSnapshot>> = Mutex::new(None);
+
+unsafe extern "system" fn raw_terminal_ctrl_handler(event: u32) -> i32 {
+    if should_restore_for_console_event(event) {
+        if let Ok(state) = CTRL_HANDLER_STATE.lock() {
+            if let Some(snapshot) = *state {
+                snapshot.restore();
+            }
+        }
+    }
+    0
+}
+
+const fn should_restore_for_console_event(event: u32) -> bool {
+    matches!(
+        event,
+        CTRL_C_EVENT
+            | CTRL_BREAK_EVENT
+            | CTRL_CLOSE_EVENT
+            | CTRL_LOGOFF_EVENT
+            | CTRL_SHUTDOWN_EVENT
+    )
+}
+
+pub(super) fn restore_attach_terminal_state() -> Result<()> {
+    let mut stdout = io::stdout();
+    let term = std::env::var("TERM").unwrap_or_default();
+    stdout.write_all(&fallback_attach_stop_sequence(&term))?;
+    stdout.flush()?;
+    Ok(())
 }
 
 #[derive(Debug)]
@@ -452,12 +574,16 @@ fn console_mode_absent_or_error<T>() -> Result<Option<T>> {
 }
 
 const fn raw_input_mode(original: u32) -> u32 {
-    (original | ENABLE_VIRTUAL_TERMINAL_INPUT)
-        & !(ENABLE_LINE_INPUT | ENABLE_ECHO_INPUT | ENABLE_PROCESSED_INPUT)
+    (original | ENABLE_VIRTUAL_TERMINAL_INPUT | ENABLE_EXTENDED_FLAGS)
+        & !(ENABLE_LINE_INPUT
+            | ENABLE_ECHO_INPUT
+            | ENABLE_PROCESSED_INPUT
+            | ENABLE_QUICK_EDIT_MODE
+            | ENABLE_INSERT_MODE)
 }
 
 const fn raw_output_mode(original: u32) -> u32 {
-    original | ENABLE_VIRTUAL_TERMINAL_PROCESSING
+    original | ENABLE_VIRTUAL_TERMINAL_PROCESSING | DISABLE_NEWLINE_AUTO_RETURN
 }
 
 fn run_shell_command(command: &str) -> Result<()> {

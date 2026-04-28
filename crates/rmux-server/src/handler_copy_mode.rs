@@ -378,7 +378,8 @@ impl RequestHandler {
                 command,
                 context.working_directory.as_ref(),
                 &transfer.data,
-            )?;
+            )
+            .await?;
         }
         Ok(())
     }
@@ -495,26 +496,39 @@ fn copy_mode_context(
     refresh_screen: Option<rmux_core::Screen>,
     mouse: Option<crate::copy_mode::CopyModeMouseContext>,
 ) -> CopyModeCommandContext {
-    let default_shell = state
-        .options
-        .resolve(Some(target.session_name()), OptionName::DefaultShell)
-        .filter(|value| !value.is_empty())
-        .map(str::to_owned)
+    let pane_profile = state
+        .pane_profile_in_window(
+            target.session_name(),
+            target.window_index(),
+            target.pane_index(),
+        )
+        .ok();
+    let default_shell = pane_profile
+        .map(|profile| profile.shell().to_string_lossy().into_owned())
+        .or_else(|| {
+            state
+                .options
+                .resolve(Some(target.session_name()), OptionName::DefaultShell)
+                .filter(|value| !value.is_empty())
+                .map(str::to_owned)
+        })
         .or_else(|| std::env::var("SHELL").ok())
         .unwrap_or_else(|| "/bin/sh".to_owned());
-    let word_separators = state
-        .options
-        .resolve(Some(target.session_name()), OptionName::WordSeparators)
-        .filter(|value| !value.is_empty())
-        .unwrap_or(" -_@")
-        .to_owned();
+    let pane_cwd = pane_profile.map(|profile| profile.cwd().to_path_buf());
     let working_directory = state
         .sessions
         .session(target.session_name())
         .and_then(|session| session.window_at(target.window_index()))
         .and_then(|window| window.pane(target.pane_index()))
         .and_then(|pane| state.pane_screen_state(target.session_name(), pane.id()))
-        .and_then(|screen_state| (!screen_state.path.is_empty()).then(|| screen_state.path.into()));
+        .and_then(|screen_state| (!screen_state.path.is_empty()).then(|| screen_state.path.into()))
+        .or(pane_cwd);
+    let word_separators = state
+        .options
+        .resolve(Some(target.session_name()), OptionName::WordSeparators)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(" -_@")
+        .to_owned();
 
     CopyModeCommandContext {
         mode_keys: ModeKeys::parse(state.options.resolve_for_pane(

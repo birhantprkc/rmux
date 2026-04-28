@@ -8,7 +8,9 @@ use super::super::{
     prompt_support::{decode_prompt_key, PromptInputEvent},
     RequestHandler,
 };
-use super::pane_io_encoding::{encode_key_for_target, write_bytes_to_target_io};
+use super::pane_io_encoding::{
+    encode_key_for_target, prepare_pane_input_write, write_bytes_to_target_io,
+};
 use super::pane_prompt_input::{decode_prompt_input_event, is_extended_key_prefix};
 use super::{io_other, resolve_input_target, AttachedKeyDispatch};
 use crate::input_keys::{decode_extended_key, decode_mouse, ExtendedKeyDecode, MouseDecode};
@@ -96,11 +98,18 @@ impl RequestHandler {
             return Ok(true);
         }
 
-        let state = self.state.lock().await;
-        let encoded = encode_key_for_target(&state, &target, key).map_err(io_other)?;
-        if let Some(encoded) = encoded {
-            write_bytes_to_target_io(&state, &target, &encoded).map_err(io_other)?;
-        }
+        let prepared = {
+            let state = self.state.lock().await;
+            let Some(encoded) = encode_key_for_target(&state, &target, key).map_err(io_other)?
+            else {
+                return Ok(false);
+            };
+            let write = prepare_pane_input_write(&state, &target, &encoded).map_err(io_other)?;
+            (write, encoded)
+        };
+        write_bytes_to_target_io(prepared.0, prepared.1)
+            .await
+            .map_err(io_other)?;
         Ok(false)
     }
 
@@ -320,17 +329,22 @@ impl RequestHandler {
             .attached_input_target(attach_pid)
             .await
             .map_err(io_other)?;
-        let state = self.state.lock().await;
-        let pane_id = state
-            .sessions
-            .session(target.session_name())
-            .and_then(|session| session.window_at(target.window_index()))
-            .and_then(|window| window.pane(target.pane_index()))
-            .map(|pane| pane.id());
-        if pane_id.is_some_and(|pane_id| state.pane_is_dead(target.session_name(), pane_id)) {
-            return Ok(());
-        }
-        write_bytes_to_target_io(&state, &target, bytes).map_err(io_other)
+        let write = {
+            let state = self.state.lock().await;
+            let pane_id = state
+                .sessions
+                .session(target.session_name())
+                .and_then(|session| session.window_at(target.window_index()))
+                .and_then(|window| window.pane(target.pane_index()))
+                .map(|pane| pane.id());
+            if pane_id.is_some_and(|pane_id| state.pane_is_dead(target.session_name(), pane_id)) {
+                return Ok(());
+            }
+            prepare_pane_input_write(&state, &target, bytes).map_err(io_other)?
+        };
+        write_bytes_to_target_io(write, bytes.to_vec())
+            .await
+            .map_err(io_other)
     }
 
     async fn record_attached_submitted_text(

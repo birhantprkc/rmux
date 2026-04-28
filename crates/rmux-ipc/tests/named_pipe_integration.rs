@@ -186,16 +186,63 @@ async fn first_pipe_instance_rejects_second_listener() -> std::io::Result<()> {
 }
 
 #[tokio::test]
-async fn listener_preallocates_pipe_instances_for_connect_bursts() -> std::io::Result<()> {
-    let endpoint = endpoint_for_label(format!("burst-{}", std::process::id()))?;
+async fn listener_exposes_only_the_front_pending_pipe_instance() -> std::io::Result<()> {
+    let endpoint = endpoint_for_label(format!("single-front-{}", std::process::id()))?;
     let _listener = LocalListener::bind(&endpoint)?;
 
-    let mut clients = Vec::new();
-    for _ in 0..4 {
-        clients.push(ClientOptions::new().open(endpoint.as_pipe_name())?);
-    }
+    let first = ClientOptions::new().open(endpoint.as_pipe_name())?;
+    let second = ClientOptions::new()
+        .open(endpoint.as_pipe_name())
+        .expect_err("second client should not connect to a hidden pending instance");
 
-    drop(clients);
+    assert!(
+        matches!(second.raw_os_error(), Some(231) | Some(233) | Some(2)),
+        "unexpected second-client error while front instance is occupied: {second:?}"
+    );
+    drop(first);
+    Ok(())
+}
+
+#[tokio::test]
+async fn listener_accepts_next_client_after_abandoned_instance() -> std::io::Result<()> {
+    let endpoint = endpoint_for_label(format!("abandoned-{}", std::process::id()))?;
+    let listener = LocalListener::bind(&endpoint)?;
+
+    let endpoint_for_abandoned = endpoint.clone();
+    timeout(
+        Duration::from_secs(2),
+        tokio::task::spawn_blocking(move || {
+            let client = ClientOptions::new().open(endpoint_for_abandoned.as_pipe_name())?;
+            drop(client);
+            std::io::Result::Ok(())
+        }),
+    )
+    .await
+    .expect("abandoned client open timed out")
+    .expect("abandoned client task")?;
+
+    let _ = timeout(Duration::from_secs(2), listener.accept())
+        .await
+        .expect("first accept should observe the abandoned instance");
+
+    let endpoint_for_client = endpoint.clone();
+    let client = tokio::task::spawn_blocking(move || {
+        let mut client = connect_blocking(&endpoint_for_client, Duration::from_secs(2))?;
+        client.write_all(b"ok")?;
+        std::io::Result::Ok(())
+    });
+
+    let (mut stream, _peer) = timeout(Duration::from_secs(2), listener.accept())
+        .await
+        .expect("listener should accept a later healthy client")?;
+    let mut bytes = [0_u8; 2];
+    stream.read_exact(&mut bytes).await?;
+    assert_eq!(&bytes, b"ok");
+
+    timeout(Duration::from_secs(2), client)
+        .await
+        .expect("healthy client timed out")
+        .expect("healthy client task")?;
     Ok(())
 }
 

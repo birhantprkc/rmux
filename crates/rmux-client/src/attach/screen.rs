@@ -33,7 +33,7 @@ impl AttachStopDetector {
     pub(super) fn new(tracker: AttachScreenTracker) -> Self {
         let term = std::env::var("TERM").unwrap_or_default();
         let marker = alternate_screen_exit_sequence(&term).to_vec();
-        let tail_len = marker.len().saturating_sub(1);
+        let tail_len = stop_marker_tail_len(&marker);
         Self {
             tracker,
             marker,
@@ -77,11 +77,7 @@ impl AttachStopDetector {
     }
 
     fn update_tail(&mut self, bytes: &[u8]) {
-        let tail_len = self
-            .marker
-            .len()
-            .max(ALT_SCREEN_EXIT_FALLBACK.len())
-            .saturating_sub(1);
+        let tail_len = stop_marker_tail_len(&self.marker);
         self.tail.clear();
         if tail_len == 0 {
             return;
@@ -91,9 +87,59 @@ impl AttachStopDetector {
     }
 }
 
+fn stop_marker_tail_len(marker: &[u8]) -> usize {
+    [
+        marker.len(),
+        ALT_SCREEN_EXIT_FALLBACK.len(),
+        DETACHED_BANNER_PREFIX.len(),
+        EXITED_BANNER.len(),
+    ]
+    .into_iter()
+    .max()
+    .unwrap_or(0)
+    .saturating_sub(1)
+}
+
 pub(super) fn contains_subslice(haystack: &[u8], needle: &[u8]) -> bool {
     !needle.is_empty()
         && haystack
             .windows(needle.len())
             .any(|window| window == needle)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tail_len_covers_all_stop_markers() {
+        let marker = b"\x1b[?1049l";
+        let tail_len = stop_marker_tail_len(marker);
+
+        for needle in [
+            marker.as_slice(),
+            ALT_SCREEN_EXIT_FALLBACK,
+            DETACHED_BANNER_PREFIX,
+            EXITED_BANNER,
+        ] {
+            assert!(
+                tail_len >= needle.len().saturating_sub(1),
+                "tail length {tail_len} should cover marker length {}",
+                needle.len()
+            );
+        }
+    }
+
+    #[test]
+    fn detector_marks_stopped_when_detached_banner_is_split_across_reads() {
+        let tracker = AttachScreenTracker::default();
+        let mut detector = AttachStopDetector::new(tracker.clone());
+        let split = 12;
+
+        detector.observe(&DETACHED_BANNER_PREFIX[..split]);
+        assert!(!tracker.was_stopped());
+
+        detector.observe(&DETACHED_BANNER_PREFIX[split..]);
+        assert!(tracker.was_stopped());
+    }
 }

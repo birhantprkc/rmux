@@ -1,8 +1,7 @@
 //! Windows attach-mode client.
 
 use std::io::{self, Read, Write};
-use std::os::windows::io::AsRawHandle;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::os::windows::io::{AsRawHandle, RawHandle};
 use std::sync::mpsc as std_mpsc;
 use std::sync::Arc;
 use std::thread;
@@ -10,6 +9,7 @@ use std::thread;
 use rmux_ipc::BlockingLocalStream;
 use rmux_proto::{encode_attach_message, AttachMessage, TerminalSize};
 use tokio::sync::mpsc;
+use windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE;
 
 use crate::ClientError;
 
@@ -17,6 +17,8 @@ use crate::ClientError;
 mod action;
 #[path = "attach_windows/input.rs"]
 mod input;
+#[path = "attach_windows/lock_state.rs"]
+mod lock_state;
 #[path = "attach_windows/metrics.rs"]
 mod metrics;
 #[path = "attach/screen.rs"]
@@ -28,6 +30,7 @@ mod terminal;
 #[path = "attach/terminal_cleanup.rs"]
 mod terminal_cleanup;
 
+use lock_state::AttachLockState;
 use screen::AttachScreenTracker;
 pub use terminal::{AttachError, RawTerminal, Result};
 
@@ -76,29 +79,27 @@ where
     Input: Read + AsRawHandle + Send + 'static,
     Output: Write + Send + 'static,
 {
-    let raw_terminal = Arc::new(RawTerminal::enter().map_err(ClientError::from)?);
+    let raw_terminal = RawTerminal::enter().map_err(ClientError::from)?;
     let _ = raw_terminal.flush_pending_input();
     let screen_tracker = AttachScreenTracker::default();
     let result = drive_attach_stream_with_terminal_state(
         stream,
         initial_bytes,
-        Arc::clone(&raw_terminal),
+        raw_terminal,
         &screen_tracker,
         input,
         output,
     );
     if result.is_err() && !screen_tracker.was_stopped() {
-        let _ = raw_terminal.restore_attach_terminal_state();
+        let _ = terminal::restore_attach_terminal_state();
     }
-    let _ = raw_terminal.flush_pending_input();
-    drop(raw_terminal);
     result
 }
 
 fn drive_attach_stream_with_terminal_state<Input, Output>(
     mut stream: BlockingLocalStream,
     initial_bytes: Vec<u8>,
-    raw_terminal: Arc<RawTerminal>,
+    raw_terminal: RawTerminal,
     screen_tracker: &AttachScreenTracker,
     input: Input,
     output: Output,
@@ -161,9 +162,9 @@ where
     Actions: action::AttachActionExecutor + Send + 'static,
 {
     let (input_tx, input_rx) = mpsc::unbounded_channel();
-    let locked = Arc::new(AtomicBool::new(false));
-    let input_locked = Arc::clone(&locked);
-    let input_thread = thread::spawn(move || input_loop(input, input_tx, input_locked));
+    let lock_state = Arc::new(AttachLockState::default());
+    let input_lock_state = Arc::clone(&lock_state);
+    let input_thread = thread::spawn(move || input_loop(input, input_tx, input_lock_state));
     let (action_tx, action_rx) = std_mpsc::channel();
     let (action_completion_tx, action_completion_rx) = mpsc::unbounded_channel();
     let action_thread =
@@ -182,12 +183,13 @@ where
                 resize_rx,
                 action_tx,
                 action_completion_rx,
-                locked,
+                Arc::clone(&lock_state),
             ),
         )
         .await
     });
 
+    lock_state.close();
     let input_result = join_attach_thread(input_thread)?;
     let action_result = join_attach_thread(action_thread)?;
 
@@ -218,25 +220,26 @@ where
 fn input_loop<Input>(
     mut input: Input,
     input_tx: mpsc::UnboundedSender<Vec<u8>>,
-    locked: Arc<AtomicBool>,
+    lock_state: Arc<AttachLockState>,
 ) -> std::result::Result<(), ClientError>
 where
     Input: Read + AsRawHandle,
 {
     let mut read_buffer = [0_u8; READ_BUFFER_SIZE];
     let input_handle = input.as_raw_handle();
+    if is_absent_input_handle(input_handle) {
+        lock_state.wait_until_closed();
+        return Ok(());
+    }
 
     loop {
-        if locked.load(Ordering::SeqCst) {
-            if input_tx.is_closed() {
-                return Ok(());
-            }
-            thread::sleep(std::time::Duration::from_millis(20));
-            continue;
+        if lock_state.is_closed() || input_tx.is_closed() {
+            return Ok(());
         }
 
+        let locked = lock_state.is_locked();
         if !terminal::wait_for_key_input(input_handle, 50).map_err(ClientError::Io)? {
-            if input_tx.is_closed() {
+            if lock_state.is_closed() || input_tx.is_closed() {
                 return Ok(());
             }
             continue;
@@ -249,10 +252,18 @@ where
             Err(error) => return Err(ClientError::Io(error)),
         };
 
+        if locked || lock_state.is_locked() {
+            continue;
+        }
+
         if input_tx.send(read_buffer[..bytes_read].to_vec()).is_err() {
             return Ok(());
         }
     }
+}
+
+fn is_absent_input_handle(handle: RawHandle) -> bool {
+    handle.is_null() || std::ptr::eq(handle, INVALID_HANDLE_VALUE as RawHandle)
 }
 
 fn write_attach_message(

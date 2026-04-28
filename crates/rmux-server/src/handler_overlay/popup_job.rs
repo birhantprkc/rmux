@@ -7,7 +7,7 @@ use std::time::Duration;
 use rmux_core::input::InputParser;
 use rmux_core::{GridRenderOptions, Screen, ScreenCaptureRange};
 use rmux_proto::{RmuxError, TerminalSize};
-use rmux_pty::{ChildCommand, PtyChild, PtyIo, Signal, TerminalSize as PtyTerminalSize};
+use rmux_pty::{PtyChild, PtyIo, Signal, TerminalSize as PtyTerminalSize};
 #[cfg(unix)]
 use tokio::io::unix::AsyncFd;
 use tokio::time::sleep;
@@ -103,7 +103,9 @@ pub(super) fn spawn_popup_job(
     environment: &[String],
 ) -> Result<(PopupJob, Vec<u8>), RmuxError> {
     let env = parse_environment_assignments(environment)?;
-    let mut command = ChildCommand::new(profile.shell())
+    let mut command = shell_command
+        .map(|command| profile.shell_child_command(command))
+        .unwrap_or_else(|| profile.interactive_child_command())
         .size(PtyTerminalSize::new(size.cols.max(1), size.rows.max(1)))
         .clear_env()
         .current_dir(profile.cwd());
@@ -113,10 +115,6 @@ pub(super) fn spawn_popup_job(
     for (name, value) in env {
         command = command.env(name, value);
     }
-    if let Some(shell_command) = shell_command {
-        command = popup_shell_command(command, shell_command);
-    }
-
     let spawned = command
         .spawn()
         .map_err(|error| RmuxError::Server(format!("failed to spawn popup process: {error}")))?;
@@ -133,16 +131,6 @@ pub(super) fn spawn_popup_job(
         },
         Vec::new(),
     ))
-}
-
-#[cfg(unix)]
-fn popup_shell_command(command: ChildCommand, shell_command: &str) -> ChildCommand {
-    command.arg("-c").arg(shell_command)
-}
-
-#[cfg(windows)]
-fn popup_shell_command(command: ChildCommand, shell_command: &str) -> ChildCommand {
-    command.arg("/C").arg(shell_command)
 }
 
 impl RequestHandler {

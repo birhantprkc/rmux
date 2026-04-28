@@ -11,7 +11,7 @@ use tokio::runtime::Handle;
 mod shell_resolver;
 mod shell_spec;
 
-use shell_resolver::resolve_shell_path;
+use shell_resolver::{resolve_program_path, resolve_shell_path};
 use shell_spec::ShellSpec;
 
 /// Immutable pane-spawn metadata captured when a pane terminal is created.
@@ -66,21 +66,29 @@ impl TerminalProfile {
             ),
         );
 
-        let cwd = resolve_working_directory(requested_cwd)?;
-        let shell = resolve_shell_path(options, Some(session_name), &resolved);
-        resolved.insert("SHELL".to_owned(), shell.to_string_lossy().into_owned());
-
         if let Some(overrides) = overrides {
             for (name, value) in parse_environment_assignments(overrides)? {
-                resolved.insert(name, value);
+                set_environment_value(&mut resolved, name, value);
             }
         }
+
+        let cwd = resolve_working_directory(requested_cwd)?;
+        let shell = resolve_shell_path(options, Some(session_name), &resolved);
+        set_environment_value(
+            &mut resolved,
+            "SHELL".to_owned(),
+            shell.to_string_lossy().into_owned(),
+        );
 
         if let Some(pane_id) = pane_id {
             resolved.insert("RMUX_PANE".to_owned(), format!("%{}", pane_id.as_u32()));
         }
 
-        resolved.insert("PWD".to_owned(), cwd.to_string_lossy().into_owned());
+        set_environment_value(
+            &mut resolved,
+            "PWD".to_owned(),
+            cwd.to_string_lossy().into_owned(),
+        );
 
         Ok(Self {
             cwd,
@@ -131,8 +139,16 @@ impl TerminalProfile {
 
         let cwd = resolve_working_directory(requested_cwd)?;
         let shell = resolve_shell_path(options, session_name, &resolved);
-        resolved.insert("SHELL".to_owned(), shell.to_string_lossy().into_owned());
-        resolved.insert("PWD".to_owned(), cwd.to_string_lossy().into_owned());
+        set_environment_value(
+            &mut resolved,
+            "SHELL".to_owned(),
+            shell.to_string_lossy().into_owned(),
+        );
+        set_environment_value(
+            &mut resolved,
+            "PWD".to_owned(),
+            cwd.to_string_lossy().into_owned(),
+        );
 
         Ok(Self {
             cwd,
@@ -156,11 +172,19 @@ impl TerminalProfile {
     }
 
     pub(crate) fn shell_command(&self, command: &str) -> tokio::process::Command {
-        ShellSpec::new(&self.shell).command_tokio_child(&self.cwd, command)
+        shell_tokio_command(&self.shell, &self.cwd, command)
     }
 
     pub(crate) fn shell_std_command(&self, command: &str) -> Command {
-        ShellSpec::new(&self.shell).command_std_child(&self.cwd, command)
+        shell_std_command(&self.shell, &self.cwd, command)
+    }
+
+    pub(crate) fn shell_child_command(&self, command: &str) -> ChildCommand {
+        shell_child_command(&self.shell, &self.cwd, command)
+    }
+
+    pub(crate) fn interactive_child_command(&self) -> ChildCommand {
+        ShellSpec::new(&self.shell).interactive_child(&self.cwd)
     }
 
     pub(crate) fn environment_value(&self, name: &str) -> Option<&str> {
@@ -222,12 +246,30 @@ pub(crate) fn spawn_pane_process(
 }
 
 fn spawn_command(profile: &TerminalProfile, command: Option<&[String]>) -> ChildCommand {
-    let shell = ShellSpec::new(profile.shell());
     match command {
-        Some([single]) => shell.command_child(profile.cwd(), single),
-        Some(argv) if !argv.is_empty() => ChildCommand::new(&argv[0]).args(&argv[1..]),
-        _ => shell.interactive_child(profile.cwd()),
+        Some([single]) => profile.shell_child_command(single),
+        Some(argv) if !argv.is_empty() => {
+            let program = resolve_program_path(Path::new(&argv[0]), &profile.environment);
+            ChildCommand::new(program).args(&argv[1..])
+        }
+        _ => profile.interactive_child_command(),
     }
+}
+
+pub(crate) fn shell_child_command(shell: &Path, cwd: &Path, command: &str) -> ChildCommand {
+    ShellSpec::new(shell).command_child(cwd, command)
+}
+
+pub(crate) fn shell_tokio_command(
+    shell: &Path,
+    cwd: &Path,
+    command: &str,
+) -> tokio::process::Command {
+    ShellSpec::new(shell).command_tokio_child(cwd, command)
+}
+
+pub(crate) fn shell_std_command(shell: &Path, cwd: &Path, command: &str) -> Command {
+    ShellSpec::new(shell).command_std_child(cwd, command)
 }
 
 #[cfg(test)]
@@ -306,6 +348,19 @@ pub(crate) fn parse_environment_assignments(
     Ok(environment)
 }
 
+fn set_environment_value(environment: &mut HashMap<String, String>, name: String, value: String) {
+    #[cfg(windows)]
+    if let Some(existing) = environment
+        .keys()
+        .find(|key| key.eq_ignore_ascii_case(&name))
+        .cloned()
+    {
+        environment.remove(&existing);
+    }
+
+    environment.insert(name, value);
+}
+
 fn resolve_working_directory(requested_cwd: Option<&Path>) -> Result<PathBuf, RmuxError> {
     let requested = requested_cwd
         .map(PathBuf::from)
@@ -350,6 +405,9 @@ fn executable_name(path: impl AsRef<std::ffi::OsStr>) -> Option<String> {
 #[cfg(test)]
 #[path = "terminal/hook_tests.rs"]
 mod hook_tests;
+#[cfg(test)]
+#[path = "terminal/profile_env_tests.rs"]
+mod profile_env_tests;
 #[cfg(test)]
 #[path = "terminal/tests.rs"]
 mod tests;

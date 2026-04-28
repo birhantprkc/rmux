@@ -2,12 +2,10 @@ use std::collections::HashMap;
 #[cfg(windows)]
 use std::env;
 #[cfg(windows)]
-use std::ffi::OsStr;
+use std::ffi::{OsStr, OsString};
 #[cfg(unix)]
 use std::fs;
-#[cfg(windows)]
-use std::path::Path;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use rmux_core::OptionStore;
 use rmux_proto::{OptionName, SessionName};
@@ -36,12 +34,12 @@ pub(super) fn resolve_shell_path(
 pub(super) fn resolve_shell_path(
     options: &OptionStore,
     session_name: Option<&SessionName>,
-    _environment: &HashMap<String, String>,
+    environment: &HashMap<String, String>,
 ) -> PathBuf {
     explicit_default_shell(options, session_name)
         .map(PathBuf::from)
-        .map(normalize_shell_path)
-        .unwrap_or_else(default_shell_path)
+        .map(|path| resolve_program_path(&path, environment))
+        .unwrap_or_else(|| default_shell_path(environment))
 }
 
 #[cfg(windows)]
@@ -60,32 +58,43 @@ pub(super) fn normalize_shell_path(path: PathBuf) -> PathBuf {
     path
 }
 
+#[cfg(unix)]
+pub(super) fn resolve_program_path(path: &Path, _environment: &HashMap<String, String>) -> PathBuf {
+    path.to_path_buf()
+}
+
 #[cfg(windows)]
 pub(super) fn normalize_shell_path(path: PathBuf) -> PathBuf {
-    if path.components().count() > 1 {
-        return path;
-    }
-
-    find_shell_on_path(&path).unwrap_or(path)
+    let environment = env::vars().collect::<HashMap<_, _>>();
+    resolve_program_path(&path, &environment)
 }
 
 #[cfg(windows)]
-fn find_shell_on_path(path: &Path) -> Option<PathBuf> {
+pub(super) fn resolve_program_path(path: &Path, environment: &HashMap<String, String>) -> PathBuf {
+    if path.components().count() > 1 {
+        return path.to_path_buf();
+    }
+
+    find_program_on_path(path, environment).unwrap_or_else(|| path.to_path_buf())
+}
+
+#[cfg(windows)]
+fn find_program_on_path(path: &Path, environment: &HashMap<String, String>) -> Option<PathBuf> {
     let name = path.file_name()?.to_string_lossy().to_ascii_lowercase();
     if matches!(name.as_str(), "cmd" | "cmd.exe") {
-        return cmd_shell_path();
+        return cmd_shell_path(environment);
     }
     if matches!(name.as_str(), "powershell" | "powershell.exe") {
-        return windows_powershell_path();
+        return windows_powershell_path(environment);
     }
 
-    search_path(path)
+    search_path(path, environment)
 }
 
 #[cfg(windows)]
-fn search_path(path: &Path) -> Option<PathBuf> {
-    let path_value = env::var_os("PATH")?;
-    let pathext = env::var_os("PATHEXT");
+fn search_path(path: &Path, environment: &HashMap<String, String>) -> Option<PathBuf> {
+    let path_value = environment_or_process_os_value(environment, "PATH")?;
+    let pathext = environment_or_process_os_value(environment, "PATHEXT");
     search_path_in(path, path_value.as_os_str(), pathext.as_deref())
 }
 
@@ -159,16 +168,16 @@ fn default_shell_path() -> PathBuf {
 }
 
 #[cfg(windows)]
-fn default_shell_path() -> PathBuf {
-    search_path(Path::new("pwsh.exe"))
-        .or_else(windows_powershell_path)
-        .or_else(cmd_shell_path)
+fn default_shell_path(environment: &HashMap<String, String>) -> PathBuf {
+    search_path(Path::new("pwsh.exe"), environment)
+        .or_else(|| windows_powershell_path(environment))
+        .or_else(|| cmd_shell_path(environment))
         .unwrap_or_else(|| PathBuf::from("cmd.exe"))
 }
 
 #[cfg(windows)]
-fn windows_powershell_path() -> Option<PathBuf> {
-    env::var_os("SystemRoot").map(|root| {
+fn windows_powershell_path(environment: &HashMap<String, String>) -> Option<PathBuf> {
+    environment_or_process_os_value(environment, "SystemRoot").map(|root| {
         PathBuf::from(root)
             .join("System32")
             .join("WindowsPowerShell")
@@ -178,9 +187,31 @@ fn windows_powershell_path() -> Option<PathBuf> {
 }
 
 #[cfg(windows)]
-fn cmd_shell_path() -> Option<PathBuf> {
-    env::var_os("COMSPEC").map(PathBuf::from).or_else(|| {
-        env::var_os("SystemRoot").map(|root| PathBuf::from(root).join("System32").join("cmd.exe"))
+fn cmd_shell_path(environment: &HashMap<String, String>) -> Option<PathBuf> {
+    environment_or_process_os_value(environment, "COMSPEC")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| {
+            environment_or_process_os_value(environment, "SystemRoot")
+                .map(|root| PathBuf::from(root).join("System32").join("cmd.exe"))
+        })
+}
+
+#[cfg(windows)]
+fn environment_or_process_os_value(
+    environment: &HashMap<String, String>,
+    name: &str,
+) -> Option<OsString> {
+    environment_os_value(environment, name).or_else(|| env::var_os(name))
+}
+
+#[cfg(windows)]
+fn environment_os_value(environment: &HashMap<String, String>, name: &str) -> Option<OsString> {
+    environment.get(name).map(OsString::from).or_else(|| {
+        environment
+            .iter()
+            .find(|(key, _)| key.eq_ignore_ascii_case(name))
+            .map(|(_, value)| OsString::from(value))
     })
 }
 
@@ -228,6 +259,51 @@ mod tests {
         );
 
         assert_eq!(resolved, None);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn resolve_program_path_uses_effective_environment_path_case_insensitively() {
+        let root = unique_test_dir("effective-path");
+        let bin = root.join("bin");
+        fs::create_dir_all(&bin).expect("bin test directory");
+        fs::write(bin.join("rmux-probe.exe"), b"").expect("probe default_value");
+        let path = env::join_paths([bin.as_os_str()]).expect("joined PATH");
+        let environment = HashMap::from([
+            ("Path".to_owned(), path.to_string_lossy().into_owned()),
+            ("PATHEXT".to_owned(), ".EXE".to_owned()),
+        ]);
+
+        let resolved = resolve_program_path(Path::new("rmux-probe"), &environment);
+
+        assert_eq!(resolved, bin.join("rmux-probe.EXE"));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn explicit_default_shell_uses_effective_environment_path() {
+        let root = unique_test_dir("default-shell-path");
+        let bin = root.join("bin");
+        fs::create_dir_all(&bin).expect("bin test directory");
+        fs::write(bin.join("custom-shell.exe"), b"").expect("custom shell default_value");
+        let path = env::join_paths([bin.as_os_str()]).expect("joined PATH");
+        let environment = HashMap::from([
+            ("PATH".to_owned(), path.to_string_lossy().into_owned()),
+            ("PATHEXT".to_owned(), ".EXE".to_owned()),
+        ]);
+        let mut options = OptionStore::new();
+        options
+            .set(
+                rmux_proto::ScopeSelector::Global,
+                OptionName::DefaultShell,
+                "custom-shell".to_owned(),
+                rmux_proto::SetOptionMode::Replace,
+            )
+            .expect("default-shell set succeeds");
+
+        let resolved = resolve_shell_path(&options, None, &environment);
+
+        assert_eq!(resolved, bin.join("custom-shell.EXE"));
         let _ = fs::remove_dir_all(root);
     }
 

@@ -417,6 +417,7 @@ dependencies = [
  "rmux-os",
  "rustix",
  "tokio",
+ "tracing",
  "windows-sys",
 ]
 

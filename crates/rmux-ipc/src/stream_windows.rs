@@ -81,11 +81,13 @@ impl BlockingLocalStream {
 }
 
 impl PeerIdentity {
-    pub(crate) fn from_windows_pipe(stream: &LocalStream) -> io::Result<Self> {
+    pub(crate) async fn from_windows_pipe(stream: &LocalStream) -> io::Result<Self> {
         let handle = stream.as_raw_handle() as isize;
-        std::thread::spawn(move || peer_identity_from_handle(handle as HANDLE))
-            .join()
-            .map_err(|_| io::Error::other("Windows peer identity thread panicked"))?
+        tokio::task::spawn_blocking(move || peer_identity_from_handle(handle as HANDLE))
+            .await
+            .map_err(|error| {
+                io::Error::other(format!("Windows peer identity task failed: {error}"))
+            })?
     }
 }
 

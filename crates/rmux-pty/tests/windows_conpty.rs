@@ -5,6 +5,11 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use rmux_pty::{ChildCommand, PtyMaster, PtyPair, TerminalSize};
+use windows_sys::Win32::Foundation::{CloseHandle, STILL_ACTIVE};
+use windows_sys::Win32::System::Threading::{
+    GetExitCodeProcess, OpenProcess, TerminateProcess, PROCESS_QUERY_LIMITED_INFORMATION,
+    PROCESS_TERMINATE,
+};
 
 #[path = "windows_conpty/job.rs"]
 mod job;
@@ -163,6 +168,55 @@ fn conpty_force_kill_reaps_child() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[test]
+fn conpty_force_kill_reaps_grandchild_process_tree() -> Result<(), Box<dyn std::error::Error>> {
+    let command = concat!(
+        "$child = Start-Process -FilePath powershell.exe ",
+        "-ArgumentList '-NoLogo','-NoProfile','-Command','Start-Sleep -Seconds 30' ",
+        "-WindowStyle Hidden -PassThru; ",
+        "Write-Output \"RMUX_GRANDCHILD=$($child.Id)\"; ",
+        "Start-Sleep -Seconds 30"
+    );
+    let mut spawned =
+        ChildCommand::new("C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe")
+            .args([
+                "-NoLogo",
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-Command",
+                command,
+            ])
+            .size(TerminalSize::new(100, 30))
+            .spawn()?;
+
+    let output = read_until(
+        spawned.master(),
+        b"RMUX_GRANDCHILD=",
+        Duration::from_secs(5),
+    )?;
+    let grandchild_pid = parse_marker_pid(&output, "RMUX_GRANDCHILD=")?;
+    assert!(
+        process_is_running(grandchild_pid),
+        "grandchild process should exist before force kill"
+    );
+
+    spawned.child().terminate_forcefully()?;
+    let status = spawned.child_mut().wait()?;
+    assert!(!status.success());
+
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while process_is_running(grandchild_pid) && Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(25));
+    }
+
+    if process_is_running(grandchild_pid) {
+        let _ = terminate_process_id(grandchild_pid);
+        return Err(format!("grandchild process {grandchild_pid} survived Job Object kill").into());
+    }
+    Ok(())
+}
+
+#[test]
 fn conpty_resize_after_child_exit_is_not_fatal() -> Result<(), Box<dyn std::error::Error>> {
     let mut spawned = ChildCommand::new("C:\\Windows\\System32\\cmd.exe")
         .args(["/C", "exit 0"])
@@ -204,4 +258,62 @@ fn read_until_io(
     }
 
     Ok(output)
+}
+
+fn parse_marker_pid(bytes: &[u8], marker: &str) -> Result<u32, Box<dyn std::error::Error>> {
+    let output = String::from_utf8_lossy(bytes);
+    let start = output
+        .find(marker)
+        .ok_or_else(|| format!("marker {marker:?} not found in output {output:?}"))?
+        + marker.len();
+    let digits = output[start..]
+        .chars()
+        .take_while(|ch| ch.is_ascii_digit())
+        .collect::<String>();
+    if digits.is_empty() {
+        return Err(format!("marker {marker:?} did not include a pid in {output:?}").into());
+    }
+    Ok(digits.parse()?)
+}
+
+fn process_is_running(pid: u32) -> bool {
+    let handle = unsafe {
+        // SAFETY: OpenProcess validates the pid and returns either a handle or null.
+        OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid)
+    };
+    if handle.is_null() {
+        return false;
+    }
+    let mut exit_code = 0_u32;
+    let ok = unsafe {
+        // SAFETY: handle is a live process handle and exit_code is writable.
+        GetExitCodeProcess(handle, &mut exit_code)
+    };
+    unsafe {
+        // SAFETY: handle was returned by OpenProcess and is closed exactly once.
+        CloseHandle(handle);
+    }
+    ok != 0 && exit_code == STILL_ACTIVE as u32
+}
+
+fn terminate_process_id(pid: u32) -> std::io::Result<()> {
+    let handle = unsafe {
+        // SAFETY: OpenProcess validates the pid and returns either a handle or null.
+        OpenProcess(PROCESS_TERMINATE, 0, pid)
+    };
+    if handle.is_null() {
+        return Err(std::io::Error::last_os_error());
+    }
+    let ok = unsafe {
+        // SAFETY: handle has PROCESS_TERMINATE rights and is not transferred.
+        TerminateProcess(handle, 1)
+    };
+    unsafe {
+        // SAFETY: handle was returned by OpenProcess and is closed exactly once.
+        CloseHandle(handle);
+    }
+    if ok == 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    Ok(())
 }

@@ -1,5 +1,4 @@
 use std::io::{self, Write};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc as std_mpsc;
 use std::sync::Arc;
 
@@ -13,6 +12,7 @@ use tokio::sync::mpsc;
 use crate::ClientError;
 
 use super::action::{AttachAction, AttachActionOutcome};
+use super::lock_state::AttachLockState;
 use super::metrics::AttachMetricsRecorder;
 use super::screen::{
     contains_subslice, AttachScreenTracker, AttachStopDetector, ALT_SCREEN_EXIT_FALLBACK,
@@ -73,6 +73,8 @@ where
     let mut read_buffer = [0_u8; super::READ_BUFFER_SIZE];
     let mut stop_detector = AttachStopDetector::new(screen_tracker.clone());
     let mut pending_actions = 0_usize;
+    let mut input_open = true;
+    let mut resize_open = true;
 
     loop {
         drain_attach_messages(
@@ -89,11 +91,12 @@ where
         )?;
 
         tokio::select! {
-            bytes = input_rx.recv() => {
+            bytes = input_rx.recv(), if input_open => {
                 let Some(bytes) = bytes else {
+                    input_open = false;
                     continue;
                 };
-                if locked.load(Ordering::SeqCst) {
+                if locked.is_locked() {
                     continue;
                 }
                 for chunk in super::input::attach_input_chunks(&bytes) {
@@ -103,8 +106,9 @@ where
                     ).await?;
                 }
             }
-            size = resize_rx.recv() => {
+            size = resize_rx.recv(), if resize_open => {
                 let Some(size) = size else {
+                    resize_open = false;
                     continue;
                 };
                 write_async_attach_message(
@@ -124,7 +128,7 @@ where
                         let unlock_result =
                             write_async_attach_message(&mut writer, AttachMessage::Unlock).await;
                         if pending_actions == 0 {
-                            locked.store(false, Ordering::SeqCst);
+                            locked.unlock();
                         }
                         unlock_result?;
                     }
@@ -132,7 +136,7 @@ where
                         return Ok(());
                     }
                     Err(error) => {
-                        locked.store(false, Ordering::SeqCst);
+                        locked.unlock();
                         return Err(error);
                     }
                 }
@@ -194,7 +198,7 @@ where
                     screen_tracker.mark_stopped();
                 }
                 stop_detector.observe(&bytes);
-                if locked.load(Ordering::SeqCst) {
+                if locked.is_locked() {
                     continue;
                 }
                 output.write_all(&bytes).map_err(ClientError::Io)?;
@@ -202,22 +206,22 @@ where
             }
             AttachMessage::KeyDispatched(_) => {}
             AttachMessage::DetachKill => {
-                locked.store(true, Ordering::SeqCst);
+                locked.lock();
                 send_attach_action(action_tx, AttachAction::DetachKill)?;
                 *pending_actions += 1;
             }
             AttachMessage::DetachExec(command) => {
-                locked.store(true, Ordering::SeqCst);
+                locked.lock();
                 send_attach_action(action_tx, AttachAction::DetachExec(command))?;
                 *pending_actions += 1;
             }
             AttachMessage::Lock(command) => {
-                locked.store(true, Ordering::SeqCst);
+                locked.lock();
                 send_attach_action(action_tx, AttachAction::Lock(command))?;
                 *pending_actions += 1;
             }
             AttachMessage::Suspend => {
-                locked.store(true, Ordering::SeqCst);
+                locked.lock();
                 send_attach_action(action_tx, AttachAction::Suspend)?;
                 *pending_actions += 1;
             }
@@ -248,7 +252,7 @@ pub(super) struct AttachAsyncChannels {
     action_tx: std_mpsc::Sender<AttachAction>,
     action_completion_rx:
         mpsc::UnboundedReceiver<std::result::Result<AttachActionOutcome, ClientError>>,
-    locked: Arc<AtomicBool>,
+    locked: Arc<AttachLockState>,
 }
 
 impl AttachAsyncChannels {
@@ -259,7 +263,7 @@ impl AttachAsyncChannels {
         action_completion_rx: mpsc::UnboundedReceiver<
             std::result::Result<AttachActionOutcome, ClientError>,
         >,
-        locked: Arc<AtomicBool>,
+        locked: Arc<AttachLockState>,
     ) -> Self {
         Self {
             input_rx,
@@ -275,7 +279,7 @@ struct DrainContext<'context> {
     screen_tracker: &'context AttachScreenTracker,
     stop_detector: &'context mut AttachStopDetector,
     action_tx: &'context std_mpsc::Sender<AttachAction>,
-    locked: &'context Arc<AtomicBool>,
+    locked: &'context Arc<AttachLockState>,
     pending_actions: &'context mut usize,
     metrics: &'context mut AttachMetricsRecorder,
 }

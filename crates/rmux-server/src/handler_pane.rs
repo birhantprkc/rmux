@@ -29,9 +29,10 @@ pub(super) use pane_inspection::{
     attached_status_message_for_error, command_output_from_lines, display_message_context,
     display_time,
 };
+pub(super) use pane_io_encoding::write_bracketed_pane_payload;
 use pane_io_encoding::{
     encode_key_for_target, encode_mouse_for_target, encode_tokens_for_target,
-    expand_send_key_tokens, write_bytes_to_target,
+    expand_send_key_tokens, prepare_pane_input_write, write_bytes_to_target,
 };
 pub(super) use pane_prompt_input::decode_prompt_input_event;
 

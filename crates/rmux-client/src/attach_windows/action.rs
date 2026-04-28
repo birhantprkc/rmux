@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use rmux_proto::RmuxError;
 
 use crate::ClientError;
@@ -29,11 +27,11 @@ pub(super) enum AttachActionOutcome {
 
 #[derive(Debug)]
 pub(super) struct ManagedTerminalActions {
-    terminal: Arc<RawTerminal>,
+    terminal: RawTerminal,
 }
 
 impl ManagedTerminalActions {
-    pub(super) fn new(terminal: Arc<RawTerminal>) -> Self {
+    pub(super) fn new(terminal: RawTerminal) -> Self {
         Self { terminal }
     }
 }

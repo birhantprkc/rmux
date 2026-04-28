@@ -9,9 +9,20 @@ use std::os::unix::ffi::{OsStrExt, OsStringExt};
 #[cfg(windows)]
 use std::os::windows::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
+#[cfg(windows)]
+use std::ptr::null_mut;
 
 #[cfg(windows)]
 use rmux_os::identity::{IdentityResolver, UserIdentity};
+#[cfg(windows)]
+use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
+#[cfg(windows)]
+use windows_sys::Win32::Security::{
+    GetSidSubAuthority, GetSidSubAuthorityCount, GetTokenInformation, TokenIntegrityLevel,
+    TOKEN_MANDATORY_LABEL, TOKEN_QUERY,
+};
+#[cfg(windows)]
+use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
 
 const DEFAULT_SOCKET_LABEL: &str = "default";
 #[cfg(unix)]
@@ -82,8 +93,9 @@ fn endpoint_for_label_impl(label: &OsStr) -> io::Result<LocalEndpoint> {
     };
     let label = pipe_component(label);
     let sid = pipe_component(OsStr::new(sid.as_ref()));
+    let integrity = current_integrity_label()?;
     Ok(LocalEndpoint::from_path(PathBuf::from(format!(
-        "{PIPE_PREFIX}{SOCKET_DIR_PREFIX}-{sid}-{label}"
+        "{PIPE_PREFIX}{SOCKET_DIR_PREFIX}-{sid}-il-{integrity}-{label}"
     ))))
 }
 
@@ -251,6 +263,114 @@ fn pipe_component(value: &OsStr) -> String {
 }
 
 #[cfg(windows)]
+fn current_integrity_label() -> io::Result<&'static str> {
+    let token = current_process_token()?;
+    let mut needed = 0_u32;
+    unsafe {
+        // SAFETY: This first call follows the documented sizing pattern.
+        GetTokenInformation(token.get(), TokenIntegrityLevel, null_mut(), 0, &mut needed);
+    }
+    if needed == 0 {
+        return Err(io::Error::last_os_error());
+    }
+
+    let mut buffer = vec![0_u8; usize::try_from(needed).map_err(|_| io::ErrorKind::InvalidData)?];
+    let ok = unsafe {
+        // SAFETY: buffer is writable for the reported byte count and token is valid.
+        GetTokenInformation(
+            token.get(),
+            TokenIntegrityLevel,
+            buffer.as_mut_ptr().cast(),
+            needed,
+            &mut needed,
+        )
+    };
+    if ok == 0 {
+        return Err(io::Error::last_os_error());
+    }
+
+    let mandatory_label = unsafe {
+        // SAFETY: TokenIntegrityLevel initializes TOKEN_MANDATORY_LABEL at the buffer start.
+        &*(buffer.as_ptr().cast::<TOKEN_MANDATORY_LABEL>())
+    };
+    integrity_label_from_sid(mandatory_label.Label.Sid)
+}
+
+#[cfg(windows)]
+fn current_process_token() -> io::Result<OwnedHandle> {
+    let mut token = null_mut();
+    let ok = unsafe {
+        // SAFETY: GetCurrentProcess returns a valid pseudo-handle and token is an out pointer.
+        OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token)
+    };
+    if ok == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(OwnedHandle(token))
+}
+
+#[cfg(windows)]
+fn integrity_label_from_sid(sid: *mut core::ffi::c_void) -> io::Result<&'static str> {
+    if sid.is_null() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "Windows returned a null integrity SID",
+        ));
+    }
+    let count_ptr = unsafe {
+        // SAFETY: sid comes from a successfully queried TOKEN_MANDATORY_LABEL.
+        GetSidSubAuthorityCount(sid)
+    };
+    if count_ptr.is_null() {
+        return Err(io::Error::last_os_error());
+    }
+    let count = unsafe { *count_ptr };
+    if count == 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "Windows integrity SID has no subauthorities",
+        ));
+    }
+    let rid_ptr = unsafe {
+        // SAFETY: count is non-zero and the last subauthority index is valid.
+        GetSidSubAuthority(sid, u32::from(count - 1))
+    };
+    if rid_ptr.is_null() {
+        return Err(io::Error::last_os_error());
+    }
+    let rid = unsafe { *rid_ptr };
+    Ok(match rid {
+        0x0000_0000..=0x0000_0FFF => "untrusted",
+        0x0000_1000..=0x0000_1FFF => "low",
+        0x0000_2000..=0x0000_2FFF => "medium",
+        0x0000_3000..=0x0000_3FFF => "high",
+        _ => "system",
+    })
+}
+
+#[cfg(windows)]
+struct OwnedHandle(HANDLE);
+
+#[cfg(windows)]
+impl OwnedHandle {
+    fn get(&self) -> HANDLE {
+        self.0
+    }
+}
+
+#[cfg(windows)]
+impl Drop for OwnedHandle {
+    fn drop(&mut self) {
+        if !self.0.is_null() {
+            unsafe {
+                // SAFETY: self.0 is a token handle returned by OpenProcessToken.
+                CloseHandle(self.0);
+            }
+        }
+    }
+}
+
+#[cfg(windows)]
 fn is_pipe_component_unit(unit: u16) -> bool {
     matches!(
         unit,
@@ -295,7 +415,19 @@ mod tests {
         let path = path.to_string_lossy();
 
         assert!(path.starts_with(r"\\.\pipe\rmux-S-"));
+        assert!(path.contains("-il-"));
         assert!(path.ends_with("-default"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_integrity_label_is_endpoint_safe() {
+        let integrity = current_integrity_label().expect("current integrity label");
+
+        assert!(matches!(
+            integrity,
+            "untrusted" | "low" | "medium" | "high" | "system"
+        ));
     }
 
     #[cfg(windows)]

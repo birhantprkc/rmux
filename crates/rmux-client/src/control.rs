@@ -254,19 +254,29 @@ where
     Stream: AsyncRead + AsyncWrite + Unpin,
     W: Write,
 {
+    let mut completion_tracker = ControlCompletionTracker::default();
+    let mut submitted_commands = initial_commands.len();
+    let mut completed_commands = 0_usize;
+    let mut input_closed = false;
     let (mut reader, mut writer) = tokio::io::split(stream);
     write_async_initial_commands(&mut writer, initial_commands).await?;
-    let mut input_closed = false;
     let mut buffer = [0_u8; 8192];
 
     loop {
         tokio::select! {
             input = input_rx.recv(), if !input_closed => {
                 match input {
-                    Some(bytes) => writer.write_all(&bytes).await?,
+                    Some(bytes) => {
+                        submitted_commands =
+                            submitted_commands.saturating_add(count_complete_control_lines(&bytes));
+                        writer.write_all(&bytes).await?;
+                    }
                     None => {
                         writer.flush().await?;
                         input_closed = true;
+                        if submitted_commands == 0 {
+                            return Ok(());
+                        }
                     }
                 }
             }
@@ -275,11 +285,47 @@ where
                 if bytes_read == 0 {
                     return Ok(());
                 }
+                completed_commands = completed_commands
+                    .saturating_add(completion_tracker.observe(&buffer[..bytes_read]));
                 output.write_all(&buffer[..bytes_read])?;
                 output.flush()?;
+                if input_closed && completed_commands >= submitted_commands {
+                    return Ok(());
+                }
             }
         }
     }
+}
+
+#[cfg(windows)]
+#[derive(Debug, Default)]
+struct ControlCompletionTracker {
+    pending: Vec<u8>,
+}
+
+#[cfg(windows)]
+impl ControlCompletionTracker {
+    fn observe(&mut self, bytes: &[u8]) -> usize {
+        self.pending.extend_from_slice(bytes);
+        let mut completed = 0;
+        while let Some(position) = self.pending.iter().position(|byte| *byte == b'\n') {
+            let line = self.pending.drain(..=position).collect::<Vec<_>>();
+            if is_control_completion_line(&line) {
+                completed += 1;
+            }
+        }
+        completed
+    }
+}
+
+#[cfg(windows)]
+fn count_complete_control_lines(bytes: &[u8]) -> usize {
+    bytes.iter().filter(|byte| **byte == b'\n').count()
+}
+
+#[cfg(windows)]
+fn is_control_completion_line(line: &[u8]) -> bool {
+    line.starts_with(b"%end ") || line.starts_with(b"%error ")
 }
 
 #[cfg(windows)]
@@ -374,5 +420,42 @@ mod tests {
         let (result, output) = done.expect("control mode should exit promptly");
         result.expect("control mode succeeds");
         assert_eq!(String::from_utf8(output).expect("utf8"), "%exit\n");
+    }
+}
+
+#[cfg(all(test, windows))]
+mod windows_tests {
+    use super::drive_async_control;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::sync::mpsc as tokio_mpsc;
+
+    #[tokio::test]
+    async fn control_input_eof_waits_for_completed_command_without_empty_line(
+    ) -> std::io::Result<()> {
+        let (client, mut server) = tokio::io::duplex(4096);
+        let (input_tx, input_rx) = tokio_mpsc::unbounded_channel::<Vec<u8>>();
+        input_tx
+            .send(b"list-sessions\n".to_vec())
+            .expect("send input");
+        drop(input_tx);
+        let mut output = Vec::new();
+
+        let drive = drive_async_control(client, &[], input_rx, &mut output);
+        let server_peer = async {
+            let mut received = Vec::new();
+            let mut buffer = [0_u8; 32];
+            while !received.ends_with(b"\n") {
+                let bytes_read = server.read(&mut buffer).await?;
+                assert_ne!(bytes_read, 0, "client closed before sending command");
+                received.extend_from_slice(&buffer[..bytes_read]);
+            }
+            assert_eq!(received, b"list-sessions\n");
+            server.write_all(b"%begin 1 1 1\n%end 1 1 1\n").await?;
+            Ok::<(), std::io::Error>(())
+        };
+
+        tokio::try_join!(drive, server_peer)?;
+        assert_eq!(output, b"%begin 1 1 1\n%end 1 1 1\n");
+        Ok(())
     }
 }

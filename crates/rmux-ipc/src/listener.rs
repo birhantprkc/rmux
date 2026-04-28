@@ -8,6 +8,8 @@ use std::io;
 #[cfg(windows)]
 use std::mem::size_of;
 
+#[cfg(windows)]
+use crate::is_peer_disconnect;
 use crate::{LocalEndpoint, LocalStream, PeerIdentity};
 #[cfg(windows)]
 use rmux_os::identity::{IdentityResolver, UserIdentity};
@@ -39,7 +41,7 @@ pub struct LocalListener {
 }
 
 #[cfg(windows)]
-const NAMED_PIPE_BACKLOG: usize = 4;
+const NAMED_PIPE_PENDING_INSTANCES: usize = 1;
 
 impl LocalListener {
     /// Binds a local listener.
@@ -80,28 +82,63 @@ async fn accept_impl(listener: &LocalListener) -> io::Result<(LocalStream, PeerI
 #[cfg(windows)]
 async fn accept_impl(listener: &LocalListener) -> io::Result<(LocalStream, PeerIdentity)> {
     let server = accept_pending_server(listener).await?;
-    let peer = PeerIdentity::from_windows_pipe(&server);
-    replenish_pending_server(listener).await?;
+    let peer = PeerIdentity::from_windows_pipe(&server).await;
+    if let Err(error) = replenish_pending_server(listener).await {
+        tracing::warn!(
+            pipe = ?listener.pipe_name,
+            "failed to replenish named-pipe accept backlog after accepting a client: {error}"
+        );
+    }
 
     Ok((server, peer?))
 }
 
 #[cfg(windows)]
 async fn accept_pending_server(listener: &LocalListener) -> io::Result<NamedPipeServer> {
-    let mut pending = listener.pending.lock().await;
-    let server = pending
-        .front_mut()
-        .ok_or_else(|| io::Error::other("named-pipe backlog was exhausted"))?;
-    server.connect().await?;
-    pending
-        .pop_front()
-        .ok_or_else(|| io::Error::other("named-pipe backlog was exhausted"))
+    loop {
+        let mut pending = listener.pending.lock().await;
+        let server = pending
+            .front_mut()
+            .ok_or_else(|| io::Error::other("named-pipe backlog was exhausted"))?;
+        match server.connect().await {
+            Ok(()) => {
+                return pending
+                    .pop_front()
+                    .ok_or_else(|| io::Error::other("named-pipe backlog was exhausted"));
+            }
+            Err(error) if is_peer_disconnect(&error) => {
+                let _ = pending.pop_front();
+                drop(pending);
+                tracing::debug!(
+                    pipe = ?listener.pipe_name,
+                    "discarding abandoned named-pipe instance before accept: {error}"
+                );
+                if let Err(error) = replenish_pending_server(listener).await {
+                    tracing::warn!(
+                        pipe = ?listener.pipe_name,
+                        "failed to replenish abandoned named-pipe accept instance: {error}"
+                    );
+                }
+            }
+            Err(error) => {
+                let _ = pending.pop_front();
+                drop(pending);
+                if let Err(replenish_error) = replenish_pending_server(listener).await {
+                    tracing::warn!(
+                        pipe = ?listener.pipe_name,
+                        "failed to replenish named-pipe accept instance after error: {replenish_error}"
+                    );
+                }
+                return Err(error);
+            }
+        }
+    }
 }
 
 #[cfg(windows)]
 fn create_pending_servers(pipe_name: &OsString) -> io::Result<VecDeque<NamedPipeServer>> {
-    let mut pending = VecDeque::with_capacity(NAMED_PIPE_BACKLOG);
-    for index in 0..NAMED_PIPE_BACKLOG {
+    let mut pending = VecDeque::with_capacity(NAMED_PIPE_PENDING_INSTANCES);
+    for index in 0..NAMED_PIPE_PENDING_INSTANCES {
         pending.push_back(create_server(pipe_name, index == 0)?);
     }
     Ok(pending)
@@ -204,7 +241,7 @@ mod tests {
         let endpoint = endpoint_for_label(format!("listener-cancel-{}", std::process::id()))?;
         let listener = Arc::new(LocalListener::bind(&endpoint)?);
 
-        for _ in 0..NAMED_PIPE_BACKLOG {
+        for _ in 0..NAMED_PIPE_PENDING_INSTANCES {
             let listener = Arc::clone(&listener);
             let accept_task = tokio::spawn(async move { listener.accept().await });
             tokio::time::sleep(Duration::from_millis(10)).await;

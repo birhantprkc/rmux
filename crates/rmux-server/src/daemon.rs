@@ -1,6 +1,8 @@
 #[cfg(unix)]
 use std::fs;
 use std::io;
+#[cfg(windows)]
+use std::io::{Read, Write};
 #[cfg(unix)]
 use std::os::unix::fs::{DirBuilderExt, FileTypeExt, MetadataExt};
 #[cfg(unix)]
@@ -18,6 +20,10 @@ use tracing::debug;
 #[cfg(windows)]
 use rmux_ipc::connect_blocking;
 use rmux_ipc::{LocalEndpoint, LocalListener};
+#[cfg(windows)]
+use rmux_proto::{
+    encode_frame, FrameDecoder, HasSessionRequest, Request, Response, RmuxError, SessionName,
+};
 
 use crate::listener;
 #[cfg(windows)]
@@ -290,9 +296,41 @@ fn windows_bind_error(endpoint: &LocalEndpoint, bind_error: io::Error) -> io::Er
 #[cfg(windows)]
 fn windows_pipe_responds(endpoint: &LocalEndpoint) -> bool {
     let endpoint = endpoint.clone();
-    std::thread::spawn(move || connect_blocking(&endpoint, Duration::from_millis(100)).is_ok())
+    std::thread::spawn(move || windows_protocol_probe(&endpoint).unwrap_or(false))
         .join()
         .unwrap_or(false)
+}
+
+#[cfg(windows)]
+fn windows_protocol_probe(endpoint: &LocalEndpoint) -> io::Result<bool> {
+    let mut stream = connect_blocking(endpoint, Duration::from_millis(100))?;
+    stream.set_write_timeout(Some(Duration::from_millis(100)))?;
+    stream.set_read_timeout(Some(Duration::from_millis(100)))?;
+
+    let request = Request::HasSession(HasSessionRequest {
+        target: SessionName::new("__rmux_probe__").map_err(io::Error::other)?,
+    });
+    let frame = encode_frame(&request).map_err(io::Error::other)?;
+    stream.write_all(&frame)?;
+    stream.flush()?;
+
+    let mut decoder = FrameDecoder::new();
+    let mut buffer = [0_u8; 512];
+    loop {
+        let bytes_read = match stream.read(&mut buffer) {
+            Ok(0) => return Ok(false),
+            Ok(bytes_read) => bytes_read,
+            Err(error) if error.kind() == io::ErrorKind::TimedOut => return Ok(false),
+            Err(error) => return Err(error),
+        };
+        decoder.push_bytes(&buffer[..bytes_read]);
+        match decoder.next_frame::<Response>() {
+            Ok(Some(_response)) => return Ok(true),
+            Ok(None) => continue,
+            Err(RmuxError::IncompleteFrame { .. }) => continue,
+            Err(_error) => return Ok(false),
+        }
+    }
 }
 
 /// Handle to a running RMUX daemon; dropping it triggers shutdown.

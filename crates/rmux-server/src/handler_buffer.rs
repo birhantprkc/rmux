@@ -10,6 +10,7 @@ use rmux_proto::{
     SaveBufferResponse, SetBufferResponse, ShowBufferResponse,
 };
 
+use super::pane_support::write_bracketed_pane_payload;
 use super::RequestHandler;
 use crate::outer_terminal::OuterTerminal;
 use crate::pane_io::AttachControl;
@@ -141,7 +142,7 @@ impl RequestHandler {
         };
 
         let payload = render_paste_payload(&content, &request);
-        if let Err(error) = write_paste_payload(&master, &payload, bracketed_mode) {
+        if let Err(error) = write_bracketed_pane_payload(master, payload, bracketed_mode).await {
             return Response::Error(ErrorResponse {
                 error: RmuxError::Server(format!(
                     "failed to write buffer to pane {}:{}.{}: {}",
@@ -563,19 +564,4 @@ fn append_paste_chunk(output: &mut Vec<u8>, chunk: &[u8], raw: bool) {
     } else {
         output.extend_from_slice(&encode_paste_bytes(chunk));
     }
-}
-
-fn write_paste_payload(
-    master: &rmux_pty::PtyMaster,
-    payload: &[u8],
-    bracketed: bool,
-) -> io::Result<()> {
-    if bracketed {
-        master.write_all(b"\x1b[200~")?;
-    }
-    master.write_all(payload)?;
-    if bracketed {
-        master.write_all(b"\x1b[201~")?;
-    }
-    Ok(())
 }
