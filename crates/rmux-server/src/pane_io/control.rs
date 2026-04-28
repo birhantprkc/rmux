@@ -278,9 +278,9 @@ pub(super) async fn apply_pending_attach_controls(
 }
 
 pub(super) async fn redraw_after_persistent_overlay_state_advance(
-    stream: &LocalStream,
-    current_target: &OpenAttachTarget,
-    persistent_overlay: &mut Option<Vec<u8>>,
+    _stream: &LocalStream,
+    _current_target: &OpenAttachTarget,
+    _persistent_overlay: &mut Option<Vec<u8>>,
     persistent_overlay_visible: &mut bool,
     previous_state_id: Option<u64>,
     current_state_id: Option<u64>,
@@ -297,8 +297,9 @@ pub(super) async fn redraw_after_persistent_overlay_state_advance(
         return Ok(());
     }
 
-    persistent_overlay.take();
-    *persistent_overlay_visible = false;
-    let frame = clear_then_base_frame(current_target);
-    emit_render_frame(stream, &current_target.outer_terminal, &frame).await
+    // A state advance is a barrier, not a fresh base snapshot. Dismiss paths
+    // queue a switch repaint after the mode tree state is removed; clearing here
+    // can repaint an older attach target while that fresh switch is still being
+    // produced.
+    Ok(())
 }

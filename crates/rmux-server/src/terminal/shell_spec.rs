@@ -55,7 +55,11 @@ impl ShellSpec {
                 .arg("/C")
                 .arg(command),
             #[cfg(windows)]
-            ShellKind::Other => ShellCommandPlan::new(&self.program).arg("/C").arg(command),
+            ShellKind::Posix => ShellCommandPlan::new(&self.program).arg("-lc").arg(command),
+            #[cfg(windows)]
+            ShellKind::Nu => ShellCommandPlan::new(&self.program).arg("-c").arg(command),
+            #[cfg(windows)]
+            ShellKind::Other => ShellCommandPlan::new(&self.program).arg(command),
         }
     }
 
@@ -79,7 +83,9 @@ impl ShellSpec {
             #[cfg(windows)]
             ShellKind::Cmd => ShellCommandPlan::new(&self.program).arg("/D").arg("/K"),
             #[cfg(windows)]
-            ShellKind::Other => ShellCommandPlan::new(&self.program),
+            ShellKind::Posix | ShellKind::Nu | ShellKind::Other => {
+                ShellCommandPlan::new(&self.program)
+            }
         }
     }
 }
@@ -134,6 +140,10 @@ enum ShellKind {
     #[cfg(windows)]
     PowerShell,
     #[cfg(windows)]
+    Posix,
+    #[cfg(windows)]
+    Nu,
+    #[cfg(windows)]
     Other,
 }
 
@@ -151,6 +161,8 @@ fn detect_shell_kind(shell: &Path) -> ShellKind {
     {
         Some("cmd.exe" | "cmd") => ShellKind::Cmd,
         Some("powershell.exe" | "powershell" | "pwsh.exe" | "pwsh") => ShellKind::PowerShell,
+        Some("bash.exe" | "bash" | "sh.exe" | "sh" | "zsh.exe" | "zsh") => ShellKind::Posix,
+        Some("nu.exe" | "nu") => ShellKind::Nu,
         _ => ShellKind::Other,
     }
 }
@@ -190,7 +202,8 @@ mod tests {
             detect_shell_kind(Path::new("pwsh.exe")),
             ShellKind::PowerShell
         );
-        assert_eq!(detect_shell_kind(Path::new("nu.exe")), ShellKind::Other);
+        assert_eq!(detect_shell_kind(Path::new("bash.exe")), ShellKind::Posix);
+        assert_eq!(detect_shell_kind(Path::new("nu.exe")), ShellKind::Nu);
     }
 
     #[cfg(windows)]
@@ -238,6 +251,33 @@ mod tests {
                 "Set-Location -LiteralPath 'C:\\Users\\RMUXUser''s Workspace\\rmux'; Write-Output RMUX_OK",
             ])
         );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn posix_shell_command_uses_lc_not_cmd_c() {
+        let spec = ShellSpec::new(Path::new("bash.exe"));
+        let plan = spec.command_plan(Path::new(r"C:\tmp"), "echo RMUX_OK");
+
+        assert_eq!(plan.args, os_args(["-lc", "echo RMUX_OK"]));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn nushell_command_uses_c_not_cmd_c() {
+        let spec = ShellSpec::new(Path::new("nu.exe"));
+        let plan = spec.command_plan(Path::new(r"C:\tmp"), "echo RMUX_OK");
+
+        assert_eq!(plan.args, os_args(["-c", "echo RMUX_OK"]));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn unknown_windows_shell_does_not_receive_cmd_c_flag() {
+        let spec = ShellSpec::new(Path::new("custom-shell.exe"));
+        let plan = spec.command_plan(Path::new(r"C:\tmp"), "echo RMUX_OK");
+
+        assert_eq!(plan.args, os_args(["echo RMUX_OK"]));
     }
 
     #[cfg(unix)]

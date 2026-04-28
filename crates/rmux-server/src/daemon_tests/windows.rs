@@ -8,6 +8,7 @@ use rmux_proto::{
 use std::io::{self, Read, Write};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
+use tokio::net::windows::named_pipe::ServerOptions;
 
 static UNIQUE_ID: AtomicUsize = AtomicUsize::new(0);
 
@@ -183,6 +184,26 @@ async fn windows_daemon_empty_listing_requests_succeed() -> io::Result<()> {
     }
 
     handle.shutdown().await
+}
+
+#[tokio::test]
+async fn windows_daemon_reports_preexisting_pipe_as_in_use() -> io::Result<()> {
+    let endpoint = unique_endpoint()?;
+    let _raw_server = ServerOptions::new()
+        .first_pipe_instance(true)
+        .create(endpoint.as_pipe_name())?;
+
+    let error = ServerDaemon::new(DaemonConfig::new(endpoint.clone().into_path()))
+        .bind()
+        .await
+        .expect_err("preexisting pipe must reject daemon bind");
+
+    assert_eq!(error.kind(), io::ErrorKind::AddrInUse);
+    assert!(
+        error.to_string().contains("already held"),
+        "unexpected bind error: {error}"
+    );
+    Ok(())
 }
 
 fn unique_endpoint() -> io::Result<rmux_ipc::LocalEndpoint> {

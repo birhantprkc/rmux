@@ -7,6 +7,10 @@ use rmux_client::resolve_socket_path;
 
 use super::ExitFailure;
 
+#[cfg(windows)]
+#[path = "diagnose_windows.rs"]
+mod diagnose_windows;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum DiagnoseFormat {
     Human,
@@ -353,47 +357,12 @@ fn detect_terminal_host(term: &str, term_program: &str) -> String {
 fn detected_shell() -> String {
     #[cfg(windows)]
     {
-        detected_windows_pane_shell()
+        diagnose_windows::detected_pane_shell()
     }
     #[cfg(not(windows))]
     {
         env_value("SHELL")
     }
-}
-
-#[cfg(windows)]
-fn detected_windows_pane_shell() -> String {
-    find_windows_command_on_path("pwsh.exe")
-        .or_else(windows_powershell_path)
-        .or_else(|| std::env::var_os("COMSPEC").map(std::path::PathBuf::from))
-        .map(|path| path.to_string_lossy().into_owned())
-        .unwrap_or_else(|| "cmd.exe".to_owned())
-}
-
-#[cfg(windows)]
-fn find_windows_command_on_path(command: &str) -> Option<std::path::PathBuf> {
-    let path_value = std::env::var_os("PATH")?;
-    std::env::split_paths(&path_value)
-        .map(|directory| directory.join(command))
-        .find(|candidate| candidate.is_file() && is_usable_windows_shell_candidate(candidate))
-}
-
-#[cfg(windows)]
-fn is_usable_windows_shell_candidate(path: &Path) -> bool {
-    !path
-        .components()
-        .any(|component| component.as_os_str().eq_ignore_ascii_case("WindowsApps"))
-}
-
-#[cfg(windows)]
-fn windows_powershell_path() -> Option<std::path::PathBuf> {
-    std::env::var_os("SystemRoot").map(|root| {
-        std::path::PathBuf::from(root)
-            .join("System32")
-            .join("WindowsPowerShell")
-            .join("v1.0")
-            .join("powershell.exe")
-    })
 }
 
 fn os_version() -> String {

@@ -7,12 +7,16 @@ use std::os::unix::fs::{DirBuilderExt, FileTypeExt, MetadataExt};
 use std::os::unix::net::UnixStream as StdUnixStream;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex as StdMutex};
+#[cfg(windows)]
+use std::time::Duration;
 
 use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 #[cfg(unix)]
 use tracing::debug;
 
+#[cfg(windows)]
+use rmux_ipc::connect_blocking;
 use rmux_ipc::{LocalEndpoint, LocalListener};
 
 use crate::listener;
@@ -231,7 +235,7 @@ impl ServerDaemon {
         #[cfg(windows)]
         {
             let endpoint = LocalEndpoint::from_path(self.config.socket_path().to_path_buf());
-            let listener = LocalListener::bind(&endpoint)?;
+            let listener = bind_windows_listener(&endpoint)?;
             let (shutdown_handle, shutdown_receiver) = ShutdownHandle::new();
             let socket_path = self.config.socket_path().to_path_buf();
             let owner_uid = current_owner_uid();
@@ -252,6 +256,43 @@ impl ServerDaemon {
             })
         }
     }
+}
+
+#[cfg(windows)]
+fn bind_windows_listener(endpoint: &LocalEndpoint) -> io::Result<LocalListener> {
+    match LocalListener::bind(endpoint) {
+        Ok(listener) => Ok(listener),
+        Err(bind_error) => Err(windows_bind_error(endpoint, bind_error)),
+    }
+}
+
+#[cfg(windows)]
+fn windows_bind_error(endpoint: &LocalEndpoint, bind_error: io::Error) -> io::Error {
+    if windows_pipe_responds(endpoint) {
+        return io::Error::new(
+            io::ErrorKind::AddrInUse,
+            format!(
+                "Windows named pipe '{}' is already held by a responsive rmux-compatible server",
+                endpoint.as_path().display()
+            ),
+        );
+    }
+
+    io::Error::new(
+        bind_error.kind(),
+        format!(
+            "failed to bind Windows named pipe '{}': {bind_error}. Another process may still be holding this endpoint",
+            endpoint.as_path().display()
+        ),
+    )
+}
+
+#[cfg(windows)]
+fn windows_pipe_responds(endpoint: &LocalEndpoint) -> bool {
+    let endpoint = endpoint.clone();
+    std::thread::spawn(move || connect_blocking(&endpoint, Duration::from_millis(100)).is_ok())
+        .join()
+        .unwrap_or(false)
 }
 
 /// Handle to a running RMUX daemon; dropping it triggers shutdown.

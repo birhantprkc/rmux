@@ -177,7 +177,7 @@ fn read_pane_output_blocking(
     pane_output: PaneOutputSender,
     generation: Option<u64>,
     pane_alert_callback: Option<PaneAlertCallback>,
-    pane_exit_callback: Option<PaneExitCallback>,
+    _pane_exit_callback: Option<PaneExitCallback>,
 ) -> io::Result<()> {
     let pane_reader = pane_master.into_io();
     let mut buffer = [0_u8; READ_BUFFER_SIZE];
@@ -190,13 +190,6 @@ fn read_pane_output_blocking(
         };
         if bytes_read == 0 {
             let _ = pane_output.send(Vec::new());
-            if let Some(callback) = &pane_exit_callback {
-                callback(PaneExitEvent {
-                    session_name: session_name.clone(),
-                    pane_id,
-                    generation,
-                });
-            }
             return Ok(());
         }
 

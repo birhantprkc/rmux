@@ -301,14 +301,6 @@ impl RequestHandler {
                     .send(AttachControl::AdvancePersistentOverlayState(
                         active.mode_tree_state_id,
                     ));
-                let _ = active.control_tx.send(AttachControl::Overlay(
-                    OverlayFrame::persistent_with_state(
-                        Vec::new(),
-                        active.render_generation,
-                        active.overlay_generation,
-                        active.mode_tree_state_id,
-                    ),
-                ));
                 if removed.is_none() {
                     removed = Some(mode.clone());
                 }

@@ -8,7 +8,7 @@ use super::super::{
 };
 use crate::format_runtime::render_runtime_template;
 use crate::hook_runtime::PendingInlineHookFormat;
-use crate::pane_io::{AttachControl, OverlayFrame};
+use crate::pane_io::AttachControl;
 use crate::pane_terminals::HandlerState;
 
 const DEFAULT_BREAK_PANE_FORMAT: &str = "#{session_name}:#{window_index}.#{pane_index}";
@@ -437,14 +437,6 @@ impl RequestHandler {
                 .send(AttachControl::AdvancePersistentOverlayState(
                     active.mode_tree_state_id,
                 ));
-            let _ = active.control_tx.send(AttachControl::Overlay(
-                OverlayFrame::persistent_with_state(
-                    Vec::new(),
-                    active.render_generation,
-                    active.overlay_generation,
-                    active.mode_tree_state_id,
-                ),
-            ));
         }
     }
 
