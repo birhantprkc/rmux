@@ -224,7 +224,10 @@ fn attach_with_terminal_restores_termios_after_repeated_detach() -> Result<(), B
         command: Some(vec![
             "/bin/sh".to_owned(),
             "-c".to_owned(),
-            format!("printf '{}\\n'; exec sleep 60", ATTACH_READY_MARKER),
+            format!(
+                "while :; do printf '{}\\n'; sleep 1; done",
+                ATTACH_READY_MARKER
+            ),
         ]),
     }))?;
     assert!(matches!(created, Response::NewSession(_)));
