@@ -20,6 +20,7 @@ pub(super) struct PaneInputWrite {
 
 enum PaneInputSink {
     Pty(PtyMaster),
+    #[cfg(all(test, windows))]
     CapturedForTest,
 }
 
@@ -75,15 +76,16 @@ pub(super) async fn write_bytes_to_target_io(
         pane_index,
         sink,
     } = write;
-    let PaneInputSink::Pty(master) = sink else {
-        return Ok(());
-    };
-    write_pane_bytes(master, bytes).await.map_err(|error| {
-        RmuxError::Server(format!(
-            "failed to write to pane {}:{}.{}: {}",
-            session_name, window_index, pane_index, error
-        ))
-    })
+    match sink {
+        PaneInputSink::Pty(master) => write_pane_bytes(master, bytes).await.map_err(|error| {
+            RmuxError::Server(format!(
+                "failed to write to pane {}:{}.{}: {}",
+                session_name, window_index, pane_index, error
+            ))
+        }),
+        #[cfg(all(test, windows))]
+        PaneInputSink::CapturedForTest => Ok(()),
+    }
 }
 
 #[cfg(windows)]

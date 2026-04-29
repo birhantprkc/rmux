@@ -187,27 +187,49 @@ impl RemoteProcess {
         while offset < MAX_ENVIRONMENT_WIDE_CHARS {
             let units = ENVIRONMENT_READ_CHUNK_WIDE_CHARS
                 .min(MAX_ENVIRONMENT_WIDE_CHARS.saturating_sub(offset));
-            let mut chunk = vec![0_u16; units];
             let byte_offset = offset
                 .checked_mul(size_of::<u16>())
                 .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "environment offset"))?;
             let chunk_address = address
                 .checked_add(byte_offset)
                 .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "environment address"))?;
-            let byte_len = units
-                .checked_mul(size_of::<u16>())
-                .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "environment length"))?;
-            let Some(()) = self.read_exact(chunk_address, chunk.as_mut_ptr().cast(), byte_len)?
-            else {
+            let Some(chunk) = self.read_environment_chunk(chunk_address, units)? else {
                 return Ok(None);
             };
 
+            let read_units = chunk.len();
             block.extend_from_slice(&chunk);
             if let Some(end) = environment_block_end(&block) {
                 block.truncate(end);
                 return Ok(Some(block));
             }
-            offset += units;
+            offset += read_units;
+        }
+
+        Ok(None)
+    }
+
+    fn read_environment_chunk(
+        &self,
+        address: usize,
+        max_units: usize,
+    ) -> io::Result<Option<Vec<u16>>> {
+        let mut units = max_units;
+        while units > 0 {
+            let mut chunk = vec![0_u16; units];
+            let byte_len = units
+                .checked_mul(size_of::<u16>())
+                .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "environment length"))?;
+            if self
+                .read_exact(address, chunk.as_mut_ptr().cast(), byte_len)?
+                .is_some()
+            {
+                return Ok(Some(chunk));
+            }
+            if units == 1 {
+                return Ok(None);
+            }
+            units /= 2;
         }
 
         Ok(None)
@@ -384,6 +406,13 @@ fn wide_to_string_lossy(value: &[u16]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(windows)]
+    use windows_sys::Win32::System::Memory::{
+        VirtualAlloc, VirtualFree, VirtualProtect, MEM_COMMIT, MEM_RELEASE, MEM_RESERVE,
+        PAGE_NOACCESS, PAGE_READWRITE,
+    };
+    #[cfg(windows)]
+    use windows_sys::Win32::System::Threading::GetCurrentProcessId;
 
     #[test]
     fn parses_windows_wide_environment_and_skips_drive_pseudo_vars() {
@@ -421,6 +450,72 @@ mod tests {
             environment_block_end(&block),
             Some(ENVIRONMENT_READ_CHUNK_WIDE_CHARS + 1)
         );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn reads_environment_block_ending_before_an_unreadable_page() {
+        const PAGE_SIZE: usize = 4096;
+        let allocation = unsafe {
+            // SAFETY: VirtualAlloc is called with a null preferred address and
+            // reserves/commits two pages for this test process.
+            VirtualAlloc(
+                std::ptr::null_mut(),
+                PAGE_SIZE * 2,
+                MEM_RESERVE | MEM_COMMIT,
+                PAGE_READWRITE,
+            )
+        };
+        assert!(!allocation.is_null(), "VirtualAlloc failed");
+        let _allocation = VirtualAllocation(allocation);
+
+        let second_page = unsafe {
+            // SAFETY: The allocation above covers two pages, so adding one
+            // page yields the start of the second page.
+            allocation.cast::<u8>().add(PAGE_SIZE).cast()
+        };
+        let mut old_protect = 0_u32;
+        let protected = unsafe {
+            // SAFETY: `second_page` identifies the second committed page and
+            // `old_protect` is a valid out pointer.
+            VirtualProtect(second_page, PAGE_SIZE, PAGE_NOACCESS, &mut old_protect)
+        };
+        assert_ne!(protected, 0, "VirtualProtect failed");
+
+        let environment: Vec<u16> = "A=B\0\0".encode_utf16().collect();
+        let start = unsafe {
+            // SAFETY: The environment fits entirely in the first page; it is
+            // deliberately placed so an initial 4 KiB read crosses into the
+            // protected page.
+            allocation
+                .cast::<u8>()
+                .add(PAGE_SIZE - environment.len() * size_of::<u16>())
+                .cast::<u16>()
+        };
+        unsafe {
+            // SAFETY: `start` is valid for `environment.len()` UTF-16 units
+            // inside the writable first page.
+            std::ptr::copy_nonoverlapping(environment.as_ptr(), start, environment.len());
+        }
+
+        let handle = unsafe {
+            // SAFETY: OpenProcess validates the current pid and returns either
+            // a handle or null.
+            OpenProcess(
+                PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_VM_READ,
+                0,
+                GetCurrentProcessId(),
+            )
+        };
+        assert!(!handle.is_null(), "OpenProcess failed");
+        let process = RemoteProcess { handle };
+
+        let block = process
+            .read_environment_block(start as usize)
+            .expect("read environment")
+            .expect("environment block");
+
+        assert_eq!(block, environment);
     }
 
     #[test]
@@ -474,6 +569,20 @@ mod tests {
             },
         ] {
             assert_eq!(validate_remote_unicode_string(value), None);
+        }
+    }
+
+    #[cfg(windows)]
+    struct VirtualAllocation(*mut c_void);
+
+    #[cfg(windows)]
+    impl Drop for VirtualAllocation {
+        fn drop(&mut self) {
+            unsafe {
+                // SAFETY: `self.0` came from VirtualAlloc and is released once
+                // with MEM_RELEASE.
+                VirtualFree(self.0, 0, MEM_RELEASE);
+            }
         }
     }
 }

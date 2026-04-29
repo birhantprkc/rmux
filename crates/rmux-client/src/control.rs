@@ -5,9 +5,11 @@ use std::sync::mpsc;
 use std::thread;
 
 use rmux_ipc::BlockingLocalStream;
+#[cfg(windows)]
+use rmux_proto::CONTROL_STDIN_EOF_MARKER;
 use rmux_proto::{
     ClientTerminalContext, ControlMode, ControlModeRequest, Request, Response, CONTROL_CONTROL_END,
-    CONTROL_CONTROL_START, CONTROL_STDIN_EOF_MARKER,
+    CONTROL_CONTROL_START,
 };
 #[cfg(windows)]
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};

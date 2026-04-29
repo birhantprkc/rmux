@@ -306,12 +306,10 @@ async fn attached_prefix_q_inside_choose_tree_restores_the_tree_overlay_without_
                 AttachControl::AdvancePersistentOverlayState(_) => {}
                 AttachControl::Switch(_) => {}
                 AttachControl::Write(_) => {}
-                AttachControl::Lock(_) => {}
                 AttachControl::LockShellCommand(_) => {}
                 AttachControl::Detach => panic!("unexpected detach"),
                 AttachControl::Exited => panic!("unexpected exited"),
                 AttachControl::DetachKill => panic!("unexpected detach kill"),
-                AttachControl::DetachExec(_) => panic!("unexpected detach exec"),
                 AttachControl::DetachExecShellCommand(_) => panic!("unexpected detach exec"),
                 AttachControl::Suspend => panic!("unexpected suspend"),
             }

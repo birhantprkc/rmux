@@ -134,11 +134,6 @@ pub(super) async fn apply_pending_attach_controls(
                 emit_attach_message(stream, &AttachMessage::DetachKill).await?;
                 return Ok(PendingAttachAction::Exit);
             }
-            Ok(AttachControl::DetachExec(command)) => {
-                emit_attach_stop(stream, current_target).await?;
-                emit_attach_message(stream, &AttachMessage::DetachExec(command)).await?;
-                return Ok(PendingAttachAction::Exit);
-            }
             Ok(AttachControl::DetachExecShellCommand(command)) => {
                 emit_attach_stop(stream, current_target).await?;
                 emit_attach_message(stream, &AttachMessage::DetachExecShellCommand(command))
@@ -260,11 +255,6 @@ pub(super) async fn apply_pending_attach_controls(
             }
             Ok(AttachControl::Write(bytes)) => {
                 emit_attach_bytes(stream, &bytes).await?;
-            }
-            Ok(AttachControl::Lock(command)) => {
-                *locked = true;
-                emit_attach_message(stream, &AttachMessage::Lock(command)).await?;
-                should_drop_output = true;
             }
             Ok(AttachControl::LockShellCommand(command)) => {
                 *locked = true;

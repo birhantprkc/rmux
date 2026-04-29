@@ -20,13 +20,11 @@ pub(crate) enum AttachControl {
     Detach,
     Exited,
     DetachKill,
-    DetachExec(String),
     DetachExecShellCommand(AttachShellCommand),
     Switch(Box<AttachTarget>),
     AdvancePersistentOverlayState(u64),
     Overlay(OverlayFrame),
     Write(Vec<u8>),
-    Lock(String),
     LockShellCommand(AttachShellCommand),
     Suspend,
 }

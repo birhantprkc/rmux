@@ -321,7 +321,6 @@ impl RequestHandler {
                 | AttachControl::Detach
                 | AttachControl::Exited
                 | AttachControl::DetachKill
-                | AttachControl::DetachExec(_)
                 | AttachControl::DetachExecShellCommand(_)
         );
         let mut active_attach = self.active_attach.lock().await;
@@ -338,7 +337,6 @@ impl RequestHandler {
             AttachControl::Detach
                 | AttachControl::Exited
                 | AttachControl::DetachKill
-                | AttachControl::DetachExec(_)
                 | AttachControl::DetachExecShellCommand(_)
         ) {
             active.closing.store(true, Ordering::SeqCst);

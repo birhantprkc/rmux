@@ -274,11 +274,6 @@ pub(crate) async fn forward_attach(
                             emit_attach_message(&stream, &AttachMessage::DetachKill).await?;
                             return Ok(());
                         }
-                        Some(AttachControl::DetachExec(command)) => {
-                            emit_attach_stop(&stream, &current_target).await?;
-                            emit_attach_message(&stream, &AttachMessage::DetachExec(command)).await?;
-                            return Ok(());
-                        }
                         Some(AttachControl::DetachExecShellCommand(command)) => {
                             emit_attach_stop(&stream, &current_target).await?;
                             emit_attach_message(
@@ -413,10 +408,6 @@ pub(crate) async fn forward_attach(
                         }
                         Some(AttachControl::Write(bytes)) => {
                             emit_attach_bytes(&stream, &bytes).await?;
-                        }
-                        Some(AttachControl::Lock(command)) => {
-                            locked = true;
-                            emit_attach_message(&stream, &AttachMessage::Lock(command)).await?;
                         }
                         Some(AttachControl::LockShellCommand(command)) => {
                             locked = true;
