@@ -120,6 +120,7 @@ fn acquire_cli_harness_lock() -> CliHarnessLock {
 
 fn write_test_shell_startup_files(home: &Path) -> Result<(), Box<dyn Error>> {
     fs::create_dir_all(home)?;
+    fs::write(home.join(".hushlogin"), "")?;
     for file_name in [
         ".bash_profile",
         ".bashrc",
