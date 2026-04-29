@@ -200,7 +200,7 @@ fn run_hidden_daemon(args: InternalDaemonArgs) -> io::Result<()> {
     let runtime = Builder::new_current_thread().enable_all().build()?;
     #[cfg(windows)]
     let runtime = Builder::new_multi_thread()
-        .worker_threads(2)
+        .worker_threads(hidden_daemon_worker_threads())
         .enable_all()
         .build()?;
 
@@ -210,6 +210,14 @@ fn run_hidden_daemon(args: InternalDaemonArgs) -> io::Result<()> {
     })
 }
 
+#[cfg(windows)]
+fn hidden_daemon_worker_threads() -> usize {
+    std::thread::available_parallelism()
+        .map(usize::from)
+        .unwrap_or(4)
+        .max(4)
+}
+
 #[cfg(test)]
 mod tests {
     use super::{parse_internal_daemon_args, parse_internal_socket_path, try_main};
@@ -217,6 +225,12 @@ mod tests {
     use rmux_server::ConfigFileSelection;
     use std::ffi::OsString;
     use std::path::PathBuf;
+
+    #[cfg(windows)]
+    #[test]
+    fn hidden_daemon_worker_threads_has_responsiveness_floor() {
+        assert!(super::hidden_daemon_worker_threads() >= 4);
+    }
 
     const EXPECTED_BINARY_NAME: &str = "rmux";
 
