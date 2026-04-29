@@ -7,7 +7,6 @@ const MIN_TIMEOUT_MS: u64 = 50;
 const MAX_TIMEOUT_MS: u64 = 2_000;
 const DSR_REQUEST: &[u8] = b"\x1b[6n";
 const DSR_RESPONSE: &[u8] = b"\x1b[1;1R";
-const MAX_DEFERRED_BYTES: usize = 64 * 1024;
 
 #[derive(Debug)]
 pub(crate) struct DsrBootstrap {
@@ -36,6 +35,10 @@ impl DsrBootstrap {
         buffer[..len].copy_from_slice(&self.deferred[..len]);
         self.deferred.drain(..len);
         Some(len)
+    }
+
+    pub(crate) fn is_finished(&self) -> bool {
+        self.completed && self.pending.is_empty() && self.deferred.is_empty()
     }
 
     pub(crate) fn filter(&mut self, buffer: &mut [u8], bytes_read: usize) -> DsrFilter {
@@ -136,8 +139,10 @@ fn emit_output(
     let len = output.len().min(buffer.len());
     buffer[..len].copy_from_slice(&output[..len]);
     deferred.clear();
-    let remaining = &output[len..];
-    deferred.extend_from_slice(&remaining[..remaining.len().min(MAX_DEFERRED_BYTES)]);
+    // In production `output` is derived from one ConPTY read plus at most a
+    // partial DSR prefix. Truncating here corrupts the pane stream, so the
+    // deferred tail must remain lossless and drain on subsequent reads.
+    deferred.extend_from_slice(&output[len..]);
     DsrFilter { len, response }
 }
 
@@ -172,6 +177,33 @@ mod tests {
 
         assert_eq!(&bytes[..filtered.len], b"beforeafter");
         assert_eq!(filtered.response, Some(DSR_RESPONSE));
+    }
+
+    #[test]
+    fn response_does_not_finish_until_deferred_tail_drains() {
+        let mut helper = DsrBootstrap {
+            deadline: Instant::now() + Duration::from_secs(1),
+            completed: false,
+            pending: b"before\x1b[".to_vec(),
+            deferred: Vec::new(),
+        };
+        let data = b"6nafter";
+        let mut bytes = [0; 7];
+        bytes.copy_from_slice(data);
+
+        let filtered = helper.filter(&mut bytes, 7);
+
+        assert_eq!(filtered.response, Some(DSR_RESPONSE));
+        assert_eq!(&bytes[..filtered.len], b"beforea");
+        assert!(!helper.is_finished());
+
+        let mut tail = [0; 16];
+        let drained = helper
+            .drain_deferred(&mut tail)
+            .expect("deferred tail should drain");
+
+        assert_eq!(&tail[..drained], b"fter");
+        assert!(helper.is_finished());
     }
 
     #[test]
@@ -221,14 +253,15 @@ mod tests {
     }
 
     #[test]
-    fn deferred_output_is_bounded() {
+    fn deferred_output_is_lossless() {
         let mut buffer = [0_u8; 1];
         let mut deferred = Vec::new();
-        let output = vec![b'x'; MAX_DEFERRED_BYTES + 32];
+        let output = vec![b'x'; 64 * 1024 + 32];
 
         let filtered = emit_output(&mut buffer, &mut deferred, &output, None);
 
         assert_eq!(filtered.len, 1);
-        assert_eq!(deferred.len(), MAX_DEFERRED_BYTES);
+        assert_eq!(deferred.len(), output.len() - 1);
+        assert!(deferred.iter().all(|byte| *byte == b'x'));
     }
 }

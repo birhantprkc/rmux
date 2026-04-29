@@ -53,7 +53,7 @@ impl WindowsPty {
                 };
 
                 let filtered = dsr.filter(buffer, bytes_read);
-                if filtered.response.is_some() {
+                if dsr.is_finished() {
                     *dsr_bootstrap = None;
                 }
                 filtered
@@ -89,9 +89,14 @@ impl WindowsPty {
             .dsr_bootstrap
             .lock()
             .map_err(|_| io::Error::other("ConPTY DSR mutex poisoned"))?;
-        Ok(dsr_bootstrap
-            .as_mut()
-            .and_then(|dsr| dsr.drain_deferred(buffer)))
+        let Some(dsr) = dsr_bootstrap.as_mut() else {
+            return Ok(None);
+        };
+        let drained = dsr.drain_deferred(buffer);
+        if dsr.is_finished() {
+            *dsr_bootstrap = None;
+        }
+        Ok(drained)
     }
 
     pub(crate) fn uses_passthrough(&self) -> bool {
