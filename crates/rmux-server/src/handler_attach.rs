@@ -5,6 +5,8 @@ use std::sync::atomic::{AtomicBool, AtomicU64};
 use std::sync::Arc;
 use std::time::Duration;
 
+#[cfg(test)]
+use rmux_os::identity::UserIdentity;
 use rmux_proto::{AttachShellCommand, AttachedKeystroke, KeyDispatched, PaneTarget, TerminalSize};
 #[cfg(test)]
 use tokio::sync::mpsc;
@@ -90,6 +92,7 @@ impl RequestHandler {
                 terminal_context,
                 flags,
                 uid: current_owner_uid(),
+                user: UserIdentity::Uid(current_owner_uid()),
                 can_write: true,
                 client_size: None,
             },
@@ -130,6 +133,7 @@ impl RequestHandler {
                 pan_oy: 0,
                 control_tx: registration.control_tx,
                 uid: registration.uid,
+                user: registration.user,
                 can_write: registration.can_write,
                 suspended: false,
                 closing: registration.closing,

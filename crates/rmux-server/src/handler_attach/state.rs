@@ -4,6 +4,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use rmux_core::KeyCode;
+use rmux_os::identity::UserIdentity;
 use rmux_proto::{PaneTarget, TerminalSize, WindowTarget};
 use tokio::sync::mpsc;
 
@@ -33,6 +34,7 @@ pub(in crate::handler) struct ActiveAttach {
     pub(in crate::handler) pan_oy: u32,
     pub(in crate::handler) control_tx: mpsc::UnboundedSender<AttachControl>,
     pub(in crate::handler) uid: u32,
+    pub(in crate::handler) user: UserIdentity,
     pub(in crate::handler) can_write: bool,
     pub(in crate::handler) suspended: bool,
     pub(in crate::handler) closing: Arc<AtomicBool>,
@@ -82,6 +84,7 @@ pub(crate) struct AttachRegistration {
     pub(crate) terminal_context: OuterTerminalContext,
     pub(crate) flags: ClientFlags,
     pub(crate) uid: u32,
+    pub(crate) user: UserIdentity,
     pub(crate) can_write: bool,
     pub(crate) client_size: Option<TerminalSize>,
 }

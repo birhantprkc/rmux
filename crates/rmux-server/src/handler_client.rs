@@ -11,11 +11,11 @@ use crate::format_runtime::{render_runtime_template, RuntimeFormatContext};
 use crate::handler_support::attached_client_required;
 use crate::pane_io::AttachControl;
 use crate::pane_terminals::session_not_found;
-use crate::server_access::user_name_for_uid;
 
 use super::{
     attach_support::ClientFlags, attached_client_matches_target, clipboard_query_sequence,
-    command_output_from_lines, control_support::ManagedClient, normalize_target_client,
+    command_output_from_lines, control_support::ManagedClient, format_client_uid,
+    format_client_user, format_requester_uid, normalize_target_client,
     session_selection_prefers_live_process, sort_list_clients, RequestHandler,
     LIST_CLIENTS_TEMPLATE,
 };
@@ -410,15 +410,15 @@ impl RequestHandler {
                     .with_named_value("client_termfeatures", client.termfeatures.clone())
                     .with_named_value("client_termname", client.termname.clone())
                     .with_named_value("client_termtype", client.termtype.clone())
-                    .with_named_value("client_uid", client.uid.to_string())
-                    .with_named_value("client_user", user_name_for_uid(client.uid))
+                    .with_named_value("client_uid", format_client_uid(client.uid))
+                    .with_named_value("client_user", format_client_user(client.uid, &client.user))
                     .with_named_value("client_utf8", if client.utf8 { "1" } else { "0" })
                     .with_named_value(
                         "client_control_mode",
                         if client.control { "1" } else { "0" },
                     )
                     .with_named_value("client_flags", client.flags.clone())
-                    .with_named_value("uid", requester_uid.to_string());
+                    .with_named_value("uid", format_requester_uid(requester_uid));
                 if let Some(filter) = request.filter.as_deref() {
                     let expanded = render_runtime_template(filter, &context, false);
                     if !is_truthy(&expanded) {

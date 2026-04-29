@@ -41,7 +41,7 @@ pub struct LocalListener {
 }
 
 #[cfg(windows)]
-const NAMED_PIPE_PENDING_INSTANCES: usize = 1;
+const NAMED_PIPE_PENDING_INSTANCES: usize = 4;
 
 impl LocalListener {
     /// Binds a local listener.
@@ -83,12 +83,6 @@ async fn accept_impl(listener: &LocalListener) -> io::Result<(LocalStream, PeerI
 async fn accept_impl(listener: &LocalListener) -> io::Result<(LocalStream, PeerIdentity)> {
     let server = accept_pending_server(listener).await?;
     let peer = PeerIdentity::from_windows_pipe(&server).await;
-    if let Err(error) = replenish_pending_server(listener).await {
-        tracing::warn!(
-            pipe = ?listener.pipe_name,
-            "failed to replenish named-pipe accept backlog after accepting a client: {error}"
-        );
-    }
 
     Ok((server, peer?))
 }
@@ -97,6 +91,12 @@ async fn accept_impl(listener: &LocalListener) -> io::Result<(LocalStream, PeerI
 async fn accept_pending_server(listener: &LocalListener) -> io::Result<NamedPipeServer> {
     loop {
         let server = take_pending_server(listener).await?;
+        if let Err(error) = replenish_pending_servers(listener).await {
+            tracing::warn!(
+                pipe = ?listener.pipe_name,
+                "failed to replenish named-pipe accept backlog before awaiting a client: {error}"
+            );
+        }
         match server.connect().await {
             Ok(()) => return Ok(server),
             Err(error) if is_peer_disconnect(&error) => {
@@ -104,7 +104,7 @@ async fn accept_pending_server(listener: &LocalListener) -> io::Result<NamedPipe
                     pipe = ?listener.pipe_name,
                     "discarding abandoned named-pipe instance before accept: {error}"
                 );
-                if let Err(error) = replenish_pending_server(listener).await {
+                if let Err(error) = replenish_pending_servers(listener).await {
                     tracing::warn!(
                         pipe = ?listener.pipe_name,
                         "failed to replenish abandoned named-pipe accept instance: {error}"
@@ -112,7 +112,7 @@ async fn accept_pending_server(listener: &LocalListener) -> io::Result<NamedPipe
                 }
             }
             Err(error) => {
-                if let Err(replenish_error) = replenish_pending_server(listener).await {
+                if let Err(replenish_error) = replenish_pending_servers(listener).await {
                     tracing::warn!(
                         pipe = ?listener.pipe_name,
                         "failed to replenish named-pipe accept instance after error: {replenish_error}"
@@ -145,10 +145,11 @@ fn create_pending_servers(pipe_name: &OsString) -> io::Result<VecDeque<NamedPipe
 }
 
 #[cfg(windows)]
-async fn replenish_pending_server(listener: &LocalListener) -> io::Result<()> {
-    let next = create_server(&listener.pipe_name, false)?;
+async fn replenish_pending_servers(listener: &LocalListener) -> io::Result<()> {
     let mut pending = listener.pending.lock().await;
-    pending.push_back(next);
+    while pending.len() < NAMED_PIPE_PENDING_INSTANCES {
+        pending.push_back(create_server(&listener.pipe_name, false)?);
+    }
     Ok(())
 }
 
@@ -236,6 +237,8 @@ mod tests {
     use std::sync::Arc;
     use std::time::Duration;
 
+    const _: () = assert!(NAMED_PIPE_PENDING_INSTANCES >= 4);
+
     #[tokio::test]
     async fn cancelled_accept_does_not_drain_windows_pipe_backlog() -> io::Result<()> {
         let endpoint = endpoint_for_label(format!("listener-cancel-{}", std::process::id()))?;
@@ -264,6 +267,50 @@ mod tests {
         let (_server, _peer) = accepted?;
         let _ = release_client.send(());
         client.await.map_err(io::Error::other)??;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn named_pipe_backlog_accepts_burst_clients_before_accept_loop_runs() -> io::Result<()> {
+        let endpoint = endpoint_for_label(format!("listener-burst-{}", std::process::id()))?;
+        let listener = LocalListener::bind(&endpoint)?;
+        let client_count = NAMED_PIPE_PENDING_INSTANCES;
+        let (connected_tx, connected_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let endpoint_for_clients = endpoint.clone();
+
+        let client_thread = std::thread::spawn(move || {
+            let mut clients = Vec::with_capacity(client_count);
+            for index in 0..client_count {
+                match connect_blocking(&endpoint_for_clients, Duration::from_secs(2)) {
+                    Ok(client) => {
+                        clients.push(client);
+                        let _ = connected_tx.send(Ok(index));
+                    }
+                    Err(error) => {
+                        let _ = connected_tx.send(Err(error));
+                        return;
+                    }
+                }
+            }
+            let _ = release_rx.recv_timeout(Duration::from_secs(5));
+            drop(clients);
+        });
+
+        for _ in 0..client_count {
+            connected_rx
+                .recv_timeout(Duration::from_secs(3))
+                .map_err(io::Error::other)??;
+        }
+
+        for _ in 0..client_count {
+            tokio::time::timeout(Duration::from_secs(2), listener.accept())
+                .await
+                .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "accept timed out"))??;
+        }
+
+        let _ = release_tx.send(());
+        client_thread.join().expect("client thread");
         Ok(())
     }
 }

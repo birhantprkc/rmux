@@ -16,7 +16,7 @@ use tracing::{debug, warn};
 
 use crate::control::{self, ControlLifecycle, ControlServerEvent};
 use crate::daemon::ShutdownHandle;
-use crate::handler::{attach_support::AttachRegistration, RequestHandler};
+use crate::handler::{attach_support::AttachRegistration, ControlRegistration, RequestHandler};
 use crate::pane_io;
 use crate::server_access::apply_access_policy;
 use crate::ConfigLoadOptions;
@@ -158,6 +158,7 @@ async fn serve_connection(
                                 terminal_context,
                                 flags: attach.flags,
                                 uid: requester.uid,
+                                user: requester.user.clone(),
                                 can_write: access_mode.can_write(),
                                 client_size: attach.client_size,
                             },
@@ -195,10 +196,13 @@ async fn serve_connection(
                         .register_control_with_access(
                             requester.pid,
                             control_upgrade,
-                            server_event_tx,
-                            closing.clone(),
-                            requester.uid,
-                            access_mode.can_write(),
+                            ControlRegistration {
+                                event_tx: server_event_tx,
+                                closing: closing.clone(),
+                                uid: requester.uid,
+                                user: requester.user.clone(),
+                                can_write: access_mode.can_write(),
+                            },
                         )
                         .await;
                     let (stream, buffered_bytes) = conn.into_raw_parts();

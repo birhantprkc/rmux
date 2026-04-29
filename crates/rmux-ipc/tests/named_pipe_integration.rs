@@ -186,20 +186,24 @@ async fn first_pipe_instance_rejects_second_listener() -> std::io::Result<()> {
 }
 
 #[tokio::test]
-async fn listener_exposes_only_the_front_pending_pipe_instance() -> std::io::Result<()> {
-    let endpoint = endpoint_for_label(format!("single-front-{}", std::process::id()))?;
+async fn listener_exposes_a_bounded_pending_pipe_backlog() -> std::io::Result<()> {
+    let endpoint = endpoint_for_label(format!("bounded-backlog-{}", std::process::id()))?;
     let _listener = LocalListener::bind(&endpoint)?;
 
-    let first = ClientOptions::new().open(endpoint.as_pipe_name())?;
-    let second = ClientOptions::new()
+    let mut clients = Vec::new();
+    for _ in 0..4 {
+        clients.push(ClientOptions::new().open(endpoint.as_pipe_name())?);
+    }
+
+    let fifth = ClientOptions::new()
         .open(endpoint.as_pipe_name())
-        .expect_err("second client should not connect to a hidden pending instance");
+        .expect_err("fifth client should wait for the bounded backlog to replenish");
 
     assert!(
-        matches!(second.raw_os_error(), Some(231) | Some(233) | Some(2)),
-        "unexpected second-client error while front instance is occupied: {second:?}"
+        matches!(fifth.raw_os_error(), Some(231) | Some(233) | Some(2)),
+        "unexpected fifth-client error while backlog is occupied: {fifth:?}"
     );
-    drop(first);
+    drop(clients);
     Ok(())
 }
 

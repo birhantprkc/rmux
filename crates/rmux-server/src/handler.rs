@@ -54,15 +54,16 @@ mod target_support;
 #[path = "handler_window.rs"]
 mod window_support;
 use crate::pane_terminals::HandlerState;
-use crate::server_access::{current_owner_uid, user_name_for_uid, AccessMode, ServerAccessStore};
+use crate::server_access::{current_owner_uid, AccessMode, ServerAccessStore};
 use crate::wait_for::WaitForStore;
 use attach_support::{ActiveAttachState, ClientFlags};
 pub(in crate::handler) use client_runtime_support::{
     attached_client_matches_target, client_environment_snapshot, clipboard_query_sequence,
-    command_output_from_lines, effective_client_terminal_context, normalize_target_client,
-    parse_client_flags, parse_session_sort_order, session_selection_prefers_live_process,
-    sort_list_clients, switch_target_selector_count, update_environment_from_client,
-    ListClientSnapshot, SessionSortOrder, LIST_CLIENTS_TEMPLATE,
+    command_output_from_lines, effective_client_terminal_context, format_client_uid,
+    format_client_user, format_requester_uid, normalize_target_client, parse_client_flags,
+    parse_session_sort_order, session_selection_prefers_live_process, sort_list_clients,
+    switch_target_selector_count, update_environment_from_client, ListClientSnapshot,
+    SessionSortOrder, LIST_CLIENTS_TEMPLATE,
 };
 use client_runtime_support::{current_process_environment_snapshot, seed_global_environment};
 #[cfg(test)]
@@ -70,6 +71,7 @@ pub(in crate::handler) use client_runtime_support::{
     format_attached_client_flags, format_control_client_flags,
 };
 use control_support::ActiveControlState;
+pub(crate) use control_support::ControlRegistration;
 #[cfg(test)]
 pub(in crate::handler) use lifecycle_support::after_hook_format_values;
 pub(in crate::handler) use lifecycle_support::prepare_lifecycle_event;

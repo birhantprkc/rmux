@@ -29,6 +29,8 @@ use windows_sys::Win32::System::Threading::{
 use super::PeerIdentity;
 use crate::LocalEndpoint;
 
+const WINDOWS_SYNTHETIC_UID: u32 = 0;
+
 /// Async local byte stream used by the server runtime.
 pub type LocalStream = NamedPipeServer;
 
@@ -248,7 +250,14 @@ pub(super) fn is_peer_disconnect(error: &io::Error) -> bool {
 fn peer_identity_from_handle(handle: HANDLE) -> io::Result<PeerIdentity> {
     let pid = named_pipe_client_pid(handle)?;
     let user = named_pipe_client_user(handle)?;
-    Ok(PeerIdentity { pid, uid: 0, user })
+    Ok(PeerIdentity {
+        pid,
+        // Windows has no Unix uid. Authorization and display use `user`
+        // (the peer SID); this default_value only satisfies shared protocol
+        // fields that remain Unix-shaped.
+        uid: WINDOWS_SYNTHETIC_UID,
+        user,
+    })
 }
 
 fn validate_named_pipe_server_identity(client: &NamedPipeClient) -> io::Result<()> {

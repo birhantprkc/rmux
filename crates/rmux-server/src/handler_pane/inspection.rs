@@ -4,7 +4,7 @@ use rmux_proto::{
     Target, TerminalSize,
 };
 
-use super::super::{user_name_for_uid, ListClientSnapshot, RequestHandler};
+use super::super::{format_client_uid, format_client_user, ListClientSnapshot, RequestHandler};
 use crate::control_notifications::format_control_message_line;
 use crate::format_runtime::{render_runtime_template, RuntimeFormatContext};
 use crate::pane_terminals::{session_not_found, HandlerState};
@@ -337,8 +337,8 @@ fn with_runtime_client_values<'a>(
         .with_named_value("client_termfeatures", client.termfeatures.clone())
         .with_named_value("client_termname", client.termname.clone())
         .with_named_value("client_termtype", client.termtype.clone())
-        .with_named_value("client_uid", client.uid.to_string())
-        .with_named_value("client_user", user_name_for_uid(client.uid))
+        .with_named_value("client_uid", format_client_uid(client.uid))
+        .with_named_value("client_user", format_client_user(client.uid, &client.user))
         .with_named_value("client_utf8", if client.utf8 { "1" } else { "0" })
         .with_named_value(
             "client_control_mode",

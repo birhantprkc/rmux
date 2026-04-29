@@ -37,12 +37,8 @@ impl WindowsPty {
                 return Ok(len);
             }
 
-            let state = self
-                .state
-                .read()
-                .map_err(|_| io::Error::other("ConPTY state lock poisoned"))?;
-            let bytes_read = super::io::read(&state.output_read, buffer)?;
-            drop(state);
+            let output_read = self.output_read_handle()?;
+            let bytes_read = super::io::read(&output_read, buffer)?;
             let filtered = {
                 let mut dsr_bootstrap = self
                     .dsr_bootstrap
@@ -68,11 +64,24 @@ impl WindowsPty {
     }
 
     pub(crate) fn write_all(&self, bytes: &[u8]) -> io::Result<()> {
+        let input_write = self.input_write_handle()?;
+        super::io::write_all(&input_write, bytes)
+    }
+
+    fn output_read_handle(&self) -> io::Result<OwnedHandle> {
         let state = self
             .state
             .read()
             .map_err(|_| io::Error::other("ConPTY state lock poisoned"))?;
-        super::io::write_all(&state.input_write, bytes)
+        state.output_read.try_clone()
+    }
+
+    fn input_write_handle(&self) -> io::Result<OwnedHandle> {
+        let state = self
+            .state
+            .read()
+            .map_err(|_| io::Error::other("ConPTY state lock poisoned"))?;
+        state.input_write.try_clone()
     }
 
     pub(crate) fn enable_dsr_bootstrap(&self) -> io::Result<()> {
@@ -336,4 +345,52 @@ fn last_os_error() -> io::Error {
     // no preconditions.
     let code = unsafe { GetLastError() };
     io::Error::from_raw_os_error(code as i32)
+}
+
+#[cfg(all(test, windows))]
+mod tests {
+    use super::*;
+    use std::sync::{mpsc, Arc};
+    use std::thread;
+    use std::time::Duration;
+
+    #[test]
+    fn idle_blocking_read_does_not_block_conpty_recreate() {
+        let pty = Arc::new(open_pty_pair(TerminalSize { cols: 80, rows: 24 }).expect("pty"));
+        let (read_started_tx, read_started_rx) = mpsc::channel();
+        let (read_done_tx, read_done_rx) = mpsc::channel();
+        let reader_pty = Arc::clone(&pty);
+        let reader = thread::spawn(move || {
+            let mut buffer = [0_u8; 64];
+            let _ = read_started_tx.send(());
+            let result = reader_pty.read(&mut buffer).map(|_| ());
+            let _ = read_done_tx.send(result);
+        });
+
+        read_started_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("reader thread started");
+        thread::sleep(Duration::from_millis(50));
+
+        let (recreate_tx, recreate_rx) = mpsc::channel();
+        let recreate_pty = Arc::clone(&pty);
+        let recreate = thread::spawn(move || {
+            let result = recreate_pty
+                .recreate_without_passthrough()
+                .map_err(|error| error.to_string());
+            let _ = recreate_tx.send(result);
+        });
+
+        recreate_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("ConPTY recreate should not wait for idle output")
+            .expect("ConPTY recreate");
+        recreate.join().expect("recreate thread");
+        drop(pty);
+
+        let _ = read_done_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("old output read should close after recreate");
+        reader.join().expect("reader thread");
+    }
 }

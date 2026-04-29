@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
+use rmux_os::identity::UserIdentity;
 use rmux_os::process;
 use rmux_proto::request::SwitchClientExt3Request;
 use rmux_proto::{CommandOutput, OptionName, RmuxError, ScopeSelector};
@@ -88,6 +89,7 @@ impl RequestHandler {
                         termfeatures: outer_terminal.features_string(),
                         utf8: active.terminal_context.utf8(),
                         uid: active.uid,
+                        user: active.user.clone(),
                         flags: format_attached_client_flags(active),
                     }
                 })
@@ -112,6 +114,7 @@ impl RequestHandler {
                     termfeatures: active.terminal_context.explicit_features_string(),
                     utf8: active.terminal_context.utf8(),
                     uid: active.uid,
+                    user: active.user.clone(),
                     flags: format_control_client_flags(active),
                 })
                 .collect::<Vec<_>>()
@@ -206,7 +209,41 @@ pub(in crate::handler) struct ListClientSnapshot {
     pub(in crate::handler) termfeatures: String,
     pub(in crate::handler) utf8: bool,
     pub(in crate::handler) uid: u32,
+    pub(in crate::handler) user: UserIdentity,
     pub(in crate::handler) flags: String,
+}
+
+#[cfg(windows)]
+pub(in crate::handler) fn format_client_uid(_uid: u32) -> String {
+    String::new()
+}
+
+#[cfg(not(windows))]
+pub(in crate::handler) fn format_client_uid(uid: u32) -> String {
+    uid.to_string()
+}
+
+#[cfg(windows)]
+pub(in crate::handler) fn format_requester_uid(_uid: u32) -> String {
+    String::new()
+}
+
+#[cfg(not(windows))]
+pub(in crate::handler) fn format_requester_uid(uid: u32) -> String {
+    uid.to_string()
+}
+
+#[cfg(windows)]
+pub(in crate::handler) fn format_client_user(_uid: u32, user: &UserIdentity) -> String {
+    match user {
+        UserIdentity::Sid(sid) => sid.to_string(),
+        UserIdentity::Uid(uid) => uid.to_string(),
+    }
+}
+
+#[cfg(not(windows))]
+pub(in crate::handler) fn format_client_user(uid: u32, _user: &UserIdentity) -> String {
+    crate::server_access::user_name_for_uid(uid)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -477,9 +514,13 @@ pub(in crate::handler) fn update_environment_from_client(
 mod tests {
     use std::collections::HashMap;
 
+    use rmux_os::identity::UserIdentity;
     use rmux_proto::ClientTerminalContext;
 
-    use super::effective_client_terminal_context;
+    use super::{
+        effective_client_terminal_context, format_client_uid, format_client_user,
+        format_requester_uid,
+    };
 
     #[test]
     fn windows_terminal_environment_enables_synchronized_rendering() {
@@ -506,5 +547,25 @@ mod tests {
 
         assert!(context.utf8);
         assert_eq!(context.terminal_features, vec!["SYNC", "BPASTE", "MOUSE"]);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_client_formats_do_not_expose_synthetic_uid_zero() {
+        let sid = UserIdentity::Sid("S-1-5-21-1000".into());
+
+        assert_eq!(format_client_uid(0), "");
+        assert_eq!(format_requester_uid(0), "");
+        assert_eq!(format_client_user(0, &sid), "S-1-5-21-1000");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unix_client_formats_preserve_uid_values() {
+        let identity = UserIdentity::Uid(1234);
+
+        assert_eq!(format_client_uid(1234), "1234");
+        assert_eq!(format_requester_uid(1234), "1234");
+        assert!(!format_client_user(1234, &identity).is_empty());
     }
 }

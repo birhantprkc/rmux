@@ -3,6 +3,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use rmux_core::LifecycleEvent;
+use rmux_os::identity::UserIdentity;
 use tokio::sync::mpsc;
 
 use super::RequestHandler;
@@ -29,10 +30,19 @@ pub(super) struct ActiveControl {
     pub(super) last_session: Option<rmux_proto::SessionName>,
     pub(super) flags: ControlClientFlags,
     pub(super) uid: u32,
+    pub(super) user: UserIdentity,
     pub(super) can_write: bool,
     pub(super) terminal_context: OuterTerminalContext,
     event_tx: mpsc::UnboundedSender<ControlServerEvent>,
     closing: Arc<AtomicBool>,
+}
+
+pub(crate) struct ControlRegistration {
+    pub(crate) event_tx: mpsc::UnboundedSender<ControlServerEvent>,
+    pub(crate) closing: Arc<AtomicBool>,
+    pub(crate) uid: u32,
+    pub(crate) user: UserIdentity,
+    pub(crate) can_write: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -53,10 +63,13 @@ impl RequestHandler {
         self.register_control_with_access(
             requester_pid,
             upgrade,
-            event_tx,
-            closing,
-            current_owner_uid(),
-            true,
+            ControlRegistration {
+                event_tx,
+                closing,
+                uid: current_owner_uid(),
+                user: UserIdentity::Uid(current_owner_uid()),
+                can_write: true,
+            },
         )
         .await
     }
@@ -65,10 +78,7 @@ impl RequestHandler {
         &self,
         requester_pid: u32,
         upgrade: ControlModeUpgrade,
-        event_tx: mpsc::UnboundedSender<ControlServerEvent>,
-        closing: Arc<AtomicBool>,
-        uid: u32,
-        can_write: bool,
+        registration: ControlRegistration,
     ) -> u64 {
         let mut active_control = self.active_control.lock().await;
         let control_id = active_control.next_id;
@@ -80,11 +90,12 @@ impl RequestHandler {
                 session_name: None,
                 last_session: None,
                 flags: ControlClientFlags::default(),
-                uid,
-                can_write,
+                uid: registration.uid,
+                user: registration.user,
+                can_write: registration.can_write,
                 terminal_context: upgrade.terminal_context,
-                event_tx,
-                closing,
+                event_tx: registration.event_tx,
+                closing: registration.closing,
             },
         ) {
             previous.closing.store(true, Ordering::SeqCst);
