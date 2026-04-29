@@ -20,6 +20,7 @@ const ERROR_PARTIAL_COPY: i32 = 299;
 const ERROR_INVALID_ADDRESS: i32 = 487;
 const ERROR_NOACCESS: i32 = 998;
 const MAX_ENVIRONMENT_WIDE_CHARS: usize = 32 * 1024;
+const ENVIRONMENT_READ_CHUNK_WIDE_CHARS: usize = 2048;
 const MAX_REMOTE_UNICODE_STRING_BYTES: usize = u16::MAX as usize - 1;
 
 pub(super) fn current_path(pid: u32) -> io::Result<Option<String>> {
@@ -182,20 +183,31 @@ impl RemoteProcess {
         }
 
         let mut block = Vec::new();
-        let mut previous_was_nul = false;
-        for index in 0..MAX_ENVIRONMENT_WIDE_CHARS {
-            let Some(unit) = self.read_struct::<u16>(address + index * size_of::<u16>())? else {
+        let mut offset = 0_usize;
+        while offset < MAX_ENVIRONMENT_WIDE_CHARS {
+            let units = ENVIRONMENT_READ_CHUNK_WIDE_CHARS
+                .min(MAX_ENVIRONMENT_WIDE_CHARS.saturating_sub(offset));
+            let mut chunk = vec![0_u16; units];
+            let byte_offset = offset
+                .checked_mul(size_of::<u16>())
+                .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "environment offset"))?;
+            let chunk_address = address
+                .checked_add(byte_offset)
+                .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "environment address"))?;
+            let byte_len = units
+                .checked_mul(size_of::<u16>())
+                .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "environment length"))?;
+            let Some(()) = self.read_exact(chunk_address, chunk.as_mut_ptr().cast(), byte_len)?
+            else {
                 return Ok(None);
             };
-            block.push(unit);
-            if unit == 0 {
-                if previous_was_nul {
-                    return Ok(Some(block));
-                }
-                previous_was_nul = true;
-            } else {
-                previous_was_nul = false;
+
+            block.extend_from_slice(&chunk);
+            if let Some(end) = environment_block_end(&block) {
+                block.truncate(end);
+                return Ok(Some(block));
             }
+            offset += units;
         }
 
         Ok(None)
@@ -343,6 +355,13 @@ fn environment_from_wide_block(block: &[u16]) -> Option<HashMap<String, String>>
     Some(environment)
 }
 
+fn environment_block_end(block: &[u16]) -> Option<usize> {
+    block
+        .windows(2)
+        .position(|pair| pair[0] == 0 && pair[1] == 0)
+        .map(|index| index + 2)
+}
+
 fn unavailable_or_error<T>(error: io::Error) -> io::Result<Option<T>> {
     match error.raw_os_error() {
         Some(code)
@@ -389,6 +408,19 @@ mod tests {
         let environment = environment_from_wide_block(&block).expect("environment");
 
         assert!(environment.is_empty());
+    }
+
+    #[test]
+    fn finds_environment_block_end_across_chunk_boundaries() {
+        let mut block = vec![b'A' as u16; ENVIRONMENT_READ_CHUNK_WIDE_CHARS - 1];
+        block.push(0);
+        assert_eq!(environment_block_end(&block), None);
+
+        block.push(0);
+        assert_eq!(
+            environment_block_end(&block),
+            Some(ENVIRONMENT_READ_CHUNK_WIDE_CHARS + 1)
+        );
     }
 
     #[test]
