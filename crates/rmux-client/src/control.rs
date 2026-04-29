@@ -49,7 +49,7 @@ pub fn drive_control_mode(
 ) -> Result<(), ClientError> {
     let stdin = io::stdin();
     let stdout = io::stdout();
-    drive_control_mode_with_stdio(upgrade, initial_commands, stdin, stdout.lock())
+    drive_control_mode_with_stdio(upgrade, initial_commands, stdin, stdout)
 }
 
 /// Drives a control-mode session using explicit input and output streams.
@@ -61,7 +61,7 @@ pub fn drive_control_mode_with_stdio<R, W>(
 ) -> Result<(), ClientError>
 where
     R: Read + Send + 'static,
-    W: Write,
+    W: Write + Send,
 {
     let mode = upgrade.mode();
     if mode.is_control_control() {
@@ -92,7 +92,7 @@ fn drive_control_stream<R, W>(
 ) -> Result<(), ClientError>
 where
     R: Read + Send + 'static,
-    W: Write,
+    W: Write + Send,
 {
     write_initial_commands(&stream, initial_commands)?;
     ensure_blocking(&stream).map_err(ClientError::Io)?;
@@ -121,6 +121,8 @@ where
 
 #[cfg(windows)]
 const CONTROL_STDIN_QUEUE_CAPACITY: usize = 256;
+#[cfg(windows)]
+const CONTROL_STDOUT_QUEUE_CAPACITY: usize = 256;
 
 #[cfg(windows)]
 fn drive_control_stream<R, W>(
@@ -131,9 +133,10 @@ fn drive_control_stream<R, W>(
 ) -> Result<(), ClientError>
 where
     R: Read + Send + 'static,
-    W: Write,
+    W: Write + Send,
 {
     let (input_tx, input_rx) = tokio_mpsc::channel(CONTROL_STDIN_QUEUE_CAPACITY);
+    let (output_tx, output_rx) = tokio_mpsc::channel(CONTROL_STDOUT_QUEUE_CAPACITY);
     let (stdin_done_tx, stdin_done_rx) = mpsc::sync_channel(1);
     let stdin_thread = thread::spawn(move || {
         let result = copy_control_input(input, input_tx);
@@ -141,14 +144,23 @@ where
     });
 
     let (pipe, runtime) = stream.into_async_parts();
-    let copy_result = runtime
-        .block_on(drive_async_control(
-            pipe,
-            initial_commands,
-            input_rx,
-            output,
-        ))
-        .map_err(ClientError::Io);
+    let copy_result = thread::scope(|scope| {
+        let output_thread = scope.spawn(move || write_queued_control_output(output, output_rx));
+        let copy_result = runtime
+            .block_on(drive_async_control(
+                pipe,
+                initial_commands,
+                input_rx,
+                output_tx,
+            ))
+            .map_err(ClientError::Io);
+        let output_result = output_thread
+            .join()
+            .map_err(|_| ClientError::Io(io::Error::other("control output thread panicked")))?;
+
+        copy_result?;
+        output_result.map_err(ClientError::Io)
+    });
     let stdin_result = poll_input_thread(&stdin_done_rx)?;
 
     if stdin_result.is_some() {
@@ -247,15 +259,14 @@ where
 }
 
 #[cfg(windows)]
-async fn drive_async_control<Stream, W>(
+async fn drive_async_control<Stream>(
     stream: Stream,
     initial_commands: &[String],
     mut input_rx: tokio_mpsc::Receiver<Vec<u8>>,
-    output: &mut W,
+    output_tx: tokio_mpsc::Sender<Vec<u8>>,
 ) -> io::Result<()>
 where
     Stream: AsyncRead + AsyncWrite + Unpin,
-    W: Write,
 {
     let mut completion_tracker = ControlCompletionTracker::default();
     let mut input_closed = false;
@@ -285,14 +296,39 @@ where
                     return Ok(());
                 }
                 let observed = completion_tracker.observe(&buffer[..bytes_read]);
-                output.write_all(&buffer[..bytes_read])?;
-                output.flush()?;
+                send_control_output(&output_tx, &buffer[..bytes_read]).await?;
                 if observed.exited {
                     return Ok(());
                 }
             }
         }
     }
+}
+
+#[cfg(windows)]
+fn write_queued_control_output<W>(
+    output: &mut W,
+    mut output_rx: tokio_mpsc::Receiver<Vec<u8>>,
+) -> io::Result<()>
+where
+    W: Write,
+{
+    while let Some(bytes) = output_rx.blocking_recv() {
+        output.write_all(&bytes)?;
+        output.flush()?;
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+async fn send_control_output(
+    output_tx: &tokio_mpsc::Sender<Vec<u8>>,
+    bytes: &[u8],
+) -> io::Result<()> {
+    output_tx
+        .send(bytes.to_vec())
+        .await
+        .map_err(|_| io::Error::new(io::ErrorKind::BrokenPipe, "control output writer stopped"))
 }
 
 #[cfg(windows)]
@@ -438,9 +474,9 @@ mod windows_tests {
             .await
             .expect("send input");
         drop(input_tx);
-        let mut output = Vec::new();
+        let (output_tx, output_rx) = tokio_mpsc::channel::<Vec<u8>>(4);
 
-        let drive = drive_async_control(client, &[], input_rx, &mut output);
+        let drive = drive_async_control(client, &[], input_rx, output_tx);
         let server_peer = async {
             let expected_input = format!("list-sessions\n{CONTROL_STDIN_EOF_MARKER}\n");
             let mut received = Vec::new();
@@ -456,8 +492,9 @@ mod windows_tests {
                 .await?;
             Ok::<(), std::io::Error>(())
         };
+        let output = collect_control_output(output_rx);
 
-        tokio::try_join!(drive, server_peer)?;
+        let (_, _, output) = tokio::try_join!(drive, server_peer, output)?;
         assert_eq!(output, b"%begin 1 1 1\n%end 1 1 1\n%exit\n");
         Ok(())
     }
@@ -471,9 +508,9 @@ mod windows_tests {
             .await
             .expect("send input");
         drop(input_tx);
-        let mut output = Vec::new();
+        let (output_tx, output_rx) = tokio_mpsc::channel::<Vec<u8>>(4);
 
-        let drive = drive_async_control(client, &[], input_rx, &mut output);
+        let drive = drive_async_control(client, &[], input_rx, output_tx);
         let server_peer = async {
             let mut received = Vec::new();
             let mut buffer = [0_u8; 32];
@@ -487,9 +524,20 @@ mod windows_tests {
             server.write_all(b"%exit\n").await?;
             Ok::<(), std::io::Error>(())
         };
+        let output = collect_control_output(output_rx);
 
-        tokio::try_join!(drive, server_peer)?;
+        let (_, _, output) = tokio::try_join!(drive, server_peer, output)?;
         assert_eq!(output, b"%begin 1 1 1\n%end 1 1 1\n%exit\n");
         Ok(())
+    }
+
+    async fn collect_control_output(
+        mut output_rx: tokio_mpsc::Receiver<Vec<u8>>,
+    ) -> std::io::Result<Vec<u8>> {
+        let mut output = Vec::new();
+        while let Some(bytes) = output_rx.recv().await {
+            output.extend_from_slice(&bytes);
+        }
+        Ok(output)
     }
 }
