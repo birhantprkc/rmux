@@ -1,9 +1,6 @@
 use std::time::{Duration, Instant};
 
-use rmux_core::{
-    command_parser::{CommandArgument, ParsedCommands},
-    key_code_lookup_bits,
-};
+use rmux_core::key_code_lookup_bits;
 use rmux_proto::{ErrorResponse, OptionName, PaneTarget, Response, RmuxError, Target};
 use tracing::warn;
 
@@ -20,67 +17,10 @@ use crate::key_table::{
 use crate::pane_terminals::session_not_found;
 use crate::renderer;
 
-struct DirectCopyModeCommand {
-    command: String,
-    args: Vec<String>,
-    repeat_count: usize,
-}
+#[path = "attached_key_dispatch/copy_mode.rs"]
+mod copy_mode;
 
-fn direct_copy_mode_command(commands: &ParsedCommands) -> Option<DirectCopyModeCommand> {
-    if !commands.assignments().is_empty() {
-        return None;
-    }
-    let [command] = commands.commands() else {
-        return None;
-    };
-    if !matches!(command.name(), "send" | "send-keys") {
-        return None;
-    }
-
-    let mut args = command.arguments().iter();
-    let mut copy_mode_command = false;
-    let mut repeat_count = 1;
-    let mut command_args = Vec::new();
-    while let Some(argument) = args.next() {
-        let value = argument.as_string()?;
-        match value {
-            "--" => {
-                command_args.extend(copy_mode_argument_strings(args)?);
-                break;
-            }
-            "-X" => copy_mode_command = true,
-            "-N" => {
-                repeat_count = args.next()?.as_string()?.parse::<usize>().ok()?.max(1);
-            }
-            value if value.starts_with("-N") && value.len() > 2 => {
-                repeat_count = value[2..].parse::<usize>().ok()?.max(1);
-            }
-            value if value.starts_with('-') => return None,
-            value => {
-                command_args.push(value.to_owned());
-                command_args.extend(copy_mode_argument_strings(args)?);
-                break;
-            }
-        }
-    }
-
-    if !copy_mode_command {
-        return None;
-    }
-    let command = command_args.first()?.clone();
-    Some(DirectCopyModeCommand {
-        command,
-        args: command_args.into_iter().skip(1).collect(),
-        repeat_count,
-    })
-}
-
-fn copy_mode_argument_strings<'a>(
-    args: impl Iterator<Item = &'a CommandArgument>,
-) -> Option<Vec<String>> {
-    args.map(|argument| argument.as_string().map(str::to_owned))
-        .collect()
-}
+use copy_mode::direct_copy_mode_command;
 
 impl RequestHandler {
     pub(super) async fn dispatch_attached_key(
@@ -357,10 +297,9 @@ impl RequestHandler {
             return Ok(true);
         }
 
+        let dispatch_target = current_target.unwrap_or_else(|| Target::Pane(target.clone()));
         let context = QueueExecutionContext::without_caller_cwd()
-            .with_current_target(Some(
-                current_target.unwrap_or_else(|| Target::Pane(target.clone())),
-            ))
+            .with_current_target(Some(dispatch_target.clone()))
             .with_mouse_target(mouse_target);
         if parsed_commands_block_for_prompt(binding.commands()) {
             let handler = self.clone();
@@ -371,19 +310,41 @@ impl RequestHandler {
                     .await;
             });
         } else {
-            if let Err(error) = Box::pin(self.execute_parsed_commands(
+            match Box::pin(self.execute_parsed_commands(
                 requester_pid,
                 binding.commands().clone(),
                 context,
             ))
             .await
             {
-                if attached_live_input {
-                    self.report_attached_command_error(&session_name, attach_pid, &error)
-                        .await;
-                    return Ok(true);
+                Ok(output) => {
+                    if attached_live_input
+                        && parsed_commands_open_attached_output(binding.commands())
+                    {
+                        if let Err(error) = self
+                            .show_attached_command_output_popup(
+                                attach_pid,
+                                requester_pid,
+                                dispatch_target,
+                                "list-keys (q/Esc=close)",
+                                &output,
+                            )
+                            .await
+                        {
+                            self.report_attached_command_error(&session_name, attach_pid, &error)
+                                .await;
+                            return Ok(true);
+                        }
+                    }
                 }
-                return Err(error);
+                Err(error) => {
+                    if attached_live_input {
+                        self.report_attached_command_error(&session_name, attach_pid, &error)
+                            .await;
+                        return Ok(true);
+                    }
+                    return Err(error);
+                }
             }
         }
         Ok(true)
@@ -541,6 +502,15 @@ fn parsed_command_blocks_for_prompt(command: &rmux_core::command_parser::ParsedC
     }
 }
 
+fn parsed_commands_open_attached_output(
+    commands: &rmux_core::command_parser::ParsedCommands,
+) -> bool {
+    commands
+        .commands()
+        .iter()
+        .any(|command| command.name() == "list-keys")
+}
+
 #[cfg(test)]
 mod parsed_command_prompt_block_tests {
     use super::*;
@@ -573,19 +543,5 @@ mod parsed_command_prompt_block_tests {
             .parse_one_group("display-panes -b")
             .unwrap();
         assert!(!parsed_commands_block_for_prompt(&parsed));
-    }
-
-    #[test]
-    fn direct_copy_mode_command_accepts_send_alias() {
-        use rmux_core::command_parser::CommandParser;
-
-        let parsed = CommandParser::new()
-            .parse_one_group("send -N3 -X cancel")
-            .unwrap();
-        let command = direct_copy_mode_command(&parsed).unwrap();
-
-        assert_eq!(command.command, "cancel");
-        assert_eq!(command.args, Vec::<String>::new());
-        assert_eq!(command.repeat_count, 3);
     }
 }

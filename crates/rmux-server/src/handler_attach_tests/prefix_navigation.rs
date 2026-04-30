@@ -317,3 +317,47 @@ async fn attached_prefix_q_emits_a_display_panes_overlay() {
         "expected display-panes overlay, got {overlay:?}"
     );
 }
+
+#[tokio::test]
+async fn attached_prefix_help_keys_opens_dismissible_surface_without_q_leak() {
+    let handler = RequestHandler::new();
+    let requester_pid = std::process::id();
+    let alpha = session_name("alpha");
+    let mut control_rx = create_attached_session(&handler, requester_pid, &alpha).await;
+    drain_attach_controls(&mut control_rx);
+
+    let mut pending_input = Vec::new();
+    let forwarded = handler
+        .handle_attached_live_input_inner(requester_pid, &mut pending_input, b"\x02?")
+        .await
+        .expect("prefix help input");
+
+    assert!(
+        !forwarded,
+        "prefix help should be consumed by the attach UI"
+    );
+    assert!(
+        pending_input.is_empty(),
+        "prefix help should not leave pending input"
+    );
+    let help_frame = recv_overlay_frame(&mut control_rx, "prefix help overlay").await;
+    assert!(
+        help_frame.contains("list-keys") || help_frame.contains("List key bindings"),
+        "prefix help should render list-keys content, got {help_frame:?}"
+    );
+
+    let forwarded = handler
+        .handle_attached_live_input_inner(requester_pid, &mut pending_input, b"q")
+        .await
+        .expect("prefix help dismiss");
+
+    assert!(
+        !forwarded,
+        "dismiss key should not be forwarded to the pane"
+    );
+    let clear_frame = recv_overlay_frame(&mut control_rx, "prefix help clear").await;
+    assert!(
+        clear_frame.is_empty(),
+        "dismissing prefix help should clear the overlay, got {clear_frame:?}"
+    );
+}
