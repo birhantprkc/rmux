@@ -5,7 +5,7 @@ use rmux_core::input::{
 use rmux_core::style::{parse_colour, Style};
 use rmux_core::GridRenderOptions;
 use rmux_core::{
-    formats::FormatContext, text_width as tmux_text_width, OptionStore, Pane, Screen,
+    formats::FormatContext, text_width as tmux_text_width, OptionStore, Pane, PaneGeometry, Screen,
     ScreenCaptureRange, Session, Utf8Config,
 };
 use rmux_proto::OptionName;
@@ -126,7 +126,9 @@ pub(crate) fn render_pane_screen(
     screen: &Screen,
 ) -> Vec<u8> {
     let geometry = StatusGeometry::for_session(session, options);
-    let pane_geometry = content_pane_geometry(pane, geometry.content_rows);
+    let Some(pane_geometry) = visible_pane_geometry(session, pane, geometry.content_rows) else {
+        return Vec::new();
+    };
     if pane_geometry.cols() == 0 || pane_geometry.rows() == 0 {
         return Vec::new();
     }
@@ -243,7 +245,9 @@ pub(crate) fn render_pane_cursor(
     screen: &Screen,
 ) -> Vec<u8> {
     let geometry = StatusGeometry::for_session(session, options);
-    let pane_geometry = content_pane_geometry(pane, geometry.content_rows);
+    let Some(pane_geometry) = visible_pane_geometry(session, pane, geometry.content_rows) else {
+        return Vec::new();
+    };
     if pane_geometry.cols() == 0 || pane_geometry.rows() == 0 {
         return Vec::new();
     }
@@ -268,7 +272,9 @@ pub(crate) fn render_copy_mode_position(
     history_size: usize,
 ) -> Vec<u8> {
     let geometry = StatusGeometry::for_session(session, options);
-    let pane_geometry = content_pane_geometry(pane, geometry.content_rows);
+    let Some(pane_geometry) = visible_pane_geometry(session, pane, geometry.content_rows) else {
+        return Vec::new();
+    };
     if pane_geometry.cols() == 0 || pane_geometry.rows() == 0 {
         return Vec::new();
     }
@@ -329,6 +335,18 @@ pub(crate) fn render_copy_mode_position(
         &line,
     );
     frame
+}
+
+fn visible_pane_geometry(
+    session: &Session,
+    pane: &Pane,
+    content_rows: u16,
+) -> Option<PaneGeometry> {
+    if session.window().is_zoomed() && pane.index() != session.active_pane_index() {
+        return None;
+    }
+
+    Some(content_pane_geometry(pane, content_rows))
 }
 
 fn bool_text(value: bool) -> &'static str {

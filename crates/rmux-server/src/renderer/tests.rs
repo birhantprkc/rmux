@@ -1,7 +1,7 @@
 use super::{
     border_cells, parse_standalone_style, render, status_bar_runs, style_sgr_bytes, BorderStyle,
 };
-use rmux_core::{OptionStore, Session, Style, Utf8Config};
+use rmux_core::{input::InputParser, OptionStore, Screen, Session, Style, Utf8Config};
 use rmux_proto::{
     OptionName, ResizePaneAdjustment, ScopeSelector, SessionName, SetOptionMode, SplitDirection,
     TerminalSize, WindowTarget,
@@ -20,6 +20,13 @@ fn session_with_three_panes() -> Session {
 
 fn border_style(value: Option<&str>) -> Style {
     parse_standalone_style(value)
+}
+
+fn screen_with(bytes: &[u8], size: TerminalSize) -> Screen {
+    let mut screen = Screen::new(size, 100);
+    let mut parser = InputParser::new();
+    parser.parse(bytes, &mut screen);
+    screen
 }
 
 #[test]
@@ -165,6 +172,39 @@ fn zoomed_sessions_clear_before_redrawing_active_pane() {
     assert!(
         frame.starts_with(b"\x1b[0m\x1b[H\x1b[2J"),
         "zoom repaint must clear stale non-active pane cells before drawing"
+    );
+}
+
+#[test]
+fn zoomed_sessions_render_only_the_active_pane_screen() {
+    let size = TerminalSize { cols: 20, rows: 6 };
+    let mut session = Session::new(session_name("alpha"), size);
+    session.split_active_pane().expect("split succeeds");
+    session
+        .resize_pane(0, ResizePaneAdjustment::Zoom)
+        .expect("zoom succeeds");
+    let options = OptionStore::new();
+    let active_pane = session.window().pane(0).expect("pane 0 exists");
+    let inactive_pane = session.window().pane(1).expect("pane 1 exists");
+
+    let active_frame = String::from_utf8(super::render_pane_screen(
+        &session,
+        &options,
+        active_pane,
+        &screen_with(b"VISIBLE_LEFT", size),
+    ))
+    .expect("active pane frame is utf-8");
+    let inactive_frame = super::render_pane_screen(
+        &session,
+        &options,
+        inactive_pane,
+        &screen_with(b"HIDDEN_RIGHT", size),
+    );
+
+    assert!(active_frame.contains("VISIBLE_LEFT"), "{active_frame}");
+    assert!(
+        inactive_frame.is_empty(),
+        "zoomed repaint must not draw non-active pane content"
     );
 }
 
