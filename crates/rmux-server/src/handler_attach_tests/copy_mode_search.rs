@@ -14,10 +14,7 @@ async fn set_vi_mode_keys(handler: &RequestHandler, session: &SessionName) {
     ));
 }
 
-async fn enter_copy_mode_with_search_seed(
-    handler: &RequestHandler,
-    target: &PaneTarget,
-) -> String {
+async fn enter_copy_mode_with_search_seed(handler: &RequestHandler, target: &PaneTarget) -> String {
     replace_transcript_contents(
         handler,
         target,
