@@ -308,6 +308,64 @@ async fn copy_mode_vi_q_exits_active_selection_without_leak_or_buffer_change() {
 }
 
 #[tokio::test]
+async fn copy_mode_emacs_escape_exits_active_selection_without_leak() {
+    let handler = RequestHandler::new();
+    let requester_pid = std::process::id();
+    let alpha = session_name("alpha");
+    let _control_rx = create_quiet_attached_session(&handler, requester_pid, &alpha).await;
+    let target = PaneTarget::new(alpha.clone(), 0);
+
+    set_top_buffer_bytes(&handler, ORACLE_OLD_BUFFER_BYTES).await;
+    assert_eq!(
+        enter_copy_mode_with_selection_seed(&handler, &target).await,
+        "1:0,0:0:0::,:,\n"
+    );
+    let before_capture = capture_pane_print(&handler, target.clone()).await;
+    let mut pending_input = Vec::new();
+
+    send_copy_selection_key(&handler, requester_pid, &mut pending_input, b" ").await;
+    send_copy_selection_key(&handler, requester_pid, &mut pending_input, b"\x1b[C").await;
+    assert_eq!(
+        copy_selection_status(&handler, target.clone()).await,
+        "1:1,0:1:1:char:0,0:1,0\n",
+        "test setup must have an active emacs selection before Escape"
+    );
+
+    handler
+        .handle_attached_live_input_for_test(requester_pid, b"\x1b")
+        .await
+        .expect("Escape exits emacs copy-mode even with an active selection");
+    assert_eq!(
+        copy_selection_status(&handler, target.clone()).await,
+        "0:,::::,:,\n",
+        "tmux emacs exits copy-mode on Escape even when a selection is active"
+    );
+    assert_eq!(
+        show_top_buffer_bytes(&handler).await,
+        ORACLE_OLD_BUFFER_BYTES,
+        "Escape cancel must leave the existing buffer unchanged"
+    );
+    assert_eq!(
+        capture_pane_print(&handler, target.clone()).await,
+        before_capture,
+        "Escape must be consumed by emacs copy-mode instead of reaching pane IO"
+    );
+
+    let forwarded_to_pane = handler
+        .handle_attached_live_input_inner(
+            requester_pid,
+            &mut pending_input,
+            b"RMUX_AFTER_EMACS_COPY_SELECTION_ESCAPE",
+        )
+        .await
+        .expect("normal input resumes after emacs Escape");
+    assert!(
+        forwarded_to_pane,
+        "normal pane input should resume after emacs Escape exits copy-mode"
+    );
+}
+
+#[tokio::test]
 async fn copy_mode_vi_single_cell_yank_matches_tmux_buffer() {
     let handler = RequestHandler::new();
     let requester_pid = std::process::id();

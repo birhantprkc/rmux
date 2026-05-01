@@ -64,7 +64,8 @@ pub(super) fn attached_copy_mode_input_action(
         PromptInputEvent::Down => "cursor-down",
         PromptInputEvent::Up => "cursor-up",
         PromptInputEvent::Char('q') => "cancel",
-        PromptInputEvent::Escape => "cancel-or-clear-selection",
+        PromptInputEvent::Escape if mode_keys == ModeKeys::Vi => "cancel-or-clear-selection",
+        PromptInputEvent::Escape => "cancel",
         PromptInputEvent::KeyName(name) if name == "q" => "cancel",
         _ => return AttachedCopyModeInputAction::Ignore,
     };
@@ -155,7 +156,7 @@ mod tests {
         );
         assert_eq!(
             attached_copy_mode_input_action(ModeKeys::Emacs, &PromptInputEvent::Escape),
-            AttachedCopyModeInputAction::Command("cancel-or-clear-selection")
+            AttachedCopyModeInputAction::Command("cancel")
         );
     }
 }
