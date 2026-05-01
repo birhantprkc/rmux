@@ -189,7 +189,7 @@ async fn attached_mouse_drag_copy_mode_refresh_keeps_prompt_visible() {
 }
 
 #[tokio::test]
-async fn attached_copy_mode_decline_falls_back_to_prefix_table() {
+async fn attached_copy_mode_unhandled_key_falls_back_to_prefix_table() {
     let handler = RequestHandler::new();
     let requester_pid = std::process::id();
     let alpha = session_name("alpha");
@@ -231,9 +231,9 @@ async fn attached_copy_mode_decline_falls_back_to_prefix_table() {
     ));
 
     handler
-        .handle_attached_live_input_for_test(requester_pid, b"\x02\x1b[C")
+        .handle_attached_live_input_for_test(requester_pid, b"\x02o")
         .await
-        .expect("copy-mode declined prefix navigation");
+        .expect("copy-mode declined unhandled prefix navigation");
 
     assert_eq!(active_panes(&handler, &alpha).await, "0:0\n1:1\n");
 }
