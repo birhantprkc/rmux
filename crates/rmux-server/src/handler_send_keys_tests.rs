@@ -27,6 +27,9 @@ use super::super::input_capture::RawPaneInputProbe;
 #[path = "handler_send_keys_tests/live_attach.rs"]
 mod live_attach;
 
+#[path = "handler_send_keys_tests/bracketed_paste_live.rs"]
+mod bracketed_paste_live;
+
 #[path = "handler_send_keys_tests/bracketed_paste_large.rs"]
 mod bracketed_paste_large;
 
