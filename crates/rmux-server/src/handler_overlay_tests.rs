@@ -173,6 +173,51 @@ async fn display_menu_unterminated_sgr_mouse_input_is_bounded() {
 }
 
 #[tokio::test]
+async fn display_menu_partial_utf8_input_is_retained_and_recovered() {
+    let handler = RequestHandler::new();
+    let alpha = session_name("alpha");
+    let requester_pid = std::process::id();
+    let mut control_rx = create_attached_session(&handler, &alpha, requester_pid).await;
+
+    run_overlay_command(
+        &handler,
+        requester_pid,
+        r#"display-menu -T Menu "First" "f" "display-message first""#,
+    )
+    .await;
+    let _ = next_overlay_frame(&mut control_rx).await;
+
+    let mut pending_input = Vec::new();
+    handler
+        .handle_attached_live_input(requester_pid, &mut pending_input, &[0xe6])
+        .await
+        .expect("partial menu UTF-8 is retained");
+    assert_eq!(
+        pending_input,
+        vec![0xe6],
+        "menu overlay should retain only the partial UTF-8 fragment"
+    );
+
+    handler
+        .handle_attached_live_input(requester_pid, &mut pending_input, b"\x97\xa5")
+        .await
+        .expect("completed menu UTF-8 is handled");
+    assert!(
+        pending_input.is_empty(),
+        "completed menu UTF-8 input should leave no retained bytes"
+    );
+    let active_attach = handler.active_attach.lock().await;
+    let active = active_attach
+        .by_pid
+        .get(&requester_pid)
+        .expect("attached client");
+    assert!(
+        matches!(active.overlay.as_ref(), Some(ClientOverlayState::Menu(_))),
+        "completed non-matching menu input should not leave retained bytes or collapse the menu"
+    );
+}
+
+#[tokio::test]
 async fn popup_right_click_opens_nested_menu_and_escape_closes_layers() {
     let handler = RequestHandler::new();
     let alpha = session_name("alpha");

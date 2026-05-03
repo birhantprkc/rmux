@@ -151,6 +151,61 @@ async fn copy_mode_question_search_prompt_consumes_query_without_pane_leak() {
 }
 
 #[tokio::test]
+async fn copy_mode_search_prompt_bounds_unterminated_sgr_mouse_without_pane_leak() {
+    let handler = RequestHandler::new();
+    let requester_pid = std::process::id();
+    let alpha = session_name("alpha");
+    let mut control_rx = create_quiet_attached_session(&handler, requester_pid, &alpha).await;
+    let target = PaneTarget::new(alpha.clone(), 0);
+    set_vi_mode_keys(&handler, &alpha).await;
+
+    let _ = enter_copy_mode_with_search_seed(&handler, &target).await;
+    drain_attach_controls(&mut control_rx);
+    let before_capture = capture_pane_print(&handler, target.clone()).await;
+
+    let mut pending_input = Vec::new();
+    send_copy_search_key(&handler, requester_pid, &mut pending_input, b"/").await;
+    assert!(
+        handler
+            .attached_prompt_render(requester_pid)
+            .await
+            .is_some(),
+        "slash should leave a search prompt active before the partial-input guard"
+    );
+
+    let partial = oversized_unterminated_sgr_mouse_input();
+    let result = handler
+        .handle_attached_live_input_inner(requester_pid, &mut pending_input, &partial)
+        .await;
+    assert_partial_control_bound(result, "prompt input");
+    assert!(
+        pending_input.is_empty(),
+        "overflowing partial prompt input should be cleared after rejection"
+    );
+    assert_eq!(
+        capture_pane_print(&handler, target.clone()).await,
+        before_capture,
+        "unterminated prompt control input must not mutate the pane screen"
+    );
+
+    let recovered = handler
+        .handle_attached_live_input_inner(requester_pid, &mut pending_input, b"\x1b")
+        .await
+        .expect("escape should still be handled after partial-input rejection");
+    assert!(
+        !recovered,
+        "search prompt escape must not be forwarded to pane IO"
+    );
+    assert!(
+        handler
+            .attached_prompt_render(requester_pid)
+            .await
+            .is_none(),
+        "search prompt should remain recoverable after the partial-input guard fires"
+    );
+}
+
+#[tokio::test]
 async fn copy_mode_search_repeat_next_and_previous_match_tmux_order() {
     let handler = RequestHandler::new();
     let requester_pid = std::process::id();

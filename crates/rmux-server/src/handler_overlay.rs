@@ -164,6 +164,7 @@ impl RequestHandler {
             let Some((event, consumed)) =
                 super::pane_support::decode_prompt_input_event(pending_input)
             else {
+                retain_partial_attached_control_input("menu overlay prompt input", pending_input)?;
                 return Ok(true);
             };
             pending_input.drain(..consumed);

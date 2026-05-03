@@ -143,6 +143,7 @@ impl RequestHandler {
 
         loop {
             let Some((event, consumed)) = decode_prompt_input_event(pending_input) else {
+                retain_partial_attached_control_input("prompt input", pending_input)?;
                 return Ok(());
             };
             pending_input.drain(..consumed);

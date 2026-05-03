@@ -16,7 +16,7 @@ use rmux_proto::{
     PaneTarget, RenameSessionRequest, Request, ResizePaneAdjustment, Response, RmuxError,
     ScopeSelector, SelectLayoutRequest, SelectLayoutTarget, SelectPaneRequest, SendKeysRequest,
     SessionName, SetOptionMode, SetOptionRequest, SplitWindowRequest, SplitWindowTarget,
-    SwitchClientRequest, TerminalSize, WindowTarget,
+    SwitchClientRequest, TerminalSize, WindowTarget, DEFAULT_MAX_FRAME_LENGTH,
 };
 #[cfg(unix)]
 use rmux_pty::{ChildCommand, TerminalSize as PtyTerminalSize};
@@ -338,6 +338,29 @@ async fn display_target_format(
 
 fn drain_attach_controls(control_rx: &mut mpsc::UnboundedReceiver<AttachControl>) {
     while control_rx.try_recv().is_ok() {}
+}
+
+fn oversized_unterminated_sgr_mouse_input() -> Vec<u8> {
+    let mut bytes = b"\x1b[<".to_vec();
+    bytes.resize(DEFAULT_MAX_FRAME_LENGTH + 1, b'1');
+    bytes
+}
+
+fn assert_partial_control_bound<T>(result: std::io::Result<T>, context: &str) {
+    let error = match result {
+        Ok(_) => panic!("partial control input should be rejected after the bound"),
+        Err(error) => error,
+    };
+    assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+    let message = error.to_string();
+    assert!(
+        message.contains(context),
+        "error should name {context:?}, got {message:?}"
+    );
+    assert!(
+        message.contains("maximum"),
+        "error should include the retained byte limit, got {message:?}"
+    );
 }
 
 async fn recv_overlay_frame(

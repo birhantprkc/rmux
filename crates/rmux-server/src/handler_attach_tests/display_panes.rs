@@ -166,6 +166,61 @@ async fn attached_prefix_q_emits_a_display_panes_overlay_when_prefix_and_q_arriv
 }
 
 #[tokio::test]
+async fn display_panes_bounds_unterminated_sgr_mouse_without_pane_leak() {
+    let handler = RequestHandler::new();
+    let requester_pid = std::process::id();
+    let alpha = session_name("alpha");
+    let mut control_rx = create_attached_session(&handler, requester_pid, &alpha).await;
+    let target = PaneTarget::new(alpha.clone(), 0);
+    drain_attach_controls(&mut control_rx);
+    let before_capture = capture_pane_print(&handler, target.clone()).await;
+
+    let mut pending_input = Vec::new();
+    let forwarded = handler
+        .handle_attached_live_input_inner(requester_pid, &mut pending_input, b"\x02q")
+        .await
+        .expect("prefix q input");
+    assert!(
+        !forwarded,
+        "display-panes prefix should be consumed by the attach UI"
+    );
+    let overlay = recv_overlay_frame(&mut control_rx, "display-panes overlay").await;
+    assert!(
+        overlay.contains("\x1b[?25l"),
+        "prefix q should enter display-panes, got {overlay:?}"
+    );
+
+    let partial = oversized_unterminated_sgr_mouse_input();
+    let result = handler
+        .handle_attached_live_input_inner(requester_pid, &mut pending_input, &partial)
+        .await;
+    assert_partial_control_bound(result, "display-panes prompt input");
+    assert!(
+        pending_input.is_empty(),
+        "overflowing display-panes partial input should be cleared after rejection"
+    );
+    assert_eq!(
+        capture_pane_print(&handler, target.clone()).await,
+        before_capture,
+        "unterminated display-panes control input must not mutate the pane screen"
+    );
+
+    let recovered = handler
+        .handle_attached_live_input_inner(requester_pid, &mut pending_input, b"\x1b")
+        .await
+        .expect("escape should still close display-panes after partial-input rejection");
+    assert!(
+        !recovered,
+        "display-panes escape must not be forwarded to pane IO"
+    );
+    let clear = recv_overlay_frame(&mut control_rx, "display-panes clear").await;
+    assert!(
+        !clear.is_empty(),
+        "display-panes should repaint or clear after recovery escape"
+    );
+}
+
+#[tokio::test]
 async fn attached_prefix_q_emits_a_display_panes_clear_after_the_timeout() {
     let handler = RequestHandler::new();
     let requester_pid = std::process::id();

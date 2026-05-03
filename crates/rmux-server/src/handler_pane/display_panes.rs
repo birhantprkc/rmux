@@ -12,7 +12,7 @@ use super::super::{
     scripting_support::QueueExecutionContext,
     RequestHandler,
 };
-use super::{decode_prompt_input_event, io_other};
+use super::{decode_prompt_input_event, io_other, retain_partial_attached_control_input};
 use crate::key_table::{
     decode_attached_key, matches_prefix_key, session_option_key, AttachedKeyDecode,
 };
@@ -403,12 +403,16 @@ impl RequestHandler {
                     .await?;
                 return Ok(());
             }
-            DisplayPanesPrefixInput::Partial => return Ok(()),
+            DisplayPanesPrefixInput::Partial => {
+                retain_partial_attached_control_input("display-panes prefix", pending_input)?;
+                return Ok(());
+            }
             DisplayPanesPrefixInput::Other => {}
         }
 
         loop {
             let Some((event, consumed)) = decode_prompt_input_event(pending_input) else {
+                retain_partial_attached_control_input("display-panes prompt input", pending_input)?;
                 return Ok(());
             };
             pending_input.drain(..consumed);
