@@ -3,7 +3,7 @@
 #[cfg(target_os = "linux")]
 use std::fs;
 use std::fs::File;
-use std::io::{BufRead, BufReader, Read, Write};
+use std::io::{self, BufRead, BufReader, Read, Write};
 #[cfg(target_os = "linux")]
 use std::os::unix::fs::FileTypeExt;
 #[cfg(target_os = "linux")]
@@ -205,6 +205,38 @@ fn spawned_child_reads_and_writes_through_master() -> Result<(), Box<dyn std::er
     spawned.child().kill(Signal::TERM)?;
     let status = spawned.child_mut().wait()?;
     assert!(!status.success());
+
+    Ok(())
+}
+
+#[test]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn write_all_times_out_when_child_stops_draining_stdin() -> Result<(), Box<dyn std::error::Error>> {
+    let mut spawned = ChildCommand::new("/bin/sh")
+        .args(["-c", "stty raw -echo; printf READY; sleep 30"])
+        .size(TerminalSize::new(80, 24))
+        .spawn()?;
+
+    assert_eq!(read_exact_from_master(spawned.master(), 5)?, b"READY");
+
+    spawned.master().io().set_nonblocking()?;
+    let payload = vec![b'x'; 16 * 1024 * 1024];
+    let started = std::time::Instant::now();
+
+    let error = spawned
+        .master()
+        .write_all(&payload)
+        .expect_err("non-draining child should apply PTY write backpressure");
+
+    let _ = spawned.child().kill(Signal::KILL);
+    let _ = spawned.child_mut().wait();
+
+    assert_eq!(error.kind(), io::ErrorKind::TimedOut);
+    assert!(
+        started.elapsed() < Duration::from_secs(5),
+        "write timeout should be bounded, elapsed={:?}",
+        started.elapsed()
+    );
 
     Ok(())
 }
