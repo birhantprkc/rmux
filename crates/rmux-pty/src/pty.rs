@@ -7,6 +7,8 @@ use std::sync::Arc;
 
 use crate::backend;
 #[cfg(all(not(unix), not(windows)))]
+use crate::unsupported_op;
+#[cfg(all(not(unix), not(windows)))]
 use crate::PtyError;
 use crate::{Result, TerminalSize};
 
@@ -83,7 +85,7 @@ impl PtyIo {
 
             #[cfg(not(windows))]
             {
-                Err(PtyError::Unsupported("query pty size"))
+                Err(PtyError::Unsupported(unsupported_op::QUERY_PTY_SIZE))
             }
         }
     }
@@ -105,7 +107,7 @@ impl PtyIo {
             #[cfg(not(windows))]
             {
                 let _ = size;
-                Err(PtyError::Unsupported("resize pty"))
+                Err(PtyError::Unsupported(unsupported_op::RESIZE_PTY))
             }
         }
     }
@@ -130,7 +132,7 @@ impl PtyIo {
 
             #[cfg(not(windows))]
             {
-                Err(PtyError::Unsupported("clone pty io"))
+                Err(PtyError::Unsupported(unsupported_op::CLONE_PTY_IO))
             }
         }
     }
@@ -194,10 +196,22 @@ impl PtyIo {
 
         #[cfg(not(unix))]
         {
-            Err(io::Error::new(
-                io::ErrorKind::Unsupported,
-                "pty I/O is unsupported on this platform",
-            ))
+            #[cfg(windows)]
+            {
+                Err(io::Error::new(
+                    io::ErrorKind::Unsupported,
+                    "set_nonblocking is not applicable to ConPTY pipe handles; \
+                     async readiness is provided by the Tokio named-pipe driver",
+                ))
+            }
+
+            #[cfg(not(windows))]
+            {
+                Err(io::Error::new(
+                    io::ErrorKind::Unsupported,
+                    "pty I/O is unsupported on this platform",
+                ))
+            }
         }
     }
 
@@ -337,7 +351,7 @@ impl PtyPair {
         #[cfg(not(unix))]
         #[cfg(not(windows))]
         {
-            Err(PtyError::Unsupported("open pty pair"))
+            Err(PtyError::Unsupported(unsupported_op::OPEN_PTY_PAIR))
         }
     }
 

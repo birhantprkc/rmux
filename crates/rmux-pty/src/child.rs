@@ -9,6 +9,8 @@ use std::process::ExitStatus;
 use std::process::{Child, Command, Stdio};
 
 #[cfg(all(not(unix), not(windows)))]
+use crate::unsupported_op;
+#[cfg(all(not(unix), not(windows)))]
 use crate::PtyError;
 #[cfg(any(unix, windows))]
 use crate::{backend, PtyPair};
@@ -171,7 +173,7 @@ impl PtyChild {
 
             #[cfg(not(windows))]
             {
-                Err(PtyError::Unsupported("wait for pty child"))
+                Err(PtyError::Unsupported(unsupported_op::WAIT_FOR_PTY_CHILD))
             }
         }
     }
@@ -192,7 +194,9 @@ impl PtyChild {
 
             #[cfg(not(windows))]
             {
-                Err(PtyError::Unsupported("try wait for pty child"))
+                Err(PtyError::Unsupported(
+                    unsupported_op::TRY_WAIT_FOR_PTY_CHILD,
+                ))
             }
         }
     }
@@ -238,7 +242,7 @@ impl PtyChild {
             #[cfg(not(windows))]
             {
                 let _ = signal;
-                Err(PtyError::Unsupported("signal pty foreground process group"))
+                Err(PtyError::Unsupported(unsupported_op::SIGNAL_PTY_FOREGROUND))
             }
         }
     }
@@ -265,7 +269,9 @@ impl PtyChild {
             #[cfg(not(windows))]
             {
                 let _ = signal;
-                Err(PtyError::Unsupported("signal pty session leader"))
+                Err(PtyError::Unsupported(
+                    unsupported_op::SIGNAL_PTY_SESSION_LEADER,
+                ))
             }
         }
     }
@@ -342,6 +348,6 @@ fn spawn_child(_command: ChildCommand) -> Result<SpawnedPty> {
 
     #[cfg(not(windows))]
     {
-        Err(PtyError::Unsupported("spawn pty child"))
+        Err(PtyError::Unsupported(unsupported_op::SPAWN_PTY_CHILD))
     }
 }
