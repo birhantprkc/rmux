@@ -9,6 +9,9 @@ members = [
     "crates/rmux-pty",
     "crates/rmux-client",
     "crates/rmux-server",
+    "crates/rmux-sdk",
+    "crates/ratatui-rmux",
+    "xtask",
 ]
 resolver = "2"
 

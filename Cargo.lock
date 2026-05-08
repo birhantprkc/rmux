@@ -337,6 +337,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "ratatui-rmux"
+version = "0.0.4"
+dependencies = [
+ "rmux-sdk",
+]
+
+[[package]]
 name = "regex"
 version = "1.12.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -451,6 +458,13 @@ dependencies = [
  "tokio",
  "tracing",
  "windows-sys",
+]
+
+[[package]]
+name = "rmux-sdk"
+version = "0.0.4"
+dependencies = [
+ "rmux-proto",
 ]
 
 [[package]]
@@ -793,3 +807,7 @@ checksum = "ae137229bcbd6cdf0f7b80a31df61766145077ddf49416a728b02cb3921ff3fc"
 dependencies = [
  "windows-link",
 ]
+
+[[package]]
+name = "xtask"
+version = "0.0.4"

@@ -1,0 +1,8 @@
+[package]
+name = "ratatui-rmux"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+rmux-sdk = { path = "../rmux-sdk" }
