@@ -3,6 +3,7 @@
 use std::fmt;
 
 use super::builder::RmuxBuilder;
+use crate::transport::DropGuard;
 use crate::RmuxEndpoint;
 
 /// Inert SDK facade for daemon-backed RMUX operations.
@@ -11,6 +12,7 @@ use crate::RmuxEndpoint;
 /// contact a daemon.
 pub struct Rmux {
     endpoint: RmuxEndpoint,
+    _drop_guard: DropGuard,
 }
 
 impl Rmux {
@@ -33,7 +35,10 @@ impl Rmux {
     }
 
     pub(crate) fn from_endpoint(endpoint: RmuxEndpoint) -> Self {
-        Self { endpoint }
+        Self {
+            endpoint,
+            _drop_guard: DropGuard::noop(),
+        }
     }
 }
 

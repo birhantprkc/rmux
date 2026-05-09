@@ -530,3 +530,140 @@ pub struct ListPanesRequest {
 #[cfg(test)]
 #[path = "request/compat_tests.rs"]
 mod compat_tests;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        OptionScopeSelector, PaneTarget, ScopeSelector, SelectPaneDirection, SetOptionMode,
+        SplitDirection,
+    };
+
+    fn alpha() -> SessionName {
+        SessionName::new("alpha").expect("valid session")
+    }
+
+    fn pane() -> PaneTarget {
+        PaneTarget::new(alpha(), 0)
+    }
+
+    #[test]
+    fn request_command_names_cover_extended_aliases_and_internal_tags() {
+        assert_eq!(
+            Request::NewSessionExt(NewSessionExtRequest {
+                session_name: None,
+                working_directory: None,
+                detached: true,
+                size: None,
+                environment: None,
+                group_target: None,
+                attach_if_exists: false,
+                detach_other_clients: false,
+                kill_other_clients: false,
+                flags: None,
+                window_name: None,
+                print_session_info: false,
+                print_format: None,
+                command: None,
+            })
+            .command_name(),
+            "new-session"
+        );
+        assert_eq!(
+            Request::SplitWindowExt(SplitWindowExtRequest {
+                target: SplitWindowTarget::Pane(pane()),
+                direction: SplitDirection::Vertical,
+                environment: None,
+                command: None,
+            })
+            .command_name(),
+            "split-window"
+        );
+        assert_eq!(
+            Request::SelectPaneAdjacent(SelectPaneAdjacentRequest {
+                target: pane(),
+                direction: SelectPaneDirection::Right,
+            })
+            .command_name(),
+            "select-pane"
+        );
+        assert_eq!(
+            Request::SelectPaneMark(SelectPaneMarkRequest {
+                target: pane(),
+                clear: false,
+                title: None,
+            })
+            .command_name(),
+            "select-pane"
+        );
+        assert_eq!(
+            Request::SetOptionByName(SetOptionByNameRequest {
+                scope: OptionScopeSelector::ServerGlobal,
+                name: "status".to_owned(),
+                value: Some("on".to_owned()),
+                mode: SetOptionMode::Replace,
+                only_if_unset: false,
+                unset: false,
+                unset_pane_overrides: false,
+            })
+            .command_name(),
+            "set-option"
+        );
+        assert_eq!(
+            Request::SetHookMutation(SetHookMutationRequest {
+                scope: ScopeSelector::Global,
+                hook: crate::HookName::AfterNewSession,
+                command: None,
+                lifecycle: crate::HookLifecycle::Persistent,
+                append: false,
+                unset: true,
+                run_immediately: false,
+                index: None,
+            })
+            .command_name(),
+            "set-hook"
+        );
+        assert_eq!(
+            Request::AttachSessionExt2(AttachSessionExt2Request {
+                target: Some(alpha()),
+                target_spec: None,
+                detach_other_clients: false,
+                kill_other_clients: false,
+                read_only: false,
+                skip_environment_update: false,
+                flags: None,
+                working_directory: None,
+                client_terminal: crate::ClientTerminalContext::default(),
+                client_size: None,
+            })
+            .command_name(),
+            "attach-session"
+        );
+        assert_eq!(
+            Request::SwitchClientExt3(SwitchClientExt3Request {
+                target_client: None,
+                target: Some("alpha:0.0".to_owned()),
+                key_table: None,
+                last_session: false,
+                next_session: false,
+                previous_session: false,
+                toggle_read_only: false,
+                sort_order: None,
+                skip_environment_update: false,
+                zoom: false,
+            })
+            .command_name(),
+            "switch-client"
+        );
+        assert_eq!(
+            Request::ResolveTarget(ResolveTargetRequest {
+                target: Some("alpha:0.0".to_owned()),
+                target_type: ResolveTargetType::Pane,
+                window_index: false,
+                prefer_unattached: false,
+            })
+            .command_name(),
+            "resolve-target"
+        );
+    }
+}

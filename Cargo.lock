@@ -547,6 +547,7 @@ dependencies = [
  "rmux-proto",
  "serde",
  "serde_json",
+ "tokio",
 ]
 
 [[package]]

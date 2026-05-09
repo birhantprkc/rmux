@@ -224,6 +224,94 @@ pub enum Response {
 }
 
 impl Response {
+    /// Returns the stable public command name for the response variant.
+    ///
+    /// `Error` is not tied to one command on the current wire and therefore
+    /// reports the generic `error` tag.
+    #[must_use]
+    pub const fn command_name(&self) -> &'static str {
+        match self {
+            Self::NewSession(_) => "new-session",
+            Self::HasSession(_) => "has-session",
+            Self::KillSession(_) => "kill-session",
+            Self::NewWindow(_) => "new-window",
+            Self::KillWindow(_) => "kill-window",
+            Self::SelectWindow(_) => "select-window",
+            Self::RenameWindow(_) => "rename-window",
+            Self::NextWindow(_) => "next-window",
+            Self::PreviousWindow(_) => "previous-window",
+            Self::LastWindow(_) => "last-window",
+            Self::ListWindows(_) => "list-windows",
+            Self::MoveWindow(_) => "move-window",
+            Self::SwapWindow(_) => "swap-window",
+            Self::RotateWindow(_) => "rotate-window",
+            Self::SplitWindow(_) => "split-window",
+            Self::SwapPane(_) => "swap-pane",
+            Self::LastPane(_) => "last-pane",
+            Self::JoinPane(_) => "join-pane",
+            Self::BreakPane(_) => "break-pane",
+            Self::KillPane(_) => "kill-pane",
+            Self::SelectLayout(_) => "select-layout",
+            Self::ResizePane(_) => "resize-pane",
+            Self::DisplayPanes(_) => "display-panes",
+            Self::SelectPane(_) => "select-pane",
+            Self::SendKeys(_) => "send-keys",
+            Self::AttachSession(_) => "attach-session",
+            Self::SwitchClient(_) => "switch-client",
+            Self::DetachClient(_) => "detach-client",
+            Self::SetOption(_) | Self::SetOptionByName(_) => "set-option",
+            Self::SetEnvironment(_) => "set-environment",
+            Self::SetHook(_) => "set-hook",
+            Self::Error(_) => "error",
+            Self::NextLayout(_) => "next-layout",
+            Self::PreviousLayout(_) => "previous-layout",
+            Self::ShowOptions(_) => "show-options",
+            Self::ShowEnvironment(_) => "show-environment",
+            Self::SetBuffer(_) => "set-buffer",
+            Self::ShowBuffer(_) => "show-buffer",
+            Self::PasteBuffer(_) => "paste-buffer",
+            Self::ListBuffers(_) => "list-buffers",
+            Self::DeleteBuffer(_) => "delete-buffer",
+            Self::LoadBuffer(_) => "load-buffer",
+            Self::SaveBuffer(_) => "save-buffer",
+            Self::CapturePane(_) => "capture-pane",
+            Self::DisplayMessage(_) => "display-message",
+            Self::RunShell(_) => "run-shell",
+            Self::IfShell(_) => "if-shell",
+            Self::WaitFor(_) => "wait-for",
+            Self::RenameSession(_) => "rename-session",
+            Self::ListSessions(_) => "list-sessions",
+            Self::ListPanes(_) => "list-panes",
+            Self::SourceFile(_) => "source-file",
+            Self::ShowHooks(_) => "show-hooks",
+            Self::BindKey(_) => "bind-key",
+            Self::UnbindKey(_) => "unbind-key",
+            Self::ListKeys(_) => "list-keys",
+            Self::SendPrefix(_) => "send-prefix",
+            Self::ClearHistory(_) => "clear-history",
+            Self::CopyMode(_) => "copy-mode",
+            Self::ControlMode(_) => "control-mode",
+            Self::ClockMode(_) => "clock-mode",
+            Self::ShowMessages(_) => "show-messages",
+            Self::KillServer(_) => "kill-server",
+            Self::LockServer(_) => "lock-server",
+            Self::LockSession(_) => "lock-session",
+            Self::LockClient(_) => "lock-client",
+            Self::ServerAccess(_) => "server-access",
+            Self::RefreshClient(_) => "refresh-client",
+            Self::ListClients(_) => "list-clients",
+            Self::SuspendClient(_) => "suspend-client",
+            Self::ResizeWindow(_) => "resize-window",
+            Self::RespawnWindow(_) => "respawn-window",
+            Self::MovePane(_) => "move-pane",
+            Self::PipePane(_) => "pipe-pane",
+            Self::RespawnPane(_) => "respawn-pane",
+            Self::LinkWindow(_) => "link-window",
+            Self::UnlinkWindow(_) => "unlink-window",
+            Self::ResolveTarget(_) => "resolve-target",
+        }
+    }
+
     /// Returns `true` when this response carries an error payload.
     #[must_use]
     pub const fn is_error(&self) -> bool {
@@ -562,4 +650,38 @@ pub struct WaitForResponse;
 pub struct ErrorResponse {
     /// The shared wire-safe error value.
     pub error: RmuxError,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{OptionScopeSelector, SetOptionMode};
+
+    #[test]
+    fn response_command_names_cover_base_aliases_and_error_tag() {
+        assert_eq!(
+            Response::HasSession(HasSessionResponse { exists: true }).command_name(),
+            "has-session"
+        );
+        assert_eq!(
+            Response::SetOptionByName(SetOptionByNameResponse {
+                scope: OptionScopeSelector::ServerGlobal,
+                name: "status".to_owned(),
+                mode: SetOptionMode::Replace,
+            })
+            .command_name(),
+            "set-option"
+        );
+        assert_eq!(
+            Response::KillServer(KillServerResponse).command_name(),
+            "kill-server"
+        );
+        assert_eq!(
+            Response::Error(ErrorResponse {
+                error: RmuxError::Server("failed".to_owned()),
+            })
+            .command_name(),
+            "error"
+        );
+    }
 }

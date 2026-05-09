@@ -206,6 +206,17 @@ fn body_mentions_crate(body: &str, crate_name: &str) -> bool {
     })
 }
 
+fn dependency_line<'a>(body: &'a str, crate_name: &str) -> Option<&'a str> {
+    body.lines().find(|line| {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            return false;
+        }
+        let key = trimmed.split('=').next().unwrap_or_default().trim();
+        key.trim_matches('"') == crate_name
+    })
+}
+
 #[test]
 fn rmux_sdk_cargo_manifest_does_not_depend_on_internal_crates() {
     let manifest = include_str!("../Cargo.toml");
@@ -229,6 +240,27 @@ fn rmux_sdk_cargo_manifest_does_not_depend_on_internal_crates() {
         saw_normal_dependencies,
         "rmux-sdk Cargo.toml must declare a [dependencies] section",
     );
+}
+
+#[test]
+fn rmux_sdk_tokio_dependency_stays_narrow_async_io_plumbing() {
+    let manifest = include_str!("../Cargo.toml");
+    let sections = parse_manifest_sections(manifest);
+    let dependencies_body = sections
+        .iter()
+        .find(|(header, _)| header == "dependencies")
+        .map(|(_, body)| body.as_str())
+        .expect("rmux-sdk manifest declares [dependencies]");
+
+    let tokio = dependency_line(dependencies_body, "tokio")
+        .expect("rmux-sdk transport actor depends on Tokio async I/O plumbing");
+
+    for forbidden_feature in ["macros", "net", "process", "rt-multi-thread", "time"] {
+        assert!(
+            !tokio.contains(&format!("\"{forbidden_feature}\"")),
+            "rmux-sdk must not enable Tokio feature `{forbidden_feature}` as a normal dependency",
+        );
+    }
 }
 
 #[test]

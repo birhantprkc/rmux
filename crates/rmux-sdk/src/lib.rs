@@ -24,6 +24,9 @@ pub mod snapshot;
 pub mod spec;
 pub mod types;
 
+#[allow(dead_code)]
+pub(crate) mod transport;
+
 pub use command::{RmuxCommand, RmuxCommandKind};
 pub use error::{CollectError, Result, RmuxError};
 pub use events::{
