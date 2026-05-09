@@ -9,6 +9,14 @@ use std::fmt;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 /// A captured pane grid in row-major cell order.
+///
+/// `revision` is a daemon-derived counter that changes whenever the captured
+/// pane state mutates — output, resize, clear, exit, or any other visible
+/// change. Consumers use it as the canonical "did the pane move?" signal;
+/// there is no separate `current_revision()` getter on the SDK pane handle,
+/// because the only authoritative point-in-time revision value is the one
+/// carried by a freshly captured snapshot (or by a revision-carrying
+/// [`PaneEvent`](crate::PaneEvent) variant).
 #[derive(Debug, Default, Clone, PartialEq, Eq, Hash)]
 pub struct PaneSnapshot {
     /// Visible pane width in terminal columns.
@@ -19,13 +27,23 @@ pub struct PaneSnapshot {
     pub cells: Vec<PaneCell>,
     /// Captured cursor coordinates and state.
     pub cursor: PaneCursor,
+    /// Daemon-derived revision counter for this captured pane state.
+    ///
+    /// The producer guarantees that when any observable pane field
+    /// (`cols`, `rows`, `cells`, `cursor`, the underlying process state)
+    /// changes between two captures, the revision changes too. Equal
+    /// revisions therefore mean "nothing observable changed". A captured
+    /// snapshot for an exited or no-longer-listed pane carries a revision
+    /// distinct from any prior live revision.
+    pub revision: u64,
 }
 
 impl PaneSnapshot {
     /// Creates a snapshot after checking the row-major cell count.
     ///
     /// The expected cell count is `rows * cols`. Zero-sized dimensions are
-    /// allowed and therefore expect zero cells.
+    /// allowed and therefore expect zero cells. The revision defaults to `0`;
+    /// use [`Self::with_revision`] to attach a daemon-derived revision.
     pub fn new(
         cols: u16,
         rows: u16,
@@ -37,9 +55,17 @@ impl PaneSnapshot {
             rows,
             cells,
             cursor,
+            revision: 0,
         };
         snapshot.validate_shape()?;
         Ok(snapshot)
+    }
+
+    /// Returns a copy of this snapshot with the supplied revision.
+    #[must_use]
+    pub fn with_revision(mut self, revision: u64) -> Self {
+        self.revision = revision;
+        self
     }
 
     /// Returns the number of row-major cells implied by `rows * cols`.
@@ -215,6 +241,7 @@ impl Serialize for PaneSnapshot {
             rows: self.rows,
             cells: &self.cells,
             cursor: &self.cursor,
+            revision: self.revision,
         }
         .serialize(serializer)
     }
@@ -227,6 +254,7 @@ impl<'de> Deserialize<'de> for PaneSnapshot {
     {
         let fields = PaneSnapshotFields::deserialize(deserializer)?;
         Self::new(fields.cols, fields.rows, fields.cells, fields.cursor)
+            .map(|snapshot| snapshot.with_revision(fields.revision))
             .map_err(serde::de::Error::custom)
     }
 }
@@ -237,6 +265,7 @@ struct PaneSnapshotFieldsRef<'a> {
     rows: u16,
     cells: &'a [PaneCell],
     cursor: &'a PaneCursor,
+    revision: u64,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -246,6 +275,7 @@ struct PaneSnapshotFields {
     rows: u16,
     cells: Vec<PaneCell>,
     cursor: PaneCursor,
+    revision: u64,
 }
 
 /// Error returned when a snapshot's dimensions do not match its cell vector.

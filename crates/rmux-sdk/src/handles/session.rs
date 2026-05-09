@@ -4,10 +4,10 @@ use std::fmt;
 use std::time::Duration;
 
 use crate::transport::TransportClient;
-use crate::{Result, RmuxEndpoint, RmuxError, SessionName, WindowRef};
+use crate::{PaneRef, Result, RmuxEndpoint, RmuxError, SessionName, WindowRef};
 use rmux_proto::{HasSessionRequest, KillSessionRequest, ListSessionsRequest, Request, Response};
 
-use super::Window;
+use super::{Pane, Window};
 
 /// Opaque handle for one live daemon session.
 ///
@@ -106,6 +106,22 @@ impl Session {
     pub fn window(&self, window_index: u32) -> Window {
         Window::new(
             WindowRef::new(self.name.clone(), window_index),
+            self.endpoint.clone(),
+            self.default_timeout,
+            self.transport.clone(),
+        )
+    }
+
+    /// Returns a handle for one pane slot inside a window of this session.
+    ///
+    /// The handle records the exact `(session, window, pane)` triple and
+    /// resolves it through the daemon on every operation, so linked windows
+    /// and grouped sessions keep returning the same stable pane identity
+    /// across sibling views.
+    #[must_use]
+    pub fn pane(&self, window_index: u32, pane_index: u32) -> Pane {
+        Pane::new(
+            PaneRef::new(self.name.clone(), window_index, pane_index),
             self.endpoint.clone(),
             self.default_timeout,
             self.transport.clone(),

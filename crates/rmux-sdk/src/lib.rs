@@ -42,7 +42,7 @@ pub use events::{
     PaneCommandStatus, PaneCommandSummary, PaneDisconnectReason, PaneEvent, PaneExitReason,
     PaneNotification, PanePermissionScope,
 };
-pub use handles::{Rmux, RmuxBuilder, Session, Window, WindowCloseOutcome, WindowPane};
+pub use handles::{Pane, Rmux, RmuxBuilder, Session, Window, WindowCloseOutcome, WindowPane};
 pub use info::{InfoSnapshot, PaneExitState, PaneInfo, PaneProcessState, SessionInfo, WindowInfo};
 pub use input::{
     DetachChord, DetachDetector, DetachOutcome, KeyCode, KeyConversionError, KeyEvent, KeyModifiers,

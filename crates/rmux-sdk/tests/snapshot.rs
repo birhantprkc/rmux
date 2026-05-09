@@ -231,6 +231,7 @@ fn serde_round_trips_preserve_glyphs_colors_attributes_cursor_and_padding() {
         rows: 2,
         cells: vec![cell("x")],
         cursor: PaneCursor::default(),
+        revision: 0,
     };
     let json_err =
         serde_json::to_value(&invalid).expect_err("JSON serialization checks row-major shape");
@@ -319,6 +320,7 @@ fn malformed_or_zero_width_snapshots_do_not_panic_in_helpers() {
         rows: 2,
         cells: vec![cell("x"), PaneCell::padding()],
         cursor: PaneCursor::default(),
+        revision: 0,
     };
 
     assert!(!malformed.is_row_major_shape());
@@ -342,6 +344,7 @@ fn malformed_or_zero_width_snapshots_do_not_panic_in_helpers() {
         rows: 2,
         cells: Vec::new(),
         cursor: PaneCursor::new(0, 0, true, 0),
+        revision: 0,
     };
     assert!(zero_cols.is_row_major_shape());
     assert_eq!(zero_cols.row_cells(0), Some(&[][..]));
@@ -393,6 +396,27 @@ fn wide_cell_owner_helper_rejects_dangling_padding() {
     assert_eq!(dangling.owning_cell_col(0, 0), None);
     assert_eq!(dangling.owning_cell_col(0, 1), Some(1));
     assert_eq!(dangling.owning_cell_col(0, 2), None);
+}
+
+#[test]
+fn revision_round_trips_through_serde_and_with_revision_builder() {
+    let snapshot = PaneSnapshot::new(
+        2,
+        1,
+        vec![cell("R"), cell("V")],
+        PaneCursor::new(0, 1, true, 0),
+    )
+    .expect("valid 2x1 snapshot")
+    .with_revision(0xDEAD_BEEF_CAFE_F00D);
+
+    assert_eq!(snapshot.revision, 0xDEAD_BEEF_CAFE_F00D);
+
+    let decoded = round_trip(snapshot.clone());
+    assert_eq!(decoded.revision, snapshot.revision);
+
+    let sparse = serde_json::from_value::<PaneSnapshot>(serde_json::json!({}))
+        .expect("sparse snapshot defaults including revision");
+    assert_eq!(sparse.revision, 0);
 }
 
 #[test]

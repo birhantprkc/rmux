@@ -12,8 +12,8 @@ use crate::diagnostics::FEATURE_TRANSPORT_UNIX_SOCKET;
 use crate::diagnostics::FEATURE_TRANSPORT_WINDOWS_PIPE;
 use crate::transport::{DropGuard, TransportClient};
 use crate::{
-    bootstrap::discovery, ensure::EnsureSession, handles::Session, Result, RmuxEndpoint, RmuxError,
-    SessionName, Window, WindowRef,
+    bootstrap::discovery, ensure::EnsureSession, handles::Session, Pane, PaneRef, Result,
+    RmuxEndpoint, RmuxError, SessionName, Window, WindowRef,
 };
 use rmux_proto::{
     HandshakeRequest, KillServerRequest, Request, Response, CAPABILITY_DAEMON_SHUTDOWN,
@@ -97,6 +97,27 @@ impl Rmux {
             .connect_resolved_transport_for_operation(&endpoint, timeout)
             .await?;
         Ok(Window::new(
+            target,
+            endpoint,
+            self.configured_default_timeout(),
+            transport,
+        ))
+    }
+
+    /// Returns a daemon-backed handle for an exact pane slot.
+    ///
+    /// Creating the handle connects to the configured daemon endpoint but
+    /// does not require the pane slot to exist yet. Operations on the
+    /// returned handle resolve `(session, window, pane)` against live daemon
+    /// state on every call, so linked windows and grouped sessions report
+    /// the same stable pane identity through every sibling view.
+    pub async fn pane(&self, target: PaneRef) -> Result<Pane> {
+        let endpoint = self.resolved_endpoint()?;
+        let timeout = self.resolved_timeout(None);
+        let transport = self
+            .connect_resolved_transport_for_operation(&endpoint, timeout)
+            .await?;
+        Ok(Pane::new(
             target,
             endpoint,
             self.configured_default_timeout(),
