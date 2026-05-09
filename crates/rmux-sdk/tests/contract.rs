@@ -18,7 +18,7 @@ use std::path::PathBuf;
 
 use rmux_sdk::{
     EnsureSession, EnsureSessionPolicy, Result, Rmux, RmuxBuilder, RmuxEndpoint, RmuxError,
-    Session, SessionName,
+    Session, SessionName, Window, WindowCloseOutcome, WindowPane,
 };
 
 fn assert_send<T: Send>() {}
@@ -58,6 +58,25 @@ fn _assert_bounds() {
     assert_sync::<Session>();
     assert_static::<Session>();
     assert_debug::<Session>();
+
+    assert_send::<Window>();
+    assert_sync::<Window>();
+    assert_static::<Window>();
+    assert_debug::<Window>();
+
+    assert_send::<WindowPane>();
+    assert_sync::<WindowPane>();
+    assert_static::<WindowPane>();
+    assert_clone::<WindowPane>();
+    assert_eq_hash::<WindowPane>();
+    assert_debug::<WindowPane>();
+
+    assert_send::<WindowCloseOutcome>();
+    assert_sync::<WindowCloseOutcome>();
+    assert_static::<WindowCloseOutcome>();
+    assert_clone::<WindowCloseOutcome>();
+    assert_eq_hash::<WindowCloseOutcome>();
+    assert_debug::<WindowCloseOutcome>();
 
     assert_send::<EnsureSession>();
     assert_sync::<EnsureSession>();
@@ -124,6 +143,13 @@ fn session_handle_is_send_sync_static() {
     assert_send::<Session>();
     assert_sync::<Session>();
     assert_static::<Session>();
+}
+
+#[test]
+fn window_handle_is_send_sync_static() {
+    assert_send::<Window>();
+    assert_sync::<Window>();
+    assert_static::<Window>();
 }
 
 #[test]

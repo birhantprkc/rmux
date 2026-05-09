@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use rmux_core::LifecycleEvent;
 use rmux_proto::{ErrorResponse, HookName, PaneTarget, Response, ScopeSelector, Target};
 
@@ -95,17 +97,27 @@ impl RequestHandler {
         };
 
         if matches!(response, Response::KillWindow(_)) {
-            self.sync_session_silence_timers(&session_name).await;
+            let mut affected_sessions = removed_windows
+                .iter()
+                .map(|removed_window| removed_window.target.session_name().clone())
+                .collect::<HashSet<_>>();
+            let _ = affected_sessions.insert(session_name.clone());
+            for affected_session in &affected_sessions {
+                self.sync_session_silence_timers(affected_session).await;
+            }
             for removed_window in removed_windows {
+                let removed_session_name = removed_window.target.session_name().clone();
                 self.emit(LifecycleEvent::WindowUnlinked {
-                    session_name: session_name.clone(),
+                    session_name: removed_session_name,
                     target: Some(removed_window.target),
                     window_id: Some(removed_window.window_id),
                     window_name: Some(removed_window.window_name),
                 })
                 .await;
             }
-            self.refresh_attached_session(&session_name).await;
+            for affected_session in affected_sessions {
+                self.refresh_attached_session(&affected_session).await;
+            }
         }
 
         response

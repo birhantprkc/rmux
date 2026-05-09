@@ -4,8 +4,10 @@ use std::fmt;
 use std::time::Duration;
 
 use crate::transport::TransportClient;
-use crate::{Result, RmuxEndpoint, RmuxError, SessionName};
+use crate::{Result, RmuxEndpoint, RmuxError, SessionName, WindowRef};
 use rmux_proto::{HasSessionRequest, KillSessionRequest, ListSessionsRequest, Request, Response};
+
+use super::Window;
 
 /// Opaque handle for one live daemon session.
 ///
@@ -91,6 +93,23 @@ impl Session {
     /// Lists exact session names currently reported by the daemon.
     pub async fn list_session_names(&self) -> Result<Vec<SessionName>> {
         list_session_names(&self.transport).await
+    }
+
+    /// Returns a handle for a window slot in this session.
+    ///
+    /// The handle is intentionally lazy: it records the exact target and
+    /// verifies liveness only when an operation such as `split`, `panes`,
+    /// `info`, or `close` is invoked. Linked windows and grouped sessions are
+    /// still resolved by the daemon on each operation rather than cached by the
+    /// handle.
+    #[must_use]
+    pub fn window(&self, window_index: u32) -> Window {
+        Window::new(
+            WindowRef::new(self.name.clone(), window_index),
+            self.endpoint.clone(),
+            self.default_timeout,
+            self.transport.clone(),
+        )
     }
 
     /// Destroys this session through the daemon.

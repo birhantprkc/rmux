@@ -482,3 +482,118 @@ async fn kill_window_all_others_prevalidates_the_full_removal_set() {
         .ensure_panes_exist(&alpha, &[window_zero_pane_id])
         .expect("window 0 pane terminal should remain intact");
 }
+
+#[tokio::test]
+async fn kill_window_cleans_grouped_member_window_metadata_before_synchronizing() {
+    let handler = RequestHandler::new();
+    let alpha = session_name("alpha");
+    let beta = session_name("beta");
+    create_session(&handler, "alpha").await;
+    insert_window(&handler, &alpha, 1).await;
+
+    let grouped = handler
+        .handle(Request::NewSessionExt(NewSessionExtRequest {
+            session_name: Some(beta.clone()),
+            working_directory: None,
+            detached: true,
+            size: Some(TerminalSize {
+                cols: 120,
+                rows: 40,
+            }),
+            environment: None,
+            group_target: Some(alpha.clone()),
+            attach_if_exists: false,
+            detach_other_clients: false,
+            kill_other_clients: false,
+            flags: None,
+            window_name: None,
+            print_session_info: false,
+            print_format: None,
+            command: None,
+        }))
+        .await;
+    assert!(matches!(grouped, Response::NewSession(_)));
+
+    let alpha_target = WindowTarget::with_window(alpha.clone(), 1);
+    let beta_target = WindowTarget::with_window(beta.clone(), 1);
+    {
+        let mut state = handler.state.lock().await;
+        state
+            .options
+            .set(
+                ScopeSelector::Window(beta_target.clone()),
+                OptionName::AutomaticRename,
+                "off".to_owned(),
+                SetOptionMode::Replace,
+            )
+            .expect("window option set succeeds");
+        state
+            .hooks
+            .set(
+                ScopeSelector::Window(beta_target.clone()),
+                HookName::WindowLayoutChanged,
+                "display-message beta".to_owned(),
+                HookLifecycle::Persistent,
+            )
+            .expect("window hook set succeeds");
+        state.mark_auto_named_window(&beta, 1);
+
+        assert_eq!(
+            state
+                .options
+                .window_value(&beta_target, OptionName::AutomaticRename),
+            Some("off")
+        );
+        assert_eq!(
+            state
+                .hooks
+                .window_command(&beta_target, HookName::WindowLayoutChanged),
+            Some("display-message beta")
+        );
+        assert!(state.tracks_auto_named_window(&beta, 1));
+    }
+
+    let killed = handler
+        .handle(Request::KillWindow(KillWindowRequest {
+            target: alpha_target.clone(),
+            kill_all_others: false,
+        }))
+        .await;
+    assert_eq!(
+        killed,
+        Response::KillWindow(rmux_proto::KillWindowResponse {
+            target: WindowTarget::with_window(alpha.clone(), 0),
+        })
+    );
+
+    let state = handler.state.lock().await;
+    assert!(
+        state
+            .sessions
+            .session(&alpha)
+            .and_then(|session| session.window_at(1))
+            .is_none(),
+        "killed window should be absent from source session"
+    );
+    assert!(
+        state
+            .sessions
+            .session(&beta)
+            .and_then(|session| session.window_at(1))
+            .is_none(),
+        "grouped session listing should be synchronized after kill-window"
+    );
+    assert_eq!(
+        state
+            .options
+            .window_value(&beta_target, OptionName::AutomaticRename),
+        None
+    );
+    assert_eq!(
+        state
+            .hooks
+            .window_command(&beta_target, HookName::WindowLayoutChanged),
+        None
+    );
+    assert!(!state.tracks_auto_named_window(&beta, 1));
+}

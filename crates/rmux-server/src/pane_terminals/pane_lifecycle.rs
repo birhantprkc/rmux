@@ -200,7 +200,6 @@ impl HandlerState {
         pane_exit_callback: Option<PaneExitCallback>,
     ) -> Result<SplitWindowResponse, RmuxError> {
         let session_name = split_window_session_name(&target).clone();
-        let runtime_session_name = self.runtime_session_name(&session_name);
         let internal_direction = split_window_internal_direction(direction);
         let previous_session = self
             .sessions
@@ -209,6 +208,8 @@ impl HandlerState {
             .ok_or_else(|| session_not_found(&session_name))?;
         let (window_index, new_pane_index, _preview_pane_geometry) =
             preview_split(&self.sessions, &target, internal_direction)?;
+        let runtime_session_name =
+            self.runtime_session_name_for_window(&session_name, window_index);
         let new_pane_id = self.sessions.allocate_pane_id();
         let (session_id, new_pane_id, new_pane_geometry, requested_cwd) = {
             let session = self
@@ -330,7 +331,15 @@ impl HandlerState {
             return Err(error);
         }
 
-        self.synchronize_session_group_from(&session_name)?;
+        let sessions_to_synchronize = self
+            .window_link_slots_for(&session_name, window_index)
+            .into_iter()
+            .map(|slot| slot.session_name)
+            .collect::<Vec<_>>();
+        self.synchronize_linked_window_from_slot(&session_name, window_index)?;
+        for synchronized_session in sessions_to_synchronize {
+            self.synchronize_session_group_from(&synchronized_session)?;
+        }
 
         Ok(SplitWindowResponse {
             pane: PaneTarget::with_window(session_name, window_index, new_pane_index),

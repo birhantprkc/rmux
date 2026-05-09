@@ -134,17 +134,25 @@ impl HandlerState {
         pane_id: PaneId,
     ) -> bool {
         let runtime_session_name = self.runtime_session_name(session_name);
-        if let Some(pipe) = self.remove_pane_pipe(&runtime_session_name, pane_id) {
+        self.remove_pane_terminal_from_runtime(&runtime_session_name, pane_id)
+    }
+
+    pub(in crate::pane_terminals) fn remove_pane_terminal_from_runtime(
+        &mut self,
+        runtime_session_name: &SessionName,
+        pane_id: PaneId,
+    ) -> bool {
+        if let Some(pipe) = self.remove_pane_pipe(runtime_session_name, pane_id) {
             pipe.stop();
         }
-        self.remove_pane_output(&runtime_session_name, pane_id);
-        if let Some(dead_panes) = self.dead_panes.get_mut(&runtime_session_name) {
+        self.remove_pane_output(runtime_session_name, pane_id);
+        if let Some(dead_panes) = self.dead_panes.get_mut(runtime_session_name) {
             let _ = dead_panes.remove(&pane_id);
         }
-        self.clear_attached_submitted_line(&runtime_session_name, pane_id);
+        self.clear_attached_submitted_line(runtime_session_name, pane_id);
         self.clear_marked_pane_if_id(pane_id);
         self.terminals
-            .remove_pane(&runtime_session_name, pane_id)
+            .remove_pane(runtime_session_name, pane_id)
             .is_some()
     }
 

@@ -13,7 +13,7 @@ use crate::diagnostics::FEATURE_TRANSPORT_WINDOWS_PIPE;
 use crate::transport::{DropGuard, TransportClient};
 use crate::{
     bootstrap::discovery, ensure::EnsureSession, handles::Session, Result, RmuxEndpoint, RmuxError,
-    SessionName,
+    SessionName, Window, WindowRef,
 };
 use rmux_proto::{
     HandshakeRequest, KillServerRequest, Request, Response, CAPABILITY_DAEMON_SHUTDOWN,
@@ -82,6 +82,26 @@ impl Rmux {
     pub async fn session(&self, session_name: SessionName) -> Result<Session> {
         self.ensure_session(EnsureSession::named(session_name).reuse_only())
             .await
+    }
+
+    /// Returns a daemon-backed handle for an exact window slot.
+    ///
+    /// Creating the handle connects to the configured daemon endpoint but
+    /// does not require the window slot to exist yet. Operations on the
+    /// returned handle observe the live daemon state for that session/index,
+    /// including linked-window and grouped-session updates.
+    pub async fn window(&self, target: WindowRef) -> Result<Window> {
+        let endpoint = self.resolved_endpoint()?;
+        let timeout = self.resolved_timeout(None);
+        let transport = self
+            .connect_resolved_transport_for_operation(&endpoint, timeout)
+            .await?;
+        Ok(Window::new(
+            target,
+            endpoint,
+            self.configured_default_timeout(),
+            transport,
+        ))
     }
 
     /// Checks the live daemon for an exact session name.
