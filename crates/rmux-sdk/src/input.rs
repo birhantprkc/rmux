@@ -385,7 +385,7 @@ impl DetachDetector {
 
         match self.state {
             DetectorState::Idle => self.process_idle(event, now),
-            DetectorState::PrefixHeld { .. } => self.process_prefix_held(event, now),
+            DetectorState::PrefixHeld { .. } => self.process_prefix_held(event),
         }
     }
 
@@ -419,14 +419,10 @@ impl DetachDetector {
         }
     }
 
-    fn process_prefix_held(&mut self, event: KeyEvent, now: Instant) -> DetachOutcome {
+    fn process_prefix_held(&mut self, event: KeyEvent) -> DetachOutcome {
         if event == self.chord.detach {
             self.state = DetectorState::Idle;
             return DetachOutcome::DetachRequested;
-        }
-        if event == self.chord.prefix {
-            self.state = DetectorState::PrefixHeld { since: now };
-            return DetachOutcome::Forward(vec![self.chord.prefix]);
         }
         self.state = DetectorState::Idle;
         DetachOutcome::Forward(vec![self.chord.prefix, event])

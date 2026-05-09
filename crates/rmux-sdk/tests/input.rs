@@ -190,7 +190,7 @@ fn detach_detector_mismatch_forwards_prefix_then_event_and_resets() {
 }
 
 #[test]
-fn detach_detector_double_prefix_emits_one_prefix_then_re_arms() {
+fn detach_detector_second_prefix_is_a_mismatch_and_resets() {
     let mut det = DetachDetector::new(DetachChord::tmux_default());
     let t0 = Instant::now();
     assert_eq!(det.feed(KeyEvent::ctrl('b'), t0), DetachOutcome::Armed);
@@ -198,15 +198,16 @@ fn detach_detector_double_prefix_emits_one_prefix_then_re_arms() {
     let t1 = t0 + Duration::from_millis(20);
     assert_eq!(
         det.feed(KeyEvent::ctrl('b'), t1),
-        DetachOutcome::Forward(vec![KeyEvent::ctrl('b')]),
-        "double-prefix forwards the first prefix and re-arms",
+        DetachOutcome::Forward(vec![KeyEvent::ctrl('b'), KeyEvent::ctrl('b')]),
+        "a second prefix is a mismatch for the detach chord and must not arm overlap",
     );
-    assert!(det.is_prefix_armed());
+    assert!(!det.is_prefix_armed());
 
     let t2 = t1 + Duration::from_millis(10);
     assert_eq!(
         det.feed(KeyEvent::bare(KeyCode::Char('d')), t2),
-        DetachOutcome::DetachRequested,
+        DetachOutcome::Forward(vec![KeyEvent::bare(KeyCode::Char('d'))]),
+        "prefix-prefix-d must not detach after the prefix mismatch reset",
     );
 }
 
