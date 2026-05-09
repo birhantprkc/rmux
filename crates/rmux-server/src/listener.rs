@@ -318,6 +318,9 @@ impl SocketCleanup {
 impl Drop for SocketCleanup {
     fn drop(&mut self) {
         let _ = remove_socket_file_if_present(&self.socket_path);
+        for lock_path in startup_lock_paths(&self.socket_path) {
+            let _ = remove_regular_file_if_present(&lock_path);
+        }
     }
 }
 
@@ -335,6 +338,36 @@ impl SocketCleanup {
 fn remove_socket_file_if_present(path: &Path) -> io::Result<()> {
     match std::fs::symlink_metadata(path) {
         Ok(metadata) if metadata.file_type().is_socket() => std::fs::remove_file(path),
+        Ok(_) => Ok(()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error),
+    }
+}
+
+#[cfg(unix)]
+fn startup_lock_paths(socket_path: &Path) -> Vec<PathBuf> {
+    let Some(parent) = socket_path.parent() else {
+        return Vec::new();
+    };
+    let Some(file_name) = socket_path.file_name() else {
+        return Vec::new();
+    };
+
+    let mut startup_lock_name = file_name.to_os_string();
+    startup_lock_name.push(".startup-lock");
+    let mut legacy_lock_name = file_name.to_os_string();
+    legacy_lock_name.push(".lock");
+
+    vec![
+        parent.join(startup_lock_name),
+        parent.join(legacy_lock_name),
+    ]
+}
+
+#[cfg(unix)]
+fn remove_regular_file_if_present(path: &Path) -> io::Result<()> {
+    match std::fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.file_type().is_file() => std::fs::remove_file(path),
         Ok(_) => Ok(()),
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
         Err(error) => Err(error),

@@ -478,6 +478,7 @@ dependencies = [
  "rmux-ipc",
  "rmux-proto",
  "rmux-pty",
+ "rmux-sdk",
  "rmux-server",
  "rustix",
  "signal-hook",
