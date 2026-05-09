@@ -497,3 +497,32 @@ async fn resize_pane_rolls_back_geometry_when_terminal_resize_fails() {
         PaneGeometry::new(35, 0, 165, 50)
     );
 }
+
+#[tokio::test]
+async fn resize_pane_noop_validates_target_slot() {
+    let handler = RequestHandler::new();
+    let alpha = session_name("alpha");
+
+    let created = handler
+        .handle(Request::NewSession(NewSessionRequest {
+            session_name: alpha.clone(),
+            detached: true,
+            size: None,
+            environment: None,
+        }))
+        .await;
+    assert!(matches!(created, Response::NewSession(_)));
+
+    let missing_pane_resize = handler
+        .handle(Request::ResizePane(rmux_proto::ResizePaneRequest {
+            target: PaneTarget::new(alpha.clone(), 9),
+            adjustment: ResizePaneAdjustment::NoOp,
+        }))
+        .await;
+    assert_eq!(
+        missing_pane_resize,
+        Response::Error(ErrorResponse {
+            error: RmuxError::invalid_target("alpha:0.9", "pane index does not exist in session"),
+        })
+    );
+}

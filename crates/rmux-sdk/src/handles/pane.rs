@@ -22,7 +22,8 @@ use crate::{
 };
 use rmux_proto::{
     CapturePaneRequest, DisplayMessageRequest, ListPanesRequest, ListSessionsRequest,
-    ListWindowsRequest, Request, Response, Target,
+    ListWindowsRequest, Request, ResizePaneAdjustment, ResizePaneRequest, Response,
+    SendKeysExtRequest, SendKeysRequest, Target,
 };
 
 const SESSION_INFO_FORMAT: &str = "#{session_name}\t#{session_id}";
@@ -136,6 +137,35 @@ impl Pane {
     /// prior live revision.
     pub async fn snapshot(&self) -> Result<PaneSnapshot> {
         pane_snapshot(&self.transport, &self.target).await
+    }
+
+    /// Sends literal UTF-8 text bytes to this pane through the daemon.
+    ///
+    /// The payload is not interpreted as key names, does not expand tmux
+    /// formats, and does not receive an implicit trailing newline. Use
+    /// [`send_key`](Self::send_key) when a tmux key token such as `Enter`
+    /// should be interpreted as a key press.
+    pub async fn send_text(&self, text: impl AsRef<str>) -> Result<()> {
+        send_text(&self.transport, &self.target, text.as_ref()).await
+    }
+
+    /// Sends one tmux-compatible key token to this pane through the daemon.
+    ///
+    /// Tokens keep the daemon's existing `send-keys` semantics: known key
+    /// names such as `Enter` are encoded as keys, while ordinary text tokens
+    /// are forwarded as their bytes by the server.
+    pub async fn send_key(&self, key: impl Into<String>) -> Result<()> {
+        send_key(&self.transport, &self.target, key.into()).await
+    }
+
+    /// Requests an absolute pane size through the daemon.
+    ///
+    /// Only dimensions that differ from the daemon's current pane details are
+    /// sent. The daemon still applies normal `resize-pane` layout rules, so
+    /// linked panes, borders, and neighboring panes can constrain the final
+    /// geometry. No pane identity is cached by this handle.
+    pub async fn resize(&self, size: TerminalSizeSpec) -> Result<()> {
+        resize_to_size(&self.transport, &self.target, size).await
     }
 }
 
@@ -284,6 +314,104 @@ async fn pane_snapshot(client: &TransportClient, target: &PaneRef) -> Result<Pan
         None => return Ok(PaneSnapshot::default()),
     };
     Ok(build_snapshot(&details, &captured))
+}
+
+async fn send_text(client: &TransportClient, target: &PaneRef, text: &str) -> Result<()> {
+    let response = client
+        .request(Request::SendKeysExt(SendKeysExtRequest {
+            target: Some(target.into()),
+            keys: vec![text.to_owned()],
+            expand_formats: false,
+            hex: false,
+            literal: true,
+            dispatch_key_table: false,
+            copy_mode_command: false,
+            forward_mouse_event: false,
+            reset_terminal: false,
+            repeat_count: None,
+        }))
+        .await?;
+
+    match response {
+        Response::SendKeys(_) => Ok(()),
+        response => Err(unexpected_response("send-keys", response)),
+    }
+}
+
+async fn send_key(client: &TransportClient, target: &PaneRef, key: String) -> Result<()> {
+    let response = client
+        .request(Request::SendKeys(SendKeysRequest {
+            target: target.into(),
+            keys: vec![key],
+        }))
+        .await?;
+
+    match response {
+        Response::SendKeys(_) => Ok(()),
+        response => Err(unexpected_response("send-keys", response)),
+    }
+}
+
+async fn resize_to_size(
+    client: &TransportClient,
+    target: &PaneRef,
+    requested: TerminalSizeSpec,
+) -> Result<()> {
+    let current = live_pane_size(client, target).await?;
+    let mut sent_non_noop_adjustment = false;
+
+    if current.cols != requested.cols {
+        request_resize_pane(
+            client,
+            target,
+            ResizePaneAdjustment::AbsoluteWidth {
+                columns: requested.cols,
+            },
+        )
+        .await?;
+        sent_non_noop_adjustment = true;
+    }
+
+    if current.rows != requested.rows {
+        request_resize_pane(
+            client,
+            target,
+            ResizePaneAdjustment::AbsoluteHeight {
+                rows: requested.rows,
+            },
+        )
+        .await?;
+        sent_non_noop_adjustment = true;
+    }
+
+    if !sent_non_noop_adjustment {
+        request_resize_pane(client, target, ResizePaneAdjustment::NoOp).await?;
+    }
+
+    Ok(())
+}
+
+async fn live_pane_size(client: &TransportClient, target: &PaneRef) -> Result<TerminalSizeSpec> {
+    let details = fetch_live_details_or_default(client, target).await?;
+    Ok(TerminalSizeSpec::new(details.cols, details.rows))
+}
+
+async fn request_resize_pane(
+    client: &TransportClient,
+    target: &PaneRef,
+    adjustment: ResizePaneAdjustment,
+) -> Result<()> {
+    let response = client
+        .request(Request::ResizePane(ResizePaneRequest {
+            target: target.into(),
+            adjustment,
+        }))
+        .await?;
+
+    match response {
+        Response::ResizePane(_) => Ok(()),
+        response => Err(unexpected_response("resize-pane", response)),
+    }
 }
 
 fn build_snapshot(details: &LiveDetails, captured: &[u8]) -> PaneSnapshot {

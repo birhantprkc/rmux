@@ -251,20 +251,7 @@ impl RequestHandler {
         let response = {
             let mut state = self.state.lock().await;
             match state.mutate_session_and_resize_terminals(&session_name, |session| {
-                match adjustment {
-                    ResizePaneAdjustment::NoOp => {}
-                    ResizePaneAdjustment::Zoom => {
-                        session.toggle_zoom_in_window(window_index, pane_index)?;
-                    }
-                    ResizePaneAdjustment::AbsoluteWidth { .. }
-                    | ResizePaneAdjustment::AbsoluteHeight { .. }
-                    | ResizePaneAdjustment::Up { .. }
-                    | ResizePaneAdjustment::Down { .. }
-                    | ResizePaneAdjustment::Left { .. }
-                    | ResizePaneAdjustment::Right { .. } => {
-                        session.resize_pane_in_window(window_index, pane_index, adjustment)?;
-                    }
-                }
+                session.resize_pane_in_window(window_index, pane_index, adjustment)?;
 
                 Ok(ResizePaneResponse {
                     target: response_target,
