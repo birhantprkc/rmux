@@ -11,8 +11,9 @@ use std::time::Duration;
 use rmux_core::events::{SubscriptionLimits, DEFAULT_OUTPUT_RING_CAPACITY};
 use rmux_proto::{
     encode_frame, ErrorResponse, FrameDecoder, KillPaneRequest, ListPanesRequest,
-    NewSessionExtRequest, NewSessionRequest, PaneOutputCursorRequest, PaneOutputSubscriptionId,
-    PaneOutputSubscriptionStart, PaneTarget, Request, Response, SendKeysRequest, SessionName,
+    NewSessionExtRequest, NewSessionRequest, PaneOutputCursorRequest, PaneOutputLagResponse,
+    PaneOutputSubscriptionId, PaneOutputSubscriptionStart, PaneSnapshotRequest,
+    PaneSnapshotResponse, PaneTarget, Request, Response, SendKeysRequest, SessionName,
     SubscribePaneOutputRequest, SubscribePaneOutputResponse, TerminalSize,
     UnsubscribePaneOutputRequest,
 };
@@ -272,14 +273,31 @@ fn slow_subscriber_batch_cap_then_lag_resumes_at_oldest_retained_event(
     .map_err(|error| io::Error::other(format!("lag send-keys failed: {error}")))?;
     wait_for_output_sequence(
         &mut sender,
-        target,
+        target.clone(),
         cursor_sequence + u64::try_from(DEFAULT_OUTPUT_RING_CAPACITY)? + 16,
     )
     .map_err(|error| io::Error::other(format!("lag output failed: {error}")))?;
-    let (resume_sequence, newest_sequence) =
-        wait_for_lag(&mut subscriber, subscription.subscription_id)
-            .map_err(|error| io::Error::other(format!("lag cursor failed: {error}")))?;
+    let lag = wait_for_lag(&mut subscriber, subscription.subscription_id)
+        .map_err(|error| io::Error::other(format!("lag cursor failed: {error}")))?;
+    let resume_sequence = lag.lag.resume_sequence;
+    let newest_sequence = lag.lag.newest_sequence;
     assert!(resume_sequence <= newest_sequence);
+    assert!(!lag.lag.recent.bytes.is_empty());
+    assert_eq!(lag.lag.recent.newest_sequence, Some(newest_sequence));
+
+    let snapshot = snapshot_response(&mut sender, target.clone())?;
+    assert_snapshot_shape(&snapshot);
+    assert_ne!(snapshot.revision, 0);
+    assert!(
+        snapshot_text(&snapshot).contains("rmux_subscription_lag"),
+        "fresh snapshot should recover current pane cells after output lag"
+    );
+
+    let listed_sequence = listed_output_sequence(&mut sender, target.clone())?;
+    assert!(
+        listed_sequence > newest_sequence,
+        "list-panes should remain a fresh state lane after output cursor lag"
+    );
 
     let (resume_sequence, cursor) = wait_for_cursor_after_lag(
         &mut subscriber,
@@ -465,7 +483,7 @@ fn wait_for_output_sequence(
 fn wait_for_lag(
     connection: &mut Connection,
     subscription_id: PaneOutputSubscriptionId,
-) -> Result<(u64, u64), Box<dyn Error>> {
+) -> Result<PaneOutputLagResponse, Box<dyn Error>> {
     for _ in 0..200 {
         let response =
             connection.roundtrip(&Request::PaneOutputCursor(PaneOutputCursorRequest {
@@ -476,7 +494,7 @@ fn wait_for_lag(
             Response::PaneOutputLag(lag) => {
                 assert_eq!(lag.cursor.next_sequence, lag.lag.resume_sequence);
                 assert_eq!(lag.cursor.missed_events, lag.lag.missed_events);
-                return Ok((lag.lag.resume_sequence, lag.lag.newest_sequence));
+                return Ok(lag);
             }
             Response::PaneOutputCursor(cursor) => {
                 assert!(cursor.events.len() <= 1);
@@ -487,6 +505,56 @@ fn wait_for_lag(
         thread::sleep(Duration::from_millis(25));
     }
     Err("subscription did not report lag".into())
+}
+
+fn snapshot_response(
+    connection: &mut Connection,
+    target: PaneTarget,
+) -> Result<PaneSnapshotResponse, Box<dyn Error>> {
+    match connection.roundtrip(&Request::PaneSnapshot(PaneSnapshotRequest { target }))? {
+        Response::PaneSnapshot(snapshot) => Ok(snapshot),
+        other => Err(format!("unexpected snapshot response: {other:?}").into()),
+    }
+}
+
+fn assert_snapshot_shape(snapshot: &PaneSnapshotResponse) {
+    assert_eq!(
+        snapshot.cells.len(),
+        usize::from(snapshot.cols) * usize::from(snapshot.rows)
+    );
+    assert!(snapshot.cursor.row < snapshot.rows);
+    assert!(snapshot.cursor.col < snapshot.cols);
+}
+
+fn snapshot_text(snapshot: &PaneSnapshotResponse) -> String {
+    snapshot
+        .cells
+        .chunks(usize::from(snapshot.cols))
+        .map(|row| {
+            row.iter()
+                .filter(|cell| !cell.padding)
+                .map(|cell| cell.text.as_str())
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn listed_output_sequence(
+    connection: &mut Connection,
+    target: PaneTarget,
+) -> Result<u64, Box<dyn Error>> {
+    let response = connection.roundtrip(&Request::ListPanes(ListPanesRequest {
+        target: target.session_name().clone(),
+        format: Some("#{pane_output_sequence}".to_owned()),
+        target_window_index: Some(target.window_index()),
+    }))?;
+    let Response::ListPanes(response) = response else {
+        return Err(format!("unexpected list-panes response: {response:?}").into());
+    };
+    Ok(String::from_utf8(response.output.stdout().to_vec())?
+        .trim()
+        .parse::<u64>()?)
 }
 
 fn wait_for_cursor_after_lag(

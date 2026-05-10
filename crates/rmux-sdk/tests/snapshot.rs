@@ -420,6 +420,48 @@ fn revision_round_trips_through_serde_and_with_revision_builder() {
 }
 
 #[test]
+fn fresh_snapshot_recovery_is_state_only_not_output_replay() {
+    let before = PaneSnapshot::new(2, 1, vec![cell("o"), cell("l")], PaneCursor::default())
+        .expect("valid before snapshot")
+        .with_revision(10);
+    let after = PaneSnapshot::new(
+        2,
+        1,
+        vec![cell("n"), cell("w")],
+        PaneCursor::new(0, 1, true, 1),
+    )
+    .expect("valid after snapshot")
+    .with_revision(27);
+
+    assert!(after.revision > before.revision);
+    assert_eq!(after.visible_text(), "nw");
+    assert_eq!(after.cursor.col, 1);
+
+    let decoded = round_trip(after.clone());
+    assert_eq!(decoded, after);
+
+    let json = serde_json::to_value(&after).expect("snapshot serializes as JSON");
+    let object = json.as_object().expect("snapshot is a JSON object");
+    assert!(object.contains_key("cells"));
+    assert!(object.contains_key("cursor"));
+    assert!(object.contains_key("revision"));
+    for forbidden in [
+        "output_sequence",
+        "recent",
+        "missed_events",
+        "resume_sequence",
+        "raw_output",
+        "bytes",
+        "replayed",
+    ] {
+        assert!(
+            !object.contains_key(forbidden),
+            "fresh snapshot must not claim replay of dropped output through `{forbidden}`",
+        );
+    }
+}
+
+#[test]
 fn visible_text_helpers_preserve_cell_payloads_verbatim() {
     // The daemon's structured snapshot endpoint hands the SDK already-valid
     // UTF-8 cell text — the rmux-core terminal parser is what folds raw PTY

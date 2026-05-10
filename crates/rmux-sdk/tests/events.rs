@@ -465,6 +465,53 @@ fn full_control_block_sequence_round_trips_in_order() {
 }
 
 #[test]
+fn control_lag_event_stays_pane_scoped_and_not_an_output_gap() {
+    let timeline = vec![
+        PaneEvent::Lag {
+            pane_id: PaneId::new(42),
+        },
+        PaneEvent::Disconnect {
+            pane_id: Some(PaneId::new(42)),
+            reason: PaneDisconnectReason::TooFarBehind,
+        },
+    ];
+
+    let decoded = round_trip(&timeline);
+    assert_eq!(decoded, timeline);
+
+    let json = serde_json::to_value(&timeline[0]).expect("lag serializes as JSON");
+    let lag = json
+        .get("lag")
+        .and_then(serde_json::Value::as_object)
+        .expect("lag uses the external control-event tag");
+    assert_eq!(lag.len(), 1);
+    assert!(lag.contains_key("pane_id"));
+    for forbidden in [
+        "expected_sequence",
+        "resume_sequence",
+        "missed_events",
+        "newest_sequence",
+        "recent",
+        "bytes",
+        "replayed",
+    ] {
+        assert!(
+            !lag.contains_key(forbidden),
+            "control lag must not reuse output-subscription gap field `{forbidden}`",
+        );
+    }
+
+    assert!(matches!(decoded[0], PaneEvent::Lag { pane_id } if pane_id == PaneId::new(42)));
+    assert!(matches!(
+        decoded[1],
+        PaneEvent::Disconnect {
+            pane_id: Some(pane_id),
+            reason: PaneDisconnectReason::TooFarBehind,
+        } if pane_id == PaneId::new(42)
+    ));
+}
+
+#[test]
 fn json_uses_external_kebab_tags_for_every_variant() {
     // Pin the externally-tagged JSON layout so downstream tooling that
     // switches on the variant key does not have to re-derive the

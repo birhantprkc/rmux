@@ -10,11 +10,16 @@ use rmux_proto::{
     PaneOutputEvent, PaneOutputLagNotice, PaneOutputLagResponse, PaneOutputSubscriptionId,
     PaneOutputSubscriptionStart, PaneRecentOutput, Response, RmuxError, SubscribePaneOutputRequest,
     SubscribePaneOutputResponse, UnsubscribePaneOutputRequest, UnsubscribePaneOutputResponse,
+    DEFAULT_MAX_FRAME_LENGTH,
 };
 
 use crate::pane_io::PaneOutputReceiver;
 
 use super::RequestHandler;
+
+// Keep lag diagnostics well below the detached RPC frame cap after bincode
+// overhead and the rest of the response envelope are added.
+const MAX_LAG_RECENT_BYTES: usize = DEFAULT_MAX_FRAME_LENGTH / 16;
 
 pub(crate) struct OutputSubscriptionState {
     registry: SubscriptionRegistry,
@@ -190,16 +195,17 @@ impl RequestHandler {
             });
         };
 
+        let items = receiver.try_recv_batch(limit);
         let mut events = Vec::new();
-        for _ in 0..limit {
-            match receiver.try_recv() {
-                Some(OutputCursorItem::Event(event)) => {
+        for item in items {
+            match item {
+                OutputCursorItem::Event(event) => {
                     events.push(PaneOutputEvent {
                         sequence: event.sequence(),
                         bytes: event.into_bytes(),
                     });
                 }
-                Some(OutputCursorItem::Gap(gap)) => {
+                OutputCursorItem::Gap(gap) => {
                     let cursor = cursor_dto(receiver.cursor());
                     return Response::PaneOutputLag(PaneOutputLagResponse {
                         subscription_id: request.subscription_id,
@@ -207,7 +213,6 @@ impl RequestHandler {
                         lag: lag_dto(&gap),
                     });
                 }
-                None => break,
             }
         }
 
@@ -259,15 +264,25 @@ fn cursor_dto(cursor: &OutputCursor) -> PaneOutputCursor {
 }
 
 fn lag_dto(gap: &OutputGap) -> PaneOutputLagNotice {
+    let recent = gap.recent_snapshot();
+    let mut recent_bytes = recent.bytes().to_vec();
+    let truncated = recent_bytes.len() > MAX_LAG_RECENT_BYTES;
+    if truncated {
+        recent_bytes = recent_bytes[recent_bytes.len() - MAX_LAG_RECENT_BYTES..].to_vec();
+    }
     PaneOutputLagNotice {
         expected_sequence: gap.expected_sequence(),
         resume_sequence: gap.resume_sequence(),
         missed_events: gap.missed_events(),
         newest_sequence: gap.newest_sequence(),
         recent: PaneRecentOutput {
-            bytes: Vec::new(),
-            oldest_sequence: None,
-            newest_sequence: None,
+            bytes: recent_bytes,
+            oldest_sequence: if truncated {
+                None
+            } else {
+                recent.oldest_sequence()
+            },
+            newest_sequence: recent.newest_sequence(),
         },
     }
 }
@@ -280,5 +295,121 @@ fn subscription_limit_error(error: SubscriptionLimitError) -> RmuxError {
         SubscriptionLimitError::PerPane { limit } => RmuxError::Server(format!(
             "pane output subscription limit exceeded for pane (limit {limit})"
         )),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Instant;
+
+    use rmux_core::events::{
+        OutputCursor, OutputCursorItem, OutputRing, PaneOutputSubscriptionKey,
+    };
+    use rmux_proto::{PaneId, PaneOutputCursorRequest, Response, SessionName};
+
+    use crate::pane_io::pane_output_channel_with_limits;
+
+    use super::{lag_dto, RequestHandler, MAX_LAG_RECENT_BYTES};
+
+    #[test]
+    fn lag_dto_carries_recent_output_without_replaying_missed_bytes() {
+        let mut ring = OutputRing::new(1, 8);
+        let mut cursor = OutputCursor::new(0);
+        ring.push(b"abcdef".to_vec());
+        ring.push(b"ghijk".to_vec());
+
+        let Some(OutputCursorItem::Gap(gap)) = ring.poll_cursor(&mut cursor) else {
+            panic!("cursor should lag after output ring rotation");
+        };
+        let notice = lag_dto(&gap);
+
+        assert_eq!(notice.expected_sequence, 0);
+        assert_eq!(notice.resume_sequence, 1);
+        assert_eq!(notice.missed_events, 1);
+        assert_eq!(notice.newest_sequence, 1);
+        assert_eq!(notice.recent.bytes, b"defghijk");
+        assert_eq!(notice.recent.oldest_sequence, Some(0));
+        assert_eq!(notice.recent.newest_sequence, Some(1));
+
+        let Some(OutputCursorItem::Event(event)) = ring.poll_cursor(&mut cursor) else {
+            panic!("cursor should resume at the oldest retained output event");
+        };
+        assert_eq!(event.sequence(), notice.resume_sequence);
+        assert_eq!(event.bytes(), b"ghijk");
+        assert_ne!(event.bytes(), notice.recent.bytes.as_slice());
+    }
+
+    #[test]
+    fn lag_dto_trims_recent_hint_under_detached_frame_limit() {
+        let mut ring = OutputRing::new(1, MAX_LAG_RECENT_BYTES + 16);
+        let mut cursor = OutputCursor::new(0);
+        ring.push(vec![b'a'; 16]);
+        ring.push(vec![b'b'; MAX_LAG_RECENT_BYTES + 16]);
+
+        let Some(OutputCursorItem::Gap(gap)) = ring.poll_cursor(&mut cursor) else {
+            panic!("cursor should lag after output ring rotation");
+        };
+        let notice = lag_dto(&gap);
+
+        assert_eq!(notice.recent.bytes.len(), MAX_LAG_RECENT_BYTES);
+        assert!(notice.recent.bytes.iter().all(|byte| *byte == b'b'));
+        assert_eq!(notice.recent.oldest_sequence, None);
+        assert_eq!(notice.recent.newest_sequence, Some(1));
+        assert_eq!(notice.resume_sequence, 1);
+    }
+
+    #[tokio::test]
+    async fn cursor_handler_trims_lag_recent_hint_for_subscription_response() {
+        let handler = RequestHandler::new();
+        let connection_id = 77;
+        let sender = pane_output_channel_with_limits(1, MAX_LAG_RECENT_BYTES + 32);
+        let receiver = sender.subscribe();
+        sender.send(vec![b'a'; 32]);
+        sender.send(vec![b'b'; MAX_LAG_RECENT_BYTES + 32]);
+
+        let subscription_id = {
+            let mut subscriptions = handler
+                .subscriptions
+                .lock()
+                .expect("subscription registry mutex must not be poisoned");
+            let record = subscriptions
+                .registry
+                .subscribe(
+                    connection_id,
+                    PaneOutputSubscriptionKey::new(
+                        SessionName::new("runtime").expect("valid session name"),
+                        PaneId::new(1),
+                    ),
+                    Instant::now(),
+                )
+                .expect("subscription is within limits");
+            let subscription_id = record.id();
+            subscriptions.receivers.insert(subscription_id, receiver);
+            subscription_id
+        };
+
+        let response = handler
+            .handle_pane_output_cursor(
+                connection_id,
+                PaneOutputCursorRequest {
+                    subscription_id,
+                    max_events: Some(8),
+                },
+            )
+            .await;
+        let Response::PaneOutputLag(lag) = response else {
+            panic!("lagged subscription should produce a lag response");
+        };
+
+        assert_eq!(lag.subscription_id, subscription_id);
+        assert_eq!(lag.cursor.next_sequence, 1);
+        assert_eq!(lag.cursor.missed_events, 1);
+        assert_eq!(lag.lag.expected_sequence, 0);
+        assert_eq!(lag.lag.resume_sequence, 1);
+        assert_eq!(lag.lag.missed_events, 1);
+        assert_eq!(lag.lag.recent.bytes.len(), MAX_LAG_RECENT_BYTES);
+        assert!(lag.lag.recent.bytes.iter().all(|byte| *byte == b'b'));
+        assert_eq!(lag.lag.recent.oldest_sequence, None);
+        assert_eq!(lag.lag.recent.newest_sequence, Some(1));
     }
 }

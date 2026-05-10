@@ -25,11 +25,12 @@ use rmux_proto::{
     KillSessionRequest, ListBuffersRequest, NewSessionResponse, OptionName, PaneOutputCursor,
     PaneOutputCursorRequest, PaneOutputCursorResponse, PaneOutputEvent, PaneOutputLagNotice,
     PaneOutputLagResponse, PaneOutputSubscriptionId, PaneOutputSubscriptionStart, PaneRecentOutput,
-    PaneTarget, Request, ResolveTargetRequest, ResolveTargetType, Response, RmuxError,
-    ScopeSelector, SendKeysRequest, SendKeysResponse, SessionName, SetHookRequest, SetOptionMode,
-    SetOptionRequest, SubscribePaneOutputRequest, SubscribePaneOutputResponse, TerminalSize,
-    UnsubscribePaneOutputRequest, UnsubscribePaneOutputResponse, WindowTarget, RMUX_FRAME_MAGIC,
-    RMUX_WIRE_VERSION, V1_FRAME_LEDGER,
+    PaneSnapshotCursor, PaneSnapshotResponse, PaneTarget, Request, ResolveTargetRequest,
+    ResolveTargetType, Response, RmuxError, ScopeSelector, SendKeysRequest, SendKeysResponse,
+    SessionName, SetHookRequest, SetOptionMode, SetOptionRequest, SubscribePaneOutputRequest,
+    SubscribePaneOutputResponse, TerminalSize, UnsubscribePaneOutputRequest,
+    UnsubscribePaneOutputResponse, WindowTarget, RMUX_FRAME_MAGIC, RMUX_WIRE_VERSION,
+    V1_FRAME_LEDGER,
 };
 
 fn fixture_root() -> PathBuf {
@@ -561,6 +562,80 @@ fn cross_section_responses() -> Vec<Response> {
             },
         }),
     ]
+}
+
+#[test]
+fn pane_snapshot_output_and_lag_response_kinds_stay_lane_scoped() {
+    let snapshot = Response::PaneSnapshot(PaneSnapshotResponse {
+        cols: 0,
+        rows: 0,
+        cells: Vec::new(),
+        cursor: PaneSnapshotCursor {
+            row: 0,
+            col: 0,
+            visible: false,
+            style: 0,
+        },
+        revision: 55,
+    });
+    let output_cursor = Response::PaneOutputCursor(PaneOutputCursorResponse {
+        subscription_id: PaneOutputSubscriptionId::new(7),
+        cursor: PaneOutputCursor {
+            next_sequence: 6,
+            missed_events: 0,
+        },
+        events: vec![PaneOutputEvent {
+            sequence: 5,
+            bytes: b"live".to_vec(),
+        }],
+        limited: false,
+    });
+    let output_lag = Response::PaneOutputLag(PaneOutputLagResponse {
+        subscription_id: PaneOutputSubscriptionId::new(7),
+        cursor: PaneOutputCursor {
+            next_sequence: 10,
+            missed_events: 4,
+        },
+        lag: PaneOutputLagNotice {
+            expected_sequence: 6,
+            resume_sequence: 10,
+            missed_events: 4,
+            newest_sequence: 12,
+            recent: PaneRecentOutput {
+                bytes: b"bounded-hint".to_vec(),
+                oldest_sequence: None,
+                newest_sequence: Some(12),
+            },
+        },
+    });
+
+    assert_eq!(frame_kind_for_response(&snapshot).bincode_tag(), 80);
+    assert_eq!(frame_kind_for_response(&output_cursor).bincode_tag(), 83);
+    assert_eq!(frame_kind_for_response(&output_lag).bincode_tag(), 84);
+    assert_ne!(
+        frame_kind_for_response(&snapshot),
+        frame_kind_for_response(&output_cursor)
+    );
+    assert_ne!(
+        frame_kind_for_response(&output_cursor),
+        frame_kind_for_response(&output_lag)
+    );
+
+    let decoded_frame: Response =
+        decode_frame(&encode_frame(&output_lag).expect("lag encodes")).expect("lag frame decodes");
+    assert_eq!(decoded_frame, output_lag);
+    let decoded_bincode: Response =
+        bincode::deserialize(&bincode::serialize(&output_lag).expect("lag serializes as bincode"))
+            .expect("lag deserializes from bincode");
+    assert_eq!(decoded_bincode, output_lag);
+
+    let Response::PaneOutputLag(decoded_lag) = decoded_bincode else {
+        panic!("lag response must not decode as an output cursor or snapshot lane");
+    };
+    assert_eq!(decoded_lag.lag.recent.bytes, b"bounded-hint");
+    assert_eq!(decoded_lag.lag.expected_sequence, 6);
+    assert_eq!(decoded_lag.lag.resume_sequence, 10);
+    assert_eq!(decoded_lag.cursor.next_sequence, 10);
 }
 
 #[test]

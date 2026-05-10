@@ -176,6 +176,31 @@ impl OutputRing {
         Some(OutputCursorItem::Event(event))
     }
 
+    /// Polls up to `limit` items for `cursor` from one retained-ring snapshot.
+    ///
+    /// A lag gap is returned only as the first item. Once the cursor is inside
+    /// the retained range, the same immutable ring view cannot produce a later
+    /// gap in this batch; callers therefore never advance over an event and
+    /// then replace it with a lag response from a concurrently rotated ring.
+    pub fn poll_cursor_batch(
+        &self,
+        cursor: &mut OutputCursor,
+        limit: usize,
+    ) -> Vec<OutputCursorItem> {
+        let mut items = Vec::new();
+        for _ in 0..limit {
+            let Some(item) = self.poll_cursor(cursor) else {
+                break;
+            };
+            let is_gap = matches!(item, OutputCursorItem::Gap(_));
+            items.push(item);
+            if is_gap {
+                break;
+            }
+        }
+        items
+    }
+
     /// Returns the oldest retained event sequence, or the next sequence if empty.
     #[must_use]
     pub fn oldest_sequence(&self) -> u64 {
@@ -446,6 +471,40 @@ mod tests {
         assert_eq!(event.sequence(), 4);
         assert_eq!(event.bytes(), b"4");
         assert_eq!(cursor.next_sequence(), 5);
+    }
+
+    #[test]
+    fn batch_poll_reports_gap_only_for_lagged_cursor() {
+        let mut ring = OutputRing::new(2, 16);
+        let mut stale = OutputCursor::new(0);
+        let mut aligned = OutputCursor::new(2);
+        for index in 0..4 {
+            ring.push(format!("{index}").into_bytes());
+        }
+
+        let stale_batch = ring.poll_cursor_batch(&mut stale, 8);
+        assert_eq!(stale_batch.len(), 1);
+        let OutputCursorItem::Gap(gap) = &stale_batch[0] else {
+            panic!("stale cursor should report its own output gap");
+        };
+        assert_eq!(gap.expected_sequence(), 0);
+        assert_eq!(gap.resume_sequence(), 2);
+        assert_eq!(gap.missed_events(), 2);
+        assert_eq!(stale.next_sequence(), 2);
+
+        let aligned_batch = ring.poll_cursor_batch(&mut aligned, 8);
+        let sequences = aligned_batch
+            .iter()
+            .map(|item| match item {
+                OutputCursorItem::Event(event) => event.sequence(),
+                OutputCursorItem::Gap(gap) => {
+                    panic!("aligned cursor must not inherit stale cursor lag: {gap:?}")
+                }
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(sequences, vec![2, 3]);
+        assert_eq!(aligned.missed_events(), 0);
+        assert_eq!(aligned.next_sequence(), ring.next_sequence());
     }
 
     #[test]

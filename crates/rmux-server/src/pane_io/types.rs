@@ -287,6 +287,14 @@ impl PaneOutputReceiver {
             .poll_cursor(&mut self.cursor)
     }
 
+    pub(crate) fn try_recv_batch(&mut self, limit: usize) -> Vec<OutputCursorItem> {
+        self.inner
+            .ring
+            .lock()
+            .expect("pane output ring mutex must not be poisoned")
+            .poll_cursor_batch(&mut self.cursor, limit)
+    }
+
     pub(crate) const fn cursor(&self) -> &OutputCursor {
         &self.cursor
     }
