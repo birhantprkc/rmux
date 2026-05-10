@@ -3,9 +3,11 @@ name = "rmux-core"
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
+license.workspace = true
+repository.workspace = true
 
 [dependencies]
 chrono = { version = "0.4.42", default-features = false, features = ["clock", "std"] }
 regex = "1.12.2"
-rmux-proto = { path = "../rmux-proto" }
+rmux-proto = { path = "../rmux-proto", version = "0.1.0" }
 unicode-width = "0.1"

@@ -1,8 +1,11 @@
 [package]
 name = "ratatui-rmux"
-version.workspace = true
+version = "0.1.0"
 edition.workspace = true
-publish.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Ratatui integration crate for the RMUX terminal multiplexer that paints daemon-backed pane state into a ratatui Buffer."
+publish = true
 
 # Direct dependencies are intentionally minimal: `rmux-sdk` is the only
 # RMUX integration boundary, and `ratatui-core` is the only ratatui
@@ -11,4 +14,4 @@ publish.workspace = true
 # `scripts/ratatui-rmux-budget.sh`.
 [dependencies]
 ratatui-core = { version = "0.1.0", default-features = false, features = ["std"] }
-rmux-sdk = { path = "../rmux-sdk" }
+rmux-sdk = { path = "../rmux-sdk", version = "0.1.0" }

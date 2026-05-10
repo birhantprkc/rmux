@@ -3,6 +3,8 @@ name = "rmux-pty"
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
+license.workspace = true
+repository.workspace = true
 
 [dependencies]
 rmux-types = { path = "../rmux-types" }

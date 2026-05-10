@@ -529,7 +529,7 @@ dependencies = [
 
 [[package]]
 name = "ratatui-rmux"
-version = "0.0.4"
+version = "0.1.0"
 dependencies = [
  "ratatui-core",
  "rmux-sdk",
@@ -575,7 +575,7 @@ checksum = "dc897dd8d9e8bd1ed8cdad82b5966c3e0ecae09fb1907d58efaa013543185d0a"
 
 [[package]]
 name = "rmux"
-version = "0.0.4"
+version = "0.0.6"
 dependencies = [
  "clap",
  "embed-manifest",
@@ -594,7 +594,7 @@ dependencies = [
 
 [[package]]
 name = "rmux-client"
-version = "0.0.4"
+version = "0.0.6"
 dependencies = [
  "libc",
  "rmux-core",
@@ -611,7 +611,7 @@ dependencies = [
 
 [[package]]
 name = "rmux-core"
-version = "0.0.4"
+version = "0.0.6"
 dependencies = [
  "chrono",
  "regex",
@@ -621,7 +621,7 @@ dependencies = [
 
 [[package]]
 name = "rmux-ipc"
-version = "0.0.4"
+version = "0.0.6"
 dependencies = [
  "libc",
  "rmux-os",
@@ -633,7 +633,7 @@ dependencies = [
 
 [[package]]
 name = "rmux-os"
-version = "0.0.4"
+version = "0.0.6"
 dependencies = [
  "libc",
  "rmux-types",
@@ -643,7 +643,7 @@ dependencies = [
 
 [[package]]
 name = "rmux-proto"
-version = "0.0.4"
+version = "0.1.0"
 dependencies = [
  "bincode",
  "rmux-types",
@@ -653,7 +653,7 @@ dependencies = [
 
 [[package]]
 name = "rmux-pty"
-version = "0.0.4"
+version = "0.0.6"
 dependencies = [
  "libc",
  "rmux-types",
@@ -665,7 +665,7 @@ dependencies = [
 
 [[package]]
 name = "rmux-sdk"
-version = "0.0.4"
+version = "0.1.0"
 dependencies = [
  "bincode",
  "crossterm",
@@ -682,7 +682,7 @@ dependencies = [
 
 [[package]]
 name = "rmux-server"
-version = "0.0.4"
+version = "0.0.6"
 dependencies = [
  "chrono",
  "glob",
@@ -699,7 +699,7 @@ dependencies = [
 
 [[package]]
 name = "rmux-types"
-version = "0.0.4"
+version = "0.0.6"
 dependencies = [
  "serde",
 ]
@@ -1115,7 +1115,7 @@ dependencies = [
 
 [[package]]
 name = "xtask"
-version = "0.0.4"
+version = "0.0.6"
 
 [[package]]
 name = "zmij"

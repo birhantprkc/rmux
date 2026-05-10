@@ -1,16 +1,23 @@
 [package]
 name = "rmux-sdk"
-version.workspace = true
+version = "0.1.0"
 edition.workspace = true
-publish.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Public, daemon-backed Rust SDK for the RMUX terminal multiplexer (facade, ensure-session, snapshots, events, detach helpers)."
+publish = true
 
 [dependencies]
 crossterm = { version = "0.29.0", default-features = false, features = [
     "events",
 ], optional = true }
-rmux-ipc = { path = "../rmux-ipc" }
-rmux-os = { path = "../rmux-os" }
-rmux-proto = { path = "../rmux-proto" }
+# `rmux-ipc` and `rmux-os` are workspace-internal and stay `publish = false`.
+# We pin version requirements here so cargo can validate the manifest shape
+# before registry resolution; dry-run upload is blocked until a release
+# promotes those crates to publishable.
+rmux-ipc = { path = "../rmux-ipc", version = "0.0.6" }
+rmux-os = { path = "../rmux-os", version = "0.0.6" }
+rmux-proto = { path = "../rmux-proto", version = "0.1.0" }
 serde = { version = "1.0", features = ["derive"] }
 tokio = { version = "1.48.0", features = ["io-util", "rt", "sync"] }
 
