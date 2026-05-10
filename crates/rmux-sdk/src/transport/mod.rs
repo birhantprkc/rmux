@@ -53,6 +53,35 @@ impl TransportClient {
         response.await.map_err(|_| self.closed_error(&operation))?
     }
 
+    pub(crate) async fn armed_request(&self, request: Request) -> Result<PendingResponse> {
+        let operation = request_operation(&request);
+        if let Some(failure) = self.state.terminal_failure() {
+            return Err(failure.to_error(&operation));
+        }
+
+        let (reply, response) = oneshot::channel();
+        let (armed, armed_response) = oneshot::channel();
+        self.commands
+            .send(ActorMessage::ArmedRequest {
+                request,
+                operation: operation.clone(),
+                reply,
+                armed,
+            })
+            .await
+            .map_err(|_| self.closed_error(&operation))?;
+
+        armed_response
+            .await
+            .map_err(|_| self.closed_error(&operation))?
+            .map_err(|failure| failure.to_error(&operation))?;
+
+        Ok(PendingResponse {
+            operation,
+            response,
+        })
+    }
+
     pub(crate) async fn shutdown(&self) -> Result<()> {
         if let Some(failure) = self.state.terminal_failure() {
             if failure.is_eof() {
@@ -133,15 +162,20 @@ impl DropGuard {
     pub(crate) fn disarm(&mut self) {
         self.action = DropAction::None;
     }
-}
 
-impl Drop for DropGuard {
-    fn drop(&mut self) {
+    pub(crate) fn trigger(&mut self) {
         if let DropAction::BestEffort { client, request } = &mut self.action {
             if let Some(request) = request.take() {
                 client.try_send_best_effort(*request);
             }
         }
+        self.action = DropAction::None;
+    }
+}
+
+impl Drop for DropGuard {
+    fn drop(&mut self) {
+        self.trigger();
     }
 }
 
@@ -161,6 +195,12 @@ enum ActorMessage {
         operation: String,
         reply: oneshot::Sender<Result<Response>>,
     },
+    ArmedRequest {
+        request: Request,
+        operation: String,
+        reply: oneshot::Sender<Result<Response>>,
+        armed: oneshot::Sender<core::result::Result<(), TransportFailure>>,
+    },
     BestEffort {
         request: Request,
     },
@@ -173,6 +213,28 @@ enum ActorEvent {
     Command(ActorMessage),
     CommandsClosed,
     Response(core::result::Result<Response, TransportFailure>),
+}
+
+pub(crate) struct PendingResponse {
+    operation: String,
+    response: oneshot::Receiver<Result<Response>>,
+}
+
+impl std::future::Future for PendingResponse {
+    type Output = Result<Response>;
+
+    fn poll(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Self::Output> {
+        match std::pin::Pin::new(&mut self.response).poll(cx) {
+            std::task::Poll::Ready(Ok(result)) => std::task::Poll::Ready(result),
+            std::task::Poll::Ready(Err(_)) => std::task::Poll::Ready(Err(
+                TransportFailure::actor_closed().to_error(&self.operation),
+            )),
+            std::task::Poll::Pending => std::task::Poll::Pending,
+        }
+    }
 }
 
 struct PendingCall {
@@ -281,6 +343,33 @@ where
                             break;
                         }
                     }
+                    ActorMessage::ArmedRequest {
+                        request,
+                        operation,
+                        reply,
+                        armed,
+                    } => {
+                        let command_name = request.command_name();
+                        let frame = match encode_request(&request) {
+                            Ok(frame) => frame,
+                            Err(failure) => {
+                                let _ = reply.send(Err(failure.to_error(&operation)));
+                                let _ = armed.send(Err(failure));
+                                continue;
+                            }
+                        };
+                        pending.push_back(PendingCall::reply(
+                            command_name,
+                            operation.clone(),
+                            reply,
+                        ));
+                        if let Err(failure) = write_frame(&mut writer, &frame).await {
+                            let _ = armed.send(Err(failure.clone()));
+                            fail_transport(&mut pending, &state, failure);
+                            break;
+                        }
+                        let _ = armed.send(Ok(()));
+                    }
                     ActorMessage::BestEffort { request } => {
                         let command_name = request.command_name();
                         let Ok(frame) = encode_request(&request) else {
@@ -359,6 +448,16 @@ fn reject_command_after_shutdown(message: ActorMessage) {
         } => {
             let failure = TransportFailure::actor_closed();
             let _ = reply.send(Err(failure.to_error(&operation)));
+        }
+        ActorMessage::ArmedRequest {
+            operation,
+            reply,
+            armed,
+            ..
+        } => {
+            let failure = TransportFailure::actor_closed();
+            let _ = reply.send(Err(failure.to_error(&operation)));
+            let _ = armed.send(Err(failure));
         }
         ActorMessage::BestEffort { .. } => {}
         ActorMessage::Shutdown { reply } => {

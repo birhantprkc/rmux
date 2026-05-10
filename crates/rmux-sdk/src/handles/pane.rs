@@ -17,9 +17,9 @@ use crate::events::streams::{PaneLineStream, PaneOutputStart, PaneOutputStream};
 use crate::handles::session::unexpected_response;
 use crate::transport::TransportClient;
 use crate::{
-    InfoSnapshot, PaneAttributes, PaneCell, PaneColor, PaneCursor, PaneExitState, PaneGlyph,
-    PaneId, PaneInfo, PaneProcessState, PaneRef, PaneSnapshot, Result, RmuxEndpoint, RmuxError,
-    SessionId, SessionInfo, TerminalSizeSpec, WindowId, WindowInfo,
+    ArmedWait, InfoSnapshot, PaneAttributes, PaneCell, PaneColor, PaneCursor, PaneExitState,
+    PaneGlyph, PaneId, PaneInfo, PaneProcessState, PaneRef, PaneSnapshot, Result, RmuxEndpoint,
+    RmuxError, SessionId, SessionInfo, TerminalSizeSpec, WindowId, WindowInfo,
 };
 use rmux_proto::{
     DisplayMessageRequest, ListPanesRequest, ListSessionsRequest, ListWindowsRequest,
@@ -108,6 +108,16 @@ impl Pane {
         crate::wait::wait_for_bytes(self, bytes.as_ref().to_vec()).await
     }
 
+    /// Arms a daemon-backed wait for future raw pane output bytes.
+    ///
+    /// The returned [`ArmedWait`] is created only after the SDK has sent the
+    /// daemon wait request with a live-tail cursor, so it cannot match retained
+    /// history from before this call. Await the handle after triggering the
+    /// output that should satisfy the wait.
+    pub async fn wait_for_next(&self, bytes: impl AsRef<[u8]>) -> Result<ArmedWait> {
+        crate::wait::wait_for_next_bytes(self, bytes.as_ref().to_vec()).await
+    }
+
     /// Waits until the pane's rendered snapshot text contains non-empty `text`.
     ///
     /// This is a client-side text wait over fresh [`Self::snapshot`]
@@ -118,6 +128,15 @@ impl Pane {
     /// cancellation requests.
     pub async fn wait_for_text(&self, text: impl AsRef<str>) -> Result<()> {
         crate::wait::wait_for_text(self, text.as_ref().to_owned()).await
+    }
+
+    /// Arms a daemon-backed wait for future pane output containing `text`.
+    ///
+    /// This matches the UTF-8 bytes of `text` in raw output emitted after the
+    /// wait is armed. It does not inspect existing snapshots or retained output
+    /// history.
+    pub async fn wait_for_text_next(&self, text: impl AsRef<str>) -> Result<ArmedWait> {
+        crate::wait::wait_for_text_next(self, text.as_ref().to_owned()).await
     }
 
     /// Subscribes to the live raw pane output as a typed byte stream.

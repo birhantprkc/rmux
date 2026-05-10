@@ -2,6 +2,8 @@
 
 use std::future::Future;
 use std::io;
+use std::pin::Pin;
+use std::task::{Context, Poll};
 use std::time::Duration;
 
 use rmux_proto::{
@@ -10,12 +12,95 @@ use rmux_proto::{
 };
 
 use crate::handles::{connect_transport_to_endpoint, Pane};
-use crate::transport::DropGuard;
+use crate::transport::{DropGuard, PendingResponse};
 use crate::{Result, RmuxError};
 
 const WAIT_FOR_BYTES_OPERATION: &str = "wait for pane output bytes";
 const WAIT_FOR_TEXT_OPERATION: &str = "wait for pane snapshot text";
+const WAIT_FOR_NEXT_BYTES_OPERATION: &str = "wait for next pane output bytes";
+const WAIT_FOR_TEXT_NEXT_OPERATION: &str = "wait for next pane output text";
 const TEXT_POLL_INTERVAL: Duration = Duration::from_millis(25);
+
+/// A daemon-armed wait for future pane output.
+///
+/// Values are returned by [`Pane::wait_for_next`](crate::Pane::wait_for_next)
+/// and [`Pane::wait_for_text_next`](crate::Pane::wait_for_text_next) after the
+/// SDK has written the daemon wait request. Awaiting the value completes when
+/// that daemon wait reports a match. Dropping it before a match sends a
+/// best-effort SDK wait cancellation request; cancellation never closes panes,
+/// sessions, child processes, or the daemon.
+#[must_use = "armed waits do nothing useful unless awaited or explicitly dropped"]
+pub struct ArmedWait {
+    response: PendingResponse,
+    wait_id: SdkWaitId,
+    cancel_guard: DropGuard,
+    timeout: Option<Pin<Box<tokio::time::Sleep>>>,
+    timeout_duration: Option<Duration>,
+    operation: &'static str,
+}
+
+impl ArmedWait {
+    fn new(
+        response: PendingResponse,
+        wait_id: SdkWaitId,
+        cancel_guard: DropGuard,
+        operation: &'static str,
+        timeout: Option<Duration>,
+    ) -> Self {
+        Self {
+            response,
+            wait_id,
+            cancel_guard,
+            timeout: timeout.map(|duration| Box::pin(tokio::time::sleep(duration))),
+            timeout_duration: timeout,
+            operation,
+        }
+    }
+}
+
+impl Future for ArmedWait {
+    type Output = Result<()>;
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        match Pin::new(&mut self.response).poll(cx) {
+            Poll::Ready(Ok(response)) => {
+                if sdk_wait_response_disarms_cancel(&response, self.wait_id) {
+                    self.cancel_guard.disarm();
+                }
+                let result = sdk_wait_response_to_result(response, self.wait_id);
+                return Poll::Ready(result);
+            }
+            Poll::Ready(Err(error)) => {
+                if sdk_wait_error_disarms_cancel(&error) {
+                    self.cancel_guard.disarm();
+                }
+                return Poll::Ready(Err(error));
+            }
+            Poll::Pending => {}
+        }
+
+        if let Some(duration) = self.timeout_duration {
+            if let Some(timeout) = self.timeout.as_mut() {
+                if timeout.as_mut().poll(cx).is_ready() {
+                    self.cancel_guard.trigger();
+                    return Poll::Ready(Err(wait_timeout_error(self.operation, duration)));
+                }
+            }
+        }
+
+        Poll::Pending
+    }
+}
+
+impl std::fmt::Debug for ArmedWait {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("ArmedWait")
+            .field("wait_id", &self.wait_id)
+            .field("operation", &self.operation)
+            .finish_non_exhaustive()
+    }
+}
 
 pub(crate) async fn wait_for_bytes(pane: &Pane, bytes: Vec<u8>) -> Result<()> {
     if bytes.is_empty() {
@@ -31,6 +116,17 @@ pub(crate) async fn wait_for_bytes(pane: &Pane, bytes: Vec<u8>) -> Result<()> {
         wait_for_bytes_without_timeout(pane, bytes, timeout),
     )
     .await
+}
+
+pub(crate) async fn wait_for_next_bytes(pane: &Pane, bytes: Vec<u8>) -> Result<ArmedWait> {
+    if bytes.is_empty() {
+        return Err(RmuxError::protocol(ProtoError::Server(
+            "SDK wait bytes must not be empty".to_owned(),
+        )));
+    }
+
+    let timeout = resolved_wait_timeout(pane.configured_default_timeout());
+    arm_sdk_wait(pane, bytes, WAIT_FOR_NEXT_BYTES_OPERATION, timeout).await
 }
 
 pub(crate) async fn wait_for_text(pane: &Pane, text: String) -> Result<()> {
@@ -49,6 +145,23 @@ pub(crate) async fn wait_for_text(pane: &Pane, text: String) -> Result<()> {
     .await
 }
 
+pub(crate) async fn wait_for_text_next(pane: &Pane, text: String) -> Result<ArmedWait> {
+    if text.is_empty() {
+        return Err(RmuxError::protocol(ProtoError::Server(
+            "SDK wait text must not be empty".to_owned(),
+        )));
+    }
+
+    let timeout = resolved_wait_timeout(pane.configured_default_timeout());
+    arm_sdk_wait(
+        pane,
+        text.into_bytes(),
+        WAIT_FOR_TEXT_NEXT_OPERATION,
+        timeout,
+    )
+    .await
+}
+
 async fn wait_for_bytes_without_timeout(
     pane: &Pane,
     bytes: Vec<u8>,
@@ -60,7 +173,7 @@ async fn wait_for_bytes_without_timeout(
     let cancel_client = connect_transport_to_endpoint(pane.endpoint(), timeout).await?;
     let mut cancel_guard = DropGuard::best_effort(cancel_client, cancel_request);
 
-    let result = pane
+    let response = pane
         .transport()
         .request(Request::SdkWaitForOutput(SdkWaitForOutputRequest {
             owner_id,
@@ -71,8 +184,55 @@ async fn wait_for_bytes_without_timeout(
         }))
         .await;
 
-    cancel_guard.disarm();
-    sdk_wait_response_to_result(result?, wait_id)
+    let response = match response {
+        Ok(response) => response,
+        Err(error) => {
+            if sdk_wait_error_disarms_cancel(&error) {
+                cancel_guard.disarm();
+            }
+            return Err(error);
+        }
+    };
+
+    if sdk_wait_response_disarms_cancel(&response, wait_id) {
+        cancel_guard.disarm();
+    }
+    sdk_wait_response_to_result(response, wait_id)
+}
+
+async fn arm_sdk_wait(
+    pane: &Pane,
+    bytes: Vec<u8>,
+    operation: &'static str,
+    timeout: Option<Duration>,
+) -> Result<ArmedWait> {
+    let wait_client = connect_transport_to_endpoint(pane.endpoint(), timeout).await?;
+    let cancel_client = connect_transport_to_endpoint(pane.endpoint(), timeout).await?;
+    let owner_id = wait_client.sdk_wait_owner_id();
+    let wait_id = wait_client.allocate_sdk_wait_id();
+    let cancel_request = Request::CancelSdkWait(CancelSdkWaitRequest { owner_id, wait_id });
+    let cancel_guard = DropGuard::best_effort(cancel_client, cancel_request);
+
+    let response = with_wait_timeout(
+        operation,
+        timeout,
+        wait_client.armed_request(Request::SdkWaitForOutput(SdkWaitForOutputRequest {
+            owner_id,
+            wait_id,
+            target: pane.target().into(),
+            bytes,
+            start: PaneOutputSubscriptionStart::Now,
+        })),
+    )
+    .await?;
+
+    Ok(ArmedWait::new(
+        response,
+        wait_id,
+        cancel_guard,
+        operation,
+        timeout,
+    ))
 }
 
 async fn wait_for_text_without_timeout(pane: &Pane, text: String) -> Result<()> {
@@ -118,6 +278,20 @@ fn wait_timeout_error(operation: &'static str, timeout: Duration) -> RmuxError {
     )
 }
 
+fn sdk_wait_response_disarms_cancel(response: &Response, expected_wait_id: SdkWaitId) -> bool {
+    matches!(
+        response,
+        Response::SdkWaitForOutput(response) if response.wait_id == expected_wait_id
+    )
+}
+
+fn sdk_wait_error_disarms_cancel(error: &RmuxError) -> bool {
+    matches!(
+        error,
+        RmuxError::Protocol { .. } | RmuxError::Unsupported { .. }
+    )
+}
+
 fn sdk_wait_response_to_result(response: Response, expected_wait_id: SdkWaitId) -> Result<()> {
     match response {
         Response::SdkWaitForOutput(response)
@@ -136,10 +310,18 @@ fn sdk_wait_response_to_result(response: Response, expected_wait_id: SdkWaitId) 
             ))))
         }
         Response::SdkWaitForOutput(response) => {
+            if response.wait_id != expected_wait_id {
+                return Err(RmuxError::protocol(ProtoError::Server(format!(
+                    "SDK wait response id {} did not match request id {}",
+                    response.wait_id.as_u64(),
+                    expected_wait_id.as_u64()
+                ))));
+            }
+
             Err(RmuxError::protocol(ProtoError::Server(format!(
-                "SDK wait response id {} did not match request id {}",
+                "SDK wait {} completed with unexpected outcome {:?}",
                 response.wait_id.as_u64(),
-                expected_wait_id.as_u64()
+                response.outcome
             ))))
         }
         response => Err(crate::handles::session::unexpected_response(

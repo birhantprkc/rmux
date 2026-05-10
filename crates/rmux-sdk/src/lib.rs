@@ -62,3 +62,4 @@ pub use types::{
     PaneId, PaneRef, RmuxEndpoint, SessionId, SessionName, TargetRef, TerminalSizeSpec, WindowId,
     WindowRef,
 };
+pub use wait::ArmedWait;
