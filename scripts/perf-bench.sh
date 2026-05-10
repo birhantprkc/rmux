@@ -3,7 +3,7 @@ set -euo pipefail
 
 iterations=30
 line_count=10000
-binary="target/release/rmux"
+binary=""
 output_dir="target/perf"
 skip_build=0
 fail_on_budget=0
@@ -49,8 +49,31 @@ USAGE
     esac
 done
 
+is_positive_integer() {
+    case "$1" in
+        ''|*[!0-9]*)
+            return 1
+            ;;
+    esac
+    [ "$1" -gt 0 ]
+}
+
+if ! is_positive_integer "$iterations"; then
+    echo "--iterations must be a positive integer, got: $iterations" >&2
+    exit 2
+fi
+
+if ! is_positive_integer "$line_count"; then
+    echo "--line-count must be a positive integer, got: $line_count" >&2
+    exit 2
+fi
+
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$repo_root"
+
+if [ -z "$binary" ]; then
+    binary="${CARGO_TARGET_DIR:-target}/release/rmux"
+fi
 
 if [ "$skip_build" -eq 0 ]; then
     cargo build --locked --release
@@ -173,6 +196,15 @@ sample_diagnose() {
     rm -f "$output_file"
 }
 
+sample_daemon_startup() {
+    local socket output_file
+    socket="$(unique_socket daemon-startup)"
+    output_file="$(mktemp)"
+    run_timed_ms "$output_file" -L "$socket" start-server
+    cleanup_socket "$socket"
+    rm -f "$output_file"
+}
+
 sample_new_session_sh() {
     local socket output_file
     socket="$(unique_socket new-sh)"
@@ -278,12 +310,13 @@ record_metric() {
 }
 
 record_metric "diagnose_json_cold" "null" sample_diagnose
+record_metric "daemon_startup" "750" sample_daemon_startup
 record_metric "new_session_detached_sh" "500" sample_new_session_sh
 record_metric "split_window_detached_sh" "150" sample_split_window_sh
 record_metric "send_keys_detached_round_trip" "20" sample_send_keys
 record_metric "resize_pane_round_trip" "100" sample_resize_pane
-record_metric "pane_output_10k_ready" "null" sample_pane_output_ready
-record_metric "capture_pane_10k_lines" "75" sample_capture_pane
+record_metric "pane_output_${line_count}_lines_ready" "null" sample_pane_output_ready
+record_metric "capture_pane_${line_count}_lines" "75" sample_capture_pane
 
 timestamp="$(date -u +%Y%m%d-%H%M%S)"
 json_path="$output_dir/unix-$timestamp.json"

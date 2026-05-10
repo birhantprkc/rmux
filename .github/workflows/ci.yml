@@ -1,0 +1,106 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      windows_runtime_smoke:
+        description: Run native Windows runtime smoke checks
+        required: false
+        default: false
+        type: boolean
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTDOCFLAGS: -D warnings
+  TMPDIR: /tmp
+  RMUX_TMPDIR: /tmp
+
+jobs:
+  linux-native:
+    name: Linux native build, lint, test, and gates
+    runs-on: ubuntu-latest
+    env:
+      RUST_MIN_STACK: "8388608"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Fetch locked dependencies
+        run: cargo fetch --locked
+
+      - name: cargo fmt
+        run: cargo fmt --all -- --check
+
+      - name: cargo clippy
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+
+      - name: rustdoc with warnings denied
+        run: cargo doc --workspace --locked --no-deps
+
+      - name: cargo build
+        run: cargo build --workspace --locked
+
+      - name: cargo test
+        env:
+          RUST_TEST_THREADS: "1"
+        run: cargo test --workspace --locked
+
+      - name: No network scoped runtime source scan
+        run: scripts/no-network-in-runtime.sh
+
+      - name: Platform neutrality source scan
+        run: scripts/check-platform-neutrality.sh
+
+      - name: SDK v1 daemon smoke
+        run: scripts/smoke-sdk-v1.sh
+
+      - name: Non-final local performance budget smoke
+        run: scripts/perf-bench.sh --iterations 3 --line-count 10000 --output-dir target/perf/non-final-ci --fail-on-budget
+
+      - name: Install cargo-deny
+        if: hashFiles('deny.toml') != ''
+        run: cargo install cargo-deny --version 0.19.5 --locked
+
+      - name: cargo deny check
+        if: hashFiles('deny.toml') != ''
+        run: cargo deny check
+
+  windows-cross:
+    name: Cross-target Windows build check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-gnu
+
+      - name: Install Windows GNU linker
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends mingw-w64
+
+      - name: cargo build Windows target
+        run: cargo build --workspace --locked --target x86_64-pc-windows-gnu
+
+  windows-runtime-smoke:
+    name: Native Windows runtime smoke
+    if: github.event_name == 'workflow_dispatch' && inputs.windows_runtime_smoke
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Windows hidden daemon smoke
+        run: cargo test --locked --test internal_daemon_windows -- --nocapture
+
+      - name: Windows named-pipe IPC smoke
+        run: cargo test -p rmux-ipc --locked --test named_pipe_integration -- --nocapture
