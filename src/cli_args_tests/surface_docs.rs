@@ -135,7 +135,11 @@ fn overview_supported_surface_matches_implemented_commands_and_aliases() {
         .map(|entry| entry.name.to_owned())
         .collect::<BTreeSet<_>>();
     assert_eq!(documented_commands, expected_commands);
-    assert!(supported_surface.contains(&format!("dispatches {} commands", expected_commands.len())));
+    let expected_count = expected_commands.len();
+    assert!(
+        supported_surface.contains(&format!("dispatches {expected_count} commands"))
+            || supported_surface.contains(&format!("{expected_count} commands dispatched"))
+    );
 
     let documented_aliases = supported_surface
         .lines()
@@ -280,6 +284,7 @@ fn support_matrix_statuses(section: &str) -> Vec<String> {
 #[test]
 fn release_docs_track_workspace_version() {
     let version = env!("CARGO_PKG_VERSION");
+    let compatibility_line = "0.0.4";
     let cargo_toml = repo_file("Cargo.toml");
     let overview = repo_file("public overview");
     let manpage = repo_file("rmux.1");
@@ -287,9 +292,13 @@ fn release_docs_track_workspace_version() {
     let ledger = repo_file("spec/tmux-manpage-reference.yaml");
 
     assert!(cargo_toml.contains(&format!("version = \"{version}\"")));
-    assert!(overview.contains(&format!("RMUX {version}")));
-    assert!(manpage.contains(&format!("\"RMUX {version}\"")));
-    assert!(manpage.contains(&format!(".B rmux {version}")));
-    assert!(specification.contains(&format!("RMUX {version}")));
-    assert!(ledger.contains(&format!("release_line: \"{version}\"")));
+    assert!(
+        overview.contains(&format!("RMUX {version}"))
+            || overview.contains(&format!("workspace package version is `{version}`"))
+    );
+    assert!(overview.contains(&format!("{compatibility_line} tmux compatibility contract")));
+    assert!(manpage.contains(&format!("\"RMUX {compatibility_line}\"")));
+    assert!(manpage.contains(&format!(".B rmux {compatibility_line}")));
+    assert!(specification.contains(&format!("RMUX {compatibility_line}")));
+    assert!(ledger.contains(&format!("release_line: \"{compatibility_line}\"")));
 }

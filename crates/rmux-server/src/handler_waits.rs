@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex as StdMutex};
 
-use rmux_core::events::{OutputCursorItem, SdkWaitKey, SdkWaitRegistry};
+use rmux_core::events::{OutputCursorItem, OutputGap, SdkWaitKey, SdkWaitRegistry};
 use rmux_proto::{
     CancelSdkWaitRequest, CancelSdkWaitResponse, ErrorResponse, Response, RmuxError,
     SdkWaitForOutputRequest, SdkWaitForOutputResponse, SdkWaitId, SdkWaitOutcome, SdkWaitOwnerId,
@@ -258,8 +258,19 @@ async fn wait_for_bytes(
 fn observe_cursor_item(tail: &mut Vec<u8>, needle: &[u8], item: OutputCursorItem) -> bool {
     match item {
         OutputCursorItem::Event(event) => observe_bytes(tail, needle, event.bytes()),
-        OutputCursorItem::Gap(gap) => observe_bytes(tail, needle, gap.recent_snapshot().bytes()),
+        OutputCursorItem::Gap(gap) => observe_gap(tail, needle, &gap),
     }
+}
+
+fn observe_gap(tail: &mut Vec<u8>, needle: &[u8], gap: &OutputGap) -> bool {
+    let expected = gap.expected_sequence();
+    let recent = gap.recent_snapshot();
+    let starts_at_expected = recent.oldest_sequence_at_or_after(expected) == Some(expected)
+        && recent.starts_at_event_start(expected);
+    if !starts_at_expected {
+        tail.clear();
+    }
+    observe_bytes(tail, needle, recent.bytes_from_sequence(expected))
 }
 
 fn observe_bytes(tail: &mut Vec<u8>, needle: &[u8], bytes: &[u8]) -> bool {
@@ -305,6 +316,81 @@ mod tests {
         assert_eq!(tail, b"xxnee");
         assert!(observe_bytes(&mut tail, b"needle", b"dleyy"));
         assert_eq!(tail, b"dleyy");
+    }
+
+    #[test]
+    fn byte_observer_ignores_pre_arm_recent_output_after_cursor_gap() {
+        let output = pane_output_channel_with_limits(1, 64);
+        output.send(b"stale needle".to_vec());
+        let mut receiver = output.subscribe();
+        output.send(b"future without".to_vec());
+        output.send(b"match".to_vec());
+
+        let Some(OutputCursorItem::Gap(gap)) = receiver.try_recv() else {
+            panic!("slow post-arm receiver should observe a cursor gap");
+        };
+        assert_eq!(gap.expected_sequence(), 1);
+        assert_eq!(gap.resume_sequence(), 2);
+        assert_eq!(
+            gap.recent_snapshot().bytes(),
+            b"stale needlefuture withoutmatch"
+        );
+
+        let mut tail = Vec::new();
+        assert!(
+            !observe_gap(&mut tail, b"needle", &gap),
+            "wait matcher must not complete on recent output emitted before subscribe"
+        );
+    }
+
+    #[test]
+    fn byte_observer_matches_post_arm_recent_output_after_cursor_gap() {
+        let output = pane_output_channel_with_limits(1, 64);
+        output.send(b"stale".to_vec());
+        let mut receiver = output.subscribe();
+        output.send(b"future needle".to_vec());
+        output.send(b"after".to_vec());
+
+        let Some(OutputCursorItem::Gap(gap)) = receiver.try_recv() else {
+            panic!("slow post-arm receiver should observe a cursor gap");
+        };
+        assert_eq!(gap.expected_sequence(), 1);
+        assert_eq!(gap.resume_sequence(), 2);
+        assert_eq!(gap.recent_snapshot().bytes(), b"stalefuture needleafter");
+
+        let mut tail = Vec::new();
+        assert!(
+            observe_gap(&mut tail, b"needle", &gap),
+            "wait matcher should still use missed output emitted after subscribe"
+        );
+    }
+
+    #[test]
+    fn byte_observer_does_not_match_across_trimmed_gap_prefix() {
+        let output = pane_output_channel_with_limits(1, 4);
+        let mut receiver = output.subscribe();
+        output.send(b"nee".to_vec());
+        let Some(OutputCursorItem::Event(event)) = receiver.try_recv() else {
+            panic!("receiver should observe the first retained output event");
+        };
+        let mut tail = Vec::new();
+        assert!(!observe_bytes(&mut tail, b"needle", event.bytes()));
+        assert_eq!(tail, b"nee");
+
+        output.send(b"xxdle".to_vec());
+        output.send(b"q".to_vec());
+        let Some(OutputCursorItem::Gap(gap)) = receiver.try_recv() else {
+            panic!("slow post-arm receiver should observe a cursor gap");
+        };
+        assert_eq!(gap.expected_sequence(), 1);
+        assert_eq!(gap.resume_sequence(), 2);
+        assert_eq!(gap.recent_snapshot().bytes(), b"dleq");
+        assert!(!gap.recent_snapshot().starts_at_event_start(1));
+
+        assert!(
+            !observe_gap(&mut tail, b"needle", &gap),
+            "wait matcher must not join observed tail across a trimmed gap prefix"
+        );
     }
 
     #[tokio::test]

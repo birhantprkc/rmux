@@ -40,6 +40,14 @@ pub struct RecentOutputSnapshot {
     bytes: Vec<u8>,
     oldest_sequence: Option<u64>,
     newest_sequence: Option<u64>,
+    chunks: Vec<RecentOutputSnapshotChunk>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RecentOutputSnapshotChunk {
+    sequence: u64,
+    start: usize,
+    starts_at_event_start: bool,
 }
 
 impl RecentOutputSnapshot {
@@ -47,6 +55,18 @@ impl RecentOutputSnapshot {
     #[must_use]
     pub fn bytes(&self) -> &[u8] {
         &self.bytes
+    }
+
+    /// Returns retained bytes whose contributing output event sequence is at
+    /// least `min_sequence`.
+    #[must_use]
+    pub fn bytes_from_sequence(&self, min_sequence: u64) -> &[u8] {
+        let start = self
+            .chunks
+            .iter()
+            .find(|chunk| chunk.sequence >= min_sequence)
+            .map_or(self.bytes.len(), |chunk| chunk.start);
+        &self.bytes[start..]
     }
 
     /// Returns the oldest output sequence contributing retained bytes.
@@ -59,6 +79,26 @@ impl RecentOutputSnapshot {
     #[must_use]
     pub const fn newest_sequence(&self) -> Option<u64> {
         self.newest_sequence
+    }
+
+    /// Returns the oldest retained contributing sequence at or after
+    /// `min_sequence`.
+    #[must_use]
+    pub fn oldest_sequence_at_or_after(&self, min_sequence: u64) -> Option<u64> {
+        self.chunks
+            .iter()
+            .find(|chunk| chunk.sequence >= min_sequence)
+            .map(|chunk| chunk.sequence)
+    }
+
+    /// Returns whether the retained bytes for `sequence` begin at that output
+    /// event's first byte.
+    #[must_use]
+    pub fn starts_at_event_start(&self, sequence: u64) -> bool {
+        self.chunks
+            .iter()
+            .find(|chunk| chunk.sequence == sequence)
+            .is_some_and(|chunk| chunk.starts_at_event_start)
     }
 
     /// Returns the retained byte count.
@@ -248,11 +288,7 @@ impl OutputRing {
     /// Returns a bounded recent live output snapshot.
     #[must_use]
     pub fn recent_snapshot(&self) -> RecentOutputSnapshot {
-        RecentOutputSnapshot {
-            bytes: self.recent.bytes(),
-            oldest_sequence: self.recent.oldest_sequence(),
-            newest_sequence: self.recent.newest_sequence(),
-        }
+        self.recent.snapshot()
     }
 
     /// Returns retained events in sequence order.
@@ -279,6 +315,7 @@ struct RecentLiveBuffer {
 struct RecentLiveChunk {
     sequence: u64,
     bytes: Vec<u8>,
+    starts_at_event_start: bool,
 }
 
 impl RecentLiveBuffer {
@@ -299,6 +336,7 @@ impl RecentLiveBuffer {
             self.chunks.push_back(RecentLiveChunk {
                 sequence,
                 bytes: bytes[bytes.len() - self.capacity..].to_vec(),
+                starts_at_event_start: bytes.len() == self.capacity,
             });
             self.len = self.capacity;
             return;
@@ -306,6 +344,7 @@ impl RecentLiveBuffer {
         self.chunks.push_back(RecentLiveChunk {
             sequence,
             bytes: bytes.to_vec(),
+            starts_at_event_start: true,
         });
         self.len = self.len.saturating_add(bytes.len());
         self.trim_front();
@@ -328,6 +367,7 @@ impl RecentLiveBuffer {
                 let _ = self.chunks.pop_front();
             } else {
                 front.bytes = front.bytes.split_off(overflow);
+                front.starts_at_event_start = false;
                 self.len -= overflow;
             }
         }
@@ -345,12 +385,24 @@ impl RecentLiveBuffer {
         self.chunks.back().map(|chunk| chunk.sequence)
     }
 
-    fn bytes(&self) -> Vec<u8> {
+    fn snapshot(&self) -> RecentOutputSnapshot {
         let mut bytes = Vec::with_capacity(self.len);
+        let mut snapshot_chunks = Vec::with_capacity(self.chunks.len());
         for chunk in &self.chunks {
+            let start = bytes.len();
             bytes.extend_from_slice(&chunk.bytes);
+            snapshot_chunks.push(RecentOutputSnapshotChunk {
+                sequence: chunk.sequence,
+                start,
+                starts_at_event_start: chunk.starts_at_event_start,
+            });
         }
-        bytes
+        RecentOutputSnapshot {
+            bytes,
+            oldest_sequence: self.oldest_sequence(),
+            newest_sequence: self.newest_sequence(),
+            chunks: snapshot_chunks,
+        }
     }
 }
 
@@ -434,6 +486,36 @@ mod tests {
         assert_eq!(ring.recent_snapshot().newest_sequence(), Some(0));
         assert_eq!(ring.recent_len(), 4);
         assert_eq!(ring.retained_events()[0].bytes(), b"012345");
+    }
+
+    #[test]
+    fn recent_snapshot_filters_bytes_by_contributing_sequence() {
+        let mut ring = OutputRing::new(8, 64);
+        ring.push(b"stale".to_vec());
+        ring.push(b"future".to_vec());
+        ring.push(b"tail".to_vec());
+
+        let snapshot = ring.recent_snapshot();
+
+        assert_eq!(snapshot.bytes_from_sequence(0), b"stalefuturetail");
+        assert_eq!(snapshot.bytes_from_sequence(1), b"futuretail");
+        assert_eq!(snapshot.bytes_from_sequence(2), b"tail");
+        assert_eq!(snapshot.bytes_from_sequence(3), b"");
+        assert_eq!(snapshot.oldest_sequence_at_or_after(1), Some(1));
+        assert_eq!(snapshot.oldest_sequence_at_or_after(3), None);
+        assert!(snapshot.starts_at_event_start(1));
+    }
+
+    #[test]
+    fn recent_snapshot_records_when_retained_event_prefix_was_trimmed() {
+        let mut ring = OutputRing::new(8, 4);
+        ring.push(b"012345".to_vec());
+
+        let snapshot = ring.recent_snapshot();
+
+        assert_eq!(snapshot.bytes_from_sequence(0), b"2345");
+        assert_eq!(snapshot.oldest_sequence_at_or_after(0), Some(0));
+        assert!(!snapshot.starts_at_event_start(0));
     }
 
     #[test]
