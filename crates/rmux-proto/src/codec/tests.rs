@@ -419,6 +419,10 @@ fn every_request_variant_round_trips_through_the_frame_codec() {
             skip_environment_update: true,
             zoom: true,
         }),
+        Request::Handshake(crate::HandshakeRequest::requiring([
+            crate::CAPABILITY_DETACHED_RPC,
+            crate::CAPABILITY_HANDSHAKE,
+        ])),
     ];
 
     for request in requests {
@@ -973,6 +977,7 @@ fn every_response_variant_round_trips_through_the_frame_codec() {
         crate::Response::SuspendClient(crate::SuspendClientResponse {
             target_client: "=".to_owned(),
         }),
+        crate::Response::Handshake(crate::HandshakeResponse::current()),
     ];
 
     for response in responses {

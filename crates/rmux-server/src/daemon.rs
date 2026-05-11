@@ -4,7 +4,7 @@ use std::io;
 #[cfg(windows)]
 use std::io::{Read, Write};
 #[cfg(unix)]
-use std::os::unix::fs::{DirBuilderExt, FileTypeExt, MetadataExt};
+use std::os::unix::fs::{DirBuilderExt, FileTypeExt, MetadataExt, PermissionsExt};
 #[cfg(unix)]
 use std::os::unix::net::UnixStream as StdUnixStream;
 use std::path::{Path, PathBuf};
@@ -17,6 +17,7 @@ use tokio::task::JoinHandle;
 #[cfg(unix)]
 use tracing::debug;
 
+use rmux_core::events::SubscriptionLimits;
 #[cfg(windows)]
 use rmux_ipc::connect_blocking;
 use rmux_ipc::{LocalEndpoint, LocalListener};
@@ -32,7 +33,9 @@ use crate::server_access::current_owner_uid;
 #[cfg(all(test, unix))]
 const FALLBACK_SOCKET_ROOT: &str = "/tmp";
 #[cfg(unix)]
-const RMUX_SOCK_PERM: u32 = 0o007;
+const BOUND_SOCKET_MODE: u32 = 0o600;
+#[cfg(unix)]
+const UNSAFE_PERMISSION_MASK: u32 = 0o077;
 #[cfg(unix)]
 const SOCKET_DIR_PREFIX: &str = "rmux";
 
@@ -69,6 +72,7 @@ fn socket_root_from_env(tmpdir: Option<&std::ffi::OsStr>) -> io::Result<PathBuf>
 pub struct DaemonConfig {
     socket_path: PathBuf,
     config_load: ConfigLoadOptions,
+    subscription_limits: SubscriptionLimits,
 }
 
 impl DaemonConfig {
@@ -78,6 +82,7 @@ impl DaemonConfig {
         Self {
             socket_path,
             config_load: ConfigLoadOptions::disabled(),
+            subscription_limits: SubscriptionLimits::default(),
         }
     }
 
@@ -98,6 +103,12 @@ impl DaemonConfig {
         &self.config_load
     }
 
+    /// Returns the pane-output subscription limits.
+    #[must_use]
+    pub fn subscription_limits(&self) -> SubscriptionLimits {
+        self.subscription_limits
+    }
+
     /// Enables RMUX default startup config loading.
     #[must_use]
     pub fn with_default_config_load(mut self, quiet: bool, cwd: Option<PathBuf>) -> Self {
@@ -106,6 +117,13 @@ impl DaemonConfig {
             quiet,
             cwd,
         };
+        self
+    }
+
+    /// Overrides pane-output subscription limits for this daemon.
+    #[must_use]
+    pub fn with_subscription_limits(mut self, subscription_limits: SubscriptionLimits) -> Self {
+        self.subscription_limits = subscription_limits;
         self
     }
 
@@ -218,6 +236,7 @@ impl ServerDaemon {
             prepare_socket_path(self.config.socket_path())?;
             let endpoint = LocalEndpoint::from_path(self.config.socket_path().to_path_buf());
             let listener = LocalListener::bind(&endpoint)?;
+            enforce_bound_socket_permissions(self.config.socket_path())?;
             let (shutdown_handle, shutdown_receiver) = ShutdownHandle::new();
             let socket_path = self.config.socket_path().to_path_buf();
             let owner_uid = real_user_id()?;
@@ -228,6 +247,7 @@ impl ServerDaemon {
                 shutdown_handle.clone(),
                 shutdown_receiver,
                 self.config.config_load().clone(),
+                self.config.subscription_limits(),
                 owner_uid,
             ));
 
@@ -252,6 +272,7 @@ impl ServerDaemon {
                 shutdown_handle.clone(),
                 shutdown_receiver,
                 self.config.config_load().clone(),
+                self.config.subscription_limits(),
                 owner_uid,
             ));
 
@@ -325,7 +346,8 @@ fn windows_protocol_probe(endpoint: &LocalEndpoint) -> io::Result<bool> {
         };
         decoder.push_bytes(&buffer[..bytes_read]);
         match decoder.next_frame::<Response>() {
-            Ok(Some(_response)) => return Ok(true),
+            Ok(Some(Response::HasSession(_))) => return Ok(true),
+            Ok(Some(_response)) => return Ok(false),
             Ok(None) => continue,
             Err(RmuxError::IncompleteFrame { .. }) => continue,
             Err(_error) => return Ok(false),
@@ -457,10 +479,48 @@ fn ensure_safe_rmux_socket_directory(path: &Path) -> io::Result<()> {
     }
 
     let user_id = real_user_id()?;
-    if metadata.uid() != user_id || (metadata.mode() & RMUX_SOCK_PERM) != 0 {
+    if metadata.uid() != user_id || (metadata.mode() & UNSAFE_PERMISSION_MASK) != 0 {
         return Err(io::Error::new(
             io::ErrorKind::PermissionDenied,
             format!("directory {} has unsafe permissions", path.display()),
+        ));
+    }
+
+    Ok(())
+}
+
+#[cfg(unix)]
+fn enforce_bound_socket_permissions(socket_path: &Path) -> io::Result<()> {
+    validate_bound_socket(socket_path, false)?;
+    fs::set_permissions(socket_path, fs::Permissions::from_mode(BOUND_SOCKET_MODE))?;
+    validate_bound_socket(socket_path, true)
+}
+
+#[cfg(unix)]
+fn validate_bound_socket(socket_path: &Path, require_owner_only: bool) -> io::Result<()> {
+    let metadata = fs::symlink_metadata(socket_path)?;
+    if metadata.file_type().is_symlink() || !metadata.file_type().is_socket() {
+        return Err(io::Error::new(
+            io::ErrorKind::AlreadyExists,
+            format!(
+                "socket path '{}' is not a Unix socket",
+                socket_path.display()
+            ),
+        ));
+    }
+
+    let user_id = real_user_id()?;
+    if metadata.uid() != user_id {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            format!("socket {} has unsafe ownership", socket_path.display()),
+        ));
+    }
+
+    if require_owner_only && (metadata.mode() & UNSAFE_PERMISSION_MASK) != 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            format!("socket {} has unsafe permissions", socket_path.display()),
         ));
     }
 

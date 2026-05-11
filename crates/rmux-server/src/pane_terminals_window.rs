@@ -1,3 +1,5 @@
+use std::collections::{HashMap, HashSet};
+
 use rmux_core::{
     formats::{render_list_windows_line, FormatContext},
     PaneId, Session,
@@ -15,7 +17,7 @@ mod window_movement;
 
 use super::{
     session_not_found, HandlerState, KilledWindowResult, NewWindowOptions,
-    RemovedWindowHookContext, RespawnWindowOptions,
+    RemovedWindowHookContext, RespawnWindowOptions, WindowLinkSlot,
 };
 use crate::format_runtime::RuntimeFormatContext;
 
@@ -96,6 +98,7 @@ impl HandlerState {
             Some(pane_id)
         );
         self.synchronize_session_group_from(session_name)?;
+        self.sync_pane_lifecycle_dimensions_for_session(session_name);
 
         Ok(NewWindowResponse {
             target: WindowTarget::with_window(session_name.clone(), window_index),
@@ -115,51 +118,71 @@ impl HandlerState {
                 .session(&session_name)
                 .ok_or_else(|| session_not_found(&session_name))?;
             let removal_plan =
-                build_window_removal_plan(session, &session_name, target_index, kill_others)?;
+                build_window_removal_plan(self, session, &session_name, target_index, kill_others)?;
             let removed_windows = removal_plan
                 .iter()
                 .map(|planned_window| {
-                    let window =
-                        session
-                            .window_at(planned_window.window_index)
-                            .ok_or_else(|| {
-                                RmuxError::invalid_target(
-                                    format!("{session_name}:{}", planned_window.window_index),
-                                    "window index does not exist in session",
-                                )
-                            })?;
+                    let window = self
+                        .sessions
+                        .session(&planned_window.session_name)
+                        .and_then(|session| session.window_at(planned_window.window_index))
+                        .ok_or_else(|| {
+                            RmuxError::invalid_target(
+                                format!(
+                                    "{}:{}",
+                                    planned_window.session_name, planned_window.window_index
+                                ),
+                                "window index does not exist in session",
+                            )
+                        })?;
                     Ok(RemovedWindowHookContext {
                         target: WindowTarget::with_window(
-                            session_name.clone(),
+                            planned_window.session_name.clone(),
                             planned_window.window_index,
                         ),
-                        window_id: window.id(),
+                        window_id: window.id().as_u32(),
                         window_name: window.name().unwrap_or_default().to_owned(),
                     })
                 })
                 .collect::<Result<Vec<_>, RmuxError>>()?;
             (removal_plan, removed_windows)
         };
-        ensure_window_removal_terminals_exist(self, &session_name, &removal_plan)?;
+        ensure_window_removal_terminals_exist(self, &removal_plan)?;
 
+        let sessions_to_synchronize = removal_plan
+            .iter()
+            .map(|planned_window| planned_window.session_name.clone())
+            .collect::<HashSet<_>>();
+        let mut removed_terminals = HashSet::new();
         for planned_window in removal_plan {
-            let planned_target =
-                WindowTarget::with_window(session_name.clone(), planned_window.window_index);
+            let planned_target = WindowTarget::with_window(
+                planned_window.session_name.clone(),
+                planned_window.window_index,
+            );
             let _removed_window = self
                 .sessions
-                .session_mut(&session_name)
-                .ok_or_else(|| session_not_found(&session_name))?
+                .session_mut(&planned_window.session_name)
+                .ok_or_else(|| session_not_found(&planned_window.session_name))?
                 .remove_window(planned_window.window_index)?;
             let _ = self.options.remove_window(&planned_target);
             let _ = self.hooks.remove_window(&planned_target);
-            self.clear_auto_named_window(&session_name, planned_window.window_index);
+            self.clear_auto_named_window(&planned_window.session_name, planned_window.window_index);
+            let _ = self
+                .detach_window_link_slot(&planned_window.session_name, planned_window.window_index);
 
             for pane_id in planned_window.pane_ids {
-                if !self.remove_pane_terminal(&session_name, pane_id) {
+                if !removed_terminals.insert((planned_window.runtime_session_name.clone(), pane_id))
+                {
+                    continue;
+                }
+                if !self.remove_pane_terminal_from_runtime(
+                    &planned_window.runtime_session_name,
+                    pane_id,
+                ) {
                     return Err(RmuxError::Server(format!(
                         "missing pane terminal for pane id {} in session {}",
                         pane_id.as_u32(),
-                        session_name
+                        planned_window.runtime_session_name
                     )));
                 }
             }
@@ -170,7 +193,9 @@ impl HandlerState {
             .session(&session_name)
             .ok_or_else(|| session_not_found(&session_name))?
             .active_window_index();
-        self.synchronize_session_group_from(&session_name)?;
+        for synchronized_session in sessions_to_synchronize {
+            self.synchronize_session_group_from(&synchronized_session)?;
+        }
 
         Ok(KilledWindowResult {
             response: KillWindowResponse {
@@ -367,11 +392,17 @@ impl HandlerState {
             .first()
             .copied()
             .ok_or_else(|| RmuxError::Server("window has no panes".to_owned()))?;
+        let runtime_session_name =
+            self.runtime_session_name_for_window(&session_name, window_index);
 
-        // Kill all existing pane terminals.
-        for pane_id in &pane_ids {
-            self.remove_pane_terminal(&session_name, *pane_id);
+        // Kill terminals for panes that disappear with the old window layout.
+        for removed_pane_id in pane_ids.iter().copied().filter(|id| *id != pane_id) {
+            self.remove_pane_terminal_from_runtime(&runtime_session_name, removed_pane_id);
         }
+        if let Some(pipe) = self.remove_pane_pipe(&runtime_session_name, pane_id) {
+            pipe.stop();
+        }
+        let _ = self.terminals.remove_pane(&runtime_session_name, pane_id);
 
         // tmux respawns a window by retaining the first pane's identity and
         // destroying the rest, rather than allocating a new pane identity.
@@ -385,9 +416,10 @@ impl HandlerState {
         }
 
         // Spawn the new terminal for the single fresh pane.
-        self.insert_window_terminal(&session_name, window_index, spawn)?;
+        self.reset_window_terminal(&session_name, window_index, spawn)?;
 
         self.synchronize_session_group_from(&session_name)?;
+        self.sync_pane_lifecycle_dimensions_for_session(&session_name);
 
         Ok(rmux_proto::RespawnWindowResponse { target })
     }
@@ -448,7 +480,7 @@ fn collect_window_entries(
 
             WindowListEntry {
                 target: WindowTarget::with_window(session_name.clone(), *window_index),
-                window_id: format!("@{}", window.id()),
+                window_id: window.id().to_string(),
                 name: window.name().map(str::to_owned),
                 pane_count: u32::try_from(window.pane_count()).expect("pane count fits in u32"),
                 size: window.size(),
@@ -547,11 +579,14 @@ fn ensure_session_panes_exist(
 
 #[derive(Debug, Clone)]
 struct WindowRemovalPlan {
+    session_name: SessionName,
     window_index: u32,
+    runtime_session_name: SessionName,
     pane_ids: Vec<PaneId>,
 }
 
 fn build_window_removal_plan(
+    state: &HandlerState,
     session: &Session,
     session_name: &SessionName,
     target_index: u32,
@@ -570,30 +605,111 @@ fn build_window_removal_plan(
         vec![target_index]
     };
 
-    window_indices
-        .into_iter()
-        .map(|window_index| {
-            Ok(WindowRemovalPlan {
-                pane_ids: window_pane_ids(session, session_name, window_index)?,
-                window_index,
-            })
-        })
-        .collect()
+    let mut seen_slots = HashSet::new();
+    let mut removal_plan = Vec::new();
+    for window_index in window_indices {
+        let slots = expand_window_removal_slots(
+            state,
+            state.window_link_slots_for(session_name, window_index),
+        );
+        for slot in slots {
+            if seen_slots.insert(slot.clone()) {
+                removal_plan.push(build_window_slot_removal_plan(state, slot)?);
+            }
+        }
+    }
+    ensure_window_removal_leaves_survivors(state, &removal_plan)?;
+    Ok(removal_plan)
+}
+
+fn expand_window_removal_slots(
+    state: &HandlerState,
+    root_slots: Vec<WindowLinkSlot>,
+) -> Vec<WindowLinkSlot> {
+    let mut seen = HashSet::new();
+    let mut expanded = Vec::new();
+    let mut pending = root_slots;
+
+    while let Some(slot) = pending.pop() {
+        if !seen.insert(slot.clone()) {
+            continue;
+        }
+
+        for member in state.sessions.session_group_members(&slot.session_name) {
+            pending.push(WindowLinkSlot {
+                session_name: member,
+                window_index: slot.window_index,
+            });
+        }
+        for linked_slot in state.window_link_slots_for(&slot.session_name, slot.window_index) {
+            pending.push(linked_slot);
+        }
+        expanded.push(slot);
+    }
+
+    expanded
+}
+
+fn build_window_slot_removal_plan(
+    state: &HandlerState,
+    slot: WindowLinkSlot,
+) -> Result<WindowRemovalPlan, RmuxError> {
+    let session = state
+        .sessions
+        .session(&slot.session_name)
+        .ok_or_else(|| session_not_found(&slot.session_name))?;
+    Ok(WindowRemovalPlan {
+        runtime_session_name: state
+            .runtime_session_name_for_window(&slot.session_name, slot.window_index),
+        pane_ids: window_pane_ids(session, &slot.session_name, slot.window_index)?,
+        session_name: slot.session_name,
+        window_index: slot.window_index,
+    })
+}
+
+fn ensure_window_removal_leaves_survivors(
+    state: &HandlerState,
+    removal_plan: &[WindowRemovalPlan],
+) -> Result<(), RmuxError> {
+    let mut removals_by_session = HashMap::<SessionName, usize>::new();
+    for planned_window in removal_plan {
+        *removals_by_session
+            .entry(planned_window.session_name.clone())
+            .or_default() += 1;
+    }
+
+    for (session_name, removed_count) in removals_by_session {
+        let session = state
+            .sessions
+            .session(&session_name)
+            .ok_or_else(|| session_not_found(&session_name))?;
+        if session.windows().len() <= removed_count {
+            return Err(RmuxError::Server(format!(
+                "cannot kill the only window in session {session_name}"
+            )));
+        }
+    }
+
+    Ok(())
 }
 
 fn ensure_window_removal_terminals_exist(
     state: &HandlerState,
-    session_name: &SessionName,
     removal_plan: &[WindowRemovalPlan],
 ) -> Result<(), RmuxError> {
-    let pane_ids = removal_plan
-        .iter()
-        .flat_map(|planned_window| planned_window.pane_ids.iter().copied())
-        .collect::<Vec<_>>();
-
-    if pane_ids.is_empty() {
-        return Ok(());
+    let mut panes_by_runtime = HashMap::<SessionName, Vec<PaneId>>::new();
+    for planned_window in removal_plan {
+        panes_by_runtime
+            .entry(planned_window.runtime_session_name.clone())
+            .or_default()
+            .extend(planned_window.pane_ids.iter().copied());
     }
 
-    state.ensure_panes_exist(session_name, &pane_ids)
+    for (runtime_session_name, pane_ids) in panes_by_runtime {
+        state
+            .terminals
+            .ensure_panes_exist(&runtime_session_name, &pane_ids)?;
+    }
+
+    Ok(())
 }

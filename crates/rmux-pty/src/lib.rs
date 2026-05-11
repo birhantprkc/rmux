@@ -15,6 +15,40 @@ mod child;
 mod pty;
 mod size;
 
+#[cfg(any(test, all(not(unix), not(windows))))]
+pub(crate) mod unsupported_op {
+    //! Canonical operation tokens carried by `PtyError::Unsupported` arms.
+    //!
+    //! The Tier-3 (`cfg(all(not(unix), not(windows)))`) call sites in `pty.rs`
+    //! and `child.rs` reference these constants by name, and the
+    //! platform-agnostic inventory test in this crate's `tests` module reads
+    //! the same `ALL` slice. Routing both producers and the verifier through a
+    //! single set of `&'static str`s makes the doc table in
+    //! `spec/runtime.yaml` a literal mirror of source rather than
+    //! a hand-maintained transcription.
+    pub(crate) const OPEN_PTY_PAIR: &str = "open pty pair";
+    pub(crate) const SPAWN_PTY_CHILD: &str = "spawn pty child";
+    pub(crate) const WAIT_FOR_PTY_CHILD: &str = "wait for pty child";
+    pub(crate) const TRY_WAIT_FOR_PTY_CHILD: &str = "try wait for pty child";
+    pub(crate) const SIGNAL_PTY_FOREGROUND: &str = "signal pty foreground process group";
+    pub(crate) const SIGNAL_PTY_SESSION_LEADER: &str = "signal pty session leader";
+    pub(crate) const QUERY_PTY_SIZE: &str = "query pty size";
+    pub(crate) const RESIZE_PTY: &str = "resize pty";
+    pub(crate) const CLONE_PTY_IO: &str = "clone pty io";
+
+    pub(crate) const ALL: &[&str] = &[
+        OPEN_PTY_PAIR,
+        SPAWN_PTY_CHILD,
+        WAIT_FOR_PTY_CHILD,
+        TRY_WAIT_FOR_PTY_CHILD,
+        SIGNAL_PTY_FOREGROUND,
+        SIGNAL_PTY_SESSION_LEADER,
+        QUERY_PTY_SIZE,
+        RESIZE_PTY,
+        CLONE_PTY_IO,
+    ];
+}
+
 use std::error::Error as StdError;
 use std::ffi::NulError;
 use std::fmt;
@@ -165,14 +199,76 @@ impl From<NulError> for PtyError {
 
 #[cfg(test)]
 mod tests {
+    use super::{unsupported_op, PtyError};
+
+    #[test]
+    fn pty_error_unsupported_display_is_stable_for_documented_operations() {
+        for operation in unsupported_op::ALL {
+            let formatted = format!("{}", PtyError::Unsupported(operation));
+            assert_eq!(
+                formatted,
+                format!("pty operation is unsupported on this platform: {operation}")
+            );
+        }
+    }
+
+    #[test]
+    fn pty_error_unsupported_inventory_matches_documented_count() {
+        // Pin the size of the inventory so adding a new Tier-3 operation
+        // requires updating both this crate and `spec/runtime.yaml`
+        // in the same change. The doc lists nine `PtyError::Unsupported` rows.
+        assert_eq!(unsupported_op::ALL.len(), 9);
+    }
+
+    #[test]
+    fn pty_error_unsupported_inventory_entries_are_unique_and_non_empty() {
+        use std::collections::BTreeSet;
+
+        let unique: BTreeSet<&&str> = unsupported_op::ALL.iter().collect();
+        assert_eq!(unique.len(), unsupported_op::ALL.len());
+        for operation in unsupported_op::ALL {
+            assert!(!operation.is_empty());
+            assert!(!operation.contains(':'));
+        }
+    }
+
+    #[test]
+    fn pty_error_unsupported_carries_no_source() {
+        use std::error::Error as _;
+
+        let err = PtyError::Unsupported(unsupported_op::QUERY_PTY_SIZE);
+        assert!(err.source().is_none());
+    }
+
     #[cfg(all(not(unix), not(windows)))]
     #[test]
     fn unsupported_backend_returns_explicit_errors() {
-        use super::{ChildCommand, PtyError};
+        use std::io;
+
+        use super::{ChildCommand, PtyPair};
+
+        let open_pair =
+            PtyPair::open().expect_err("non-Unix non-Windows targets have no PTY backend");
+        assert!(matches!(
+            open_pair,
+            PtyError::Unsupported(op) if op == unsupported_op::OPEN_PTY_PAIR
+        ));
 
         let spawn = ChildCommand::new("cmd.exe")
             .spawn()
-            .expect_err("Windows PTY backend is introduced in Milestone 5");
-        assert!(matches!(spawn, PtyError::Unsupported("spawn pty child")));
+            .expect_err("non-Unix non-Windows targets have no PTY backend");
+        assert!(matches!(
+            spawn,
+            PtyError::Unsupported(op) if op == unsupported_op::SPAWN_PTY_CHILD
+        ));
+
+        // The Tier-3 read/write/set_nonblocking arms in `pty.rs` return a typed
+        // `io::Error` with `ErrorKind::Unsupported`. They cannot be exercised
+        // here without a `PtyIo` instance (no constructor on Tier-3), so the
+        // Tier-3 contract for those call sites is enforced at compile time by
+        // the `cfg(not(windows))` arm in `pty.rs` together with the shared
+        // `unsupported_op` constant module referenced both here and at every
+        // Tier-3 producer.
+        let _ = io::ErrorKind::Unsupported;
     }
 }

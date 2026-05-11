@@ -4,10 +4,13 @@
 //! Shared detached protocol types for RMUX.
 
 pub mod attach;
+pub mod capabilities;
 pub mod codec;
 pub mod control;
 pub mod envelope;
 pub mod error;
+pub mod frame_kind;
+pub mod identity;
 pub mod request;
 pub mod response;
 pub mod types;
@@ -15,6 +18,11 @@ pub mod types;
 pub use attach::{
     encode_attach_message, AttachFrameDecoder, AttachMessage, AttachShellCommand,
     AttachedKeystroke, KeyDispatched,
+};
+pub use capabilities::{
+    HandshakeRequest, HandshakeResponse, CAPABILITY_ATTACH_STREAM, CAPABILITY_CONTROL_STREAM,
+    CAPABILITY_DAEMON_SHUTDOWN, CAPABILITY_DETACHED_RPC, CAPABILITY_FRAMED_ERRORS,
+    CAPABILITY_HANDSHAKE, CAPABILITY_SDK_WAITS, SUPPORTED_CAPABILITIES,
 };
 pub use codec::{decode_frame, encode_frame, FrameDecoder, DEFAULT_MAX_FRAME_LENGTH};
 pub use control::{
@@ -26,10 +34,15 @@ pub use control::{
 };
 pub use envelope::{RMUX_FRAME_MAGIC, RMUX_WIRE_VERSION};
 pub use error::RmuxError;
+pub use frame_kind::{
+    frame_kind_for_request, frame_kind_for_response, ledger_entry_for, FrameDirection,
+    FrameFeature, FrameKind, FrameLedgerEntry, FrameStatus, V1_FRAME_LEDGER,
+};
+pub use identity::{PaneId, SessionId, SessionName, WindowId};
 pub use request::*;
 pub use response::*;
-pub use types::OptionScopeSelector;
 pub use types::*;
+pub use types::{OptionScopeSelector, PaneOutputSubscriptionId, SdkWaitId, SdkWaitOwnerId};
 
 /// Detached request/response protocol revision.
 pub const PROTOCOL_VERSION: u16 = RMUX_WIRE_VERSION as u16;

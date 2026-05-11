@@ -9,19 +9,26 @@ members = [
     "crates/rmux-pty",
     "crates/rmux-client",
     "crates/rmux-server",
+    "crates/rmux-sdk",
+    "crates/ratatui-rmux",
+    "xtask",
 ]
 resolver = "2"
 
 [workspace.package]
-version = "0.0.4"
+version = "0.0.6"
 edition = "2021"
 publish = false
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/rmuxorg/rmux"
 
 [package]
 name = "rmux"
 version.workspace = true
 edition.workspace = true
 publish.workspace = true
+license.workspace = true
+repository.workspace = true
 
 [dependencies]
 clap = { version = "4.5.39", features = ["derive"] }
@@ -29,16 +36,18 @@ libc = "0.2"
 rmux-client = { path = "crates/rmux-client" }
 rmux-core = { path = "crates/rmux-core" }
 rmux-os = { path = "crates/rmux-os" }
-rmux-proto = { path = "crates/rmux-proto" }
+rmux-proto = { path = "crates/rmux-proto", version = "0.1.0" }
 # The root binary owns the hidden internal daemon mode, so it links the server
 # and Tokio runtime directly for that top-level re-exec path.
 rmux-server = { path = "crates/rmux-server" }
 tokio = { version = "1.48.0", features = ["net", "rt", "rt-multi-thread", "time"] }
 
 [dev-dependencies]
+libc = "0.2"
 rmux-core = { path = "crates/rmux-core" }
 rmux-pty = { path = "crates/rmux-pty" }
-rmux-proto = { path = "crates/rmux-proto" }
+rmux-proto = { path = "crates/rmux-proto", version = "0.1.0" }
+rmux-sdk = { path = "crates/rmux-sdk", version = "0.1.0" }
 rustix = { version = "1.1.4", features = ["event", "termios"] }
 
 [build-dependencies]

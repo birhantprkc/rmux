@@ -62,6 +62,17 @@ pub enum RmuxError {
         /// The maximum supported wire version.
         maximum: u32,
     },
+    /// A capability required by the caller is not supported by the daemon.
+    #[error(
+        "unsupported RMUX capability `{feature}`; supported capabilities: {}",
+        supported.join(", ")
+    )]
+    UnsupportedCapability {
+        /// Stable capability id requested by the caller.
+        feature: String,
+        /// Capability ids supported by the daemon.
+        supported: Vec<String>,
+    },
     /// A full frame was requested but the buffer stopped early.
     #[error("incomplete frame: expected {expected} payload bytes, received {received}")]
     IncompleteFrame {
@@ -155,6 +166,14 @@ mod tests {
             }
             .to_string(),
             "unsupported RMUX wire version 2; supported range is 1..=1"
+        );
+        assert_eq!(
+            RmuxError::UnsupportedCapability {
+                feature: "feature.experimental".to_owned(),
+                supported: vec!["rpc.detached".to_owned(), "protocol.capabilities".to_owned()],
+            }
+            .to_string(),
+            "unsupported RMUX capability `feature.experimental`; supported capabilities: rpc.detached, protocol.capabilities"
         );
         assert_eq!(
             RmuxError::IncompleteFrame {

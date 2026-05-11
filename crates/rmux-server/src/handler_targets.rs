@@ -271,6 +271,7 @@ pub(in crate::handler) fn target_for_request_response(
             Request::KillPane(request) => Some(Target::Pane(request.target.clone())),
             Request::ResizePane(request) => Some(Target::Pane(request.target.clone())),
             Request::CapturePane(request) => Some(Target::Pane(request.target.clone())),
+            Request::PaneSnapshot(request) => Some(Target::Pane(request.target.clone())),
             Request::PasteBuffer(request) => Some(Target::Pane(request.target.clone())),
             Request::ClearHistory(request) => Some(Target::Pane(request.target.clone())),
             Request::DisplayPanes(request) => {

@@ -246,6 +246,11 @@ fn read_only_request_allowed(request: &Request) -> bool {
             | Request::ShowBuffer(_)
             | Request::ListBuffers(_)
             | Request::CapturePane(_)
+            | Request::SubscribePaneOutput(_)
+            | Request::UnsubscribePaneOutput(_)
+            | Request::PaneOutputCursor(_)
+            | Request::SdkWaitForOutput(_)
+            | Request::CancelSdkWait(_)
             | Request::DisplayMessage(_)
             | Request::ShowMessages(_)
             | Request::ListSessions(_)
@@ -253,6 +258,7 @@ fn read_only_request_allowed(request: &Request) -> bool {
             | Request::CopyMode(_)
             | Request::ControlMode(_)
             | Request::ClockMode(_)
+            | Request::Handshake(_)
             | Request::ServerAccess(ServerAccessRequest { list: true, .. })
     )
 }
@@ -330,6 +336,10 @@ fn parse_passwd_entry(line: &str) -> Option<PasswdEntry> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rmux_proto::{
+        CancelSdkWaitRequest, PaneOutputSubscriptionStart, PaneTarget, SdkWaitForOutputRequest,
+        SdkWaitId, SdkWaitOwnerId, SessionName,
+    };
 
     #[test]
     fn access_store_can_key_owner_by_windows_sid() {
@@ -371,6 +381,32 @@ mod tests {
         let store = ServerAccessStore::new(current_owner_uid());
 
         assert_eq!(store.mode_for_identity(&owner), Some(AccessMode::ReadWrite));
+    }
+
+    #[test]
+    fn read_only_access_allows_sdk_wait_observation_and_cancel() {
+        let target = PaneTarget::new(SessionName::new("s").expect("session name"), 0);
+        let wait = Request::SdkWaitForOutput(SdkWaitForOutputRequest {
+            owner_id: SdkWaitOwnerId::new(7),
+            wait_id: SdkWaitId::new(1),
+            target,
+            bytes: b"ready".to_vec(),
+            start: PaneOutputSubscriptionStart::Now,
+        });
+        let cancel = Request::CancelSdkWait(CancelSdkWaitRequest {
+            owner_id: SdkWaitOwnerId::new(7),
+            wait_id: SdkWaitId::new(1),
+        });
+
+        assert_eq!(
+            apply_access_policy(wait.clone(), false).expect("SDK wait is read-only observation"),
+            wait
+        );
+        assert_eq!(
+            apply_access_policy(cancel.clone(), false)
+                .expect("SDK wait cancel is read-only cleanup"),
+            cancel
+        );
     }
 
     #[cfg(windows)]

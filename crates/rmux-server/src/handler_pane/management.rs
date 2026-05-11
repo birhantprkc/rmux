@@ -334,8 +334,17 @@ impl RequestHandler {
     ) -> Response {
         let session_name = request.target.session_name().clone();
         let target = request.target.clone();
-        let (response, queued_pane_exited, queued_session_closed, session_destroyed) = {
+        let (
+            response,
+            queued_pane_exited,
+            queued_session_closed,
+            session_destroyed,
+            removed_subscription_keys,
+        ) = {
             let mut state = self.state.lock().await;
+            let removed_subscription_keys = state
+                .pane_output_subscription_keys_for_kill(&request.target, request.kill_all_except)
+                .unwrap_or_default();
             match state.kill_pane_with_options(request.target, request.kill_all_except) {
                 Ok(result) => {
                     let queued_pane = prepare_lifecycle_event(
@@ -373,9 +382,16 @@ impl RequestHandler {
                         Some(queued_pane),
                         queued_session,
                         result.session_destroyed,
+                        removed_subscription_keys,
                     )
                 }
-                Err(error) => (Response::Error(ErrorResponse { error }), None, None, false),
+                Err(error) => (
+                    Response::Error(ErrorResponse { error }),
+                    None,
+                    None,
+                    false,
+                    Vec::new(),
+                ),
             }
         };
 
@@ -386,6 +402,8 @@ impl RequestHandler {
             self.emit_prepared(event);
         }
         if matches!(response, Response::KillPane(_)) {
+            self.cleanup_pane_output_subscriptions(&removed_subscription_keys)
+                .await;
             if session_destroyed {
                 self.exit_attached_session(&session_name).await;
                 self.cancel_session_silence_timers(&session_name).await;
@@ -507,6 +525,18 @@ impl RequestHandler {
                 &socket_path,
                 Some(self.pane_alert_callback()),
                 Some(self.pane_exit_callback()),
+                |state, replaced| {
+                    let queued = prepare_lifecycle_event(
+                        state,
+                        &LifecycleEvent::PaneExited {
+                            target: replaced.target.clone(),
+                            pane_id: Some(replaced.pane_id),
+                            window_id: Some(replaced.window_id),
+                            window_name: Some(replaced.window_name.clone()),
+                        },
+                    );
+                    self.emit_prepared(queued);
+                },
             ) {
                 Ok(response) => Response::RespawnPane(response),
                 Err(error) => Response::Error(ErrorResponse { error }),
@@ -542,7 +572,7 @@ fn join_pane_unlinked_window_snapshot(
             request.source.session_name().clone(),
             request.source.window_index(),
         ),
-        window_id: window.id(),
+        window_id: window.id().as_u32(),
         window_name: window.name().unwrap_or_default().to_owned(),
     })
 }

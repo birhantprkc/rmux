@@ -2,7 +2,7 @@ use std::sync::{Arc, Mutex};
 
 use crate::clock_mode::{ClockModeState, CLOCK_MODE_NAME};
 use crate::copy_mode::{CopyModeState, CopyModeSummary};
-use rmux_core::{input::InputParser, GridRenderOptions, Screen, ScreenCaptureRange, Utf8Config};
+use rmux_core::{GridRenderOptions, Screen, ScreenCaptureRange, TerminalScreen, Utf8Config};
 use rmux_proto::TerminalSize;
 
 pub(crate) type SharedPaneTranscript = Arc<Mutex<PaneTranscript>>;
@@ -15,9 +15,9 @@ enum PaneModeState {
 }
 
 pub(crate) struct PaneTranscript {
-    parser: InputParser,
-    screen: Screen,
+    terminal: TerminalScreen,
     mode: Option<PaneModeState>,
+    output_sequence: u64,
     next_clock_generation: u64,
     clear_on_dead_exit: bool,
     #[cfg(test)]
@@ -28,7 +28,7 @@ impl std::fmt::Debug for PaneTranscript {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
             .debug_struct("PaneTranscript")
-            .field("screen", &self.screen)
+            .field("screen", self.terminal.screen())
             .finish_non_exhaustive()
     }
 }
@@ -36,9 +36,9 @@ impl std::fmt::Debug for PaneTranscript {
 impl PaneTranscript {
     pub(crate) fn new(limit: usize, size: TerminalSize) -> Self {
         Self {
-            parser: InputParser::new(),
-            screen: Screen::new(size, limit),
+            terminal: TerminalScreen::new(size, limit),
             mode: None,
+            output_sequence: 0,
             next_clock_generation: 1,
             clear_on_dead_exit: false,
             #[cfg(test)]
@@ -51,16 +51,23 @@ impl PaneTranscript {
     }
 
     pub(crate) fn set_limit(&mut self, limit: usize) {
-        self.screen.set_history_limit(limit);
+        self.terminal.screen_mut().set_history_limit(limit);
     }
 
     pub(crate) fn append_bytes(&mut self, bytes: &[u8]) -> u64 {
-        self.parser.parse(bytes, &mut self.screen);
-        self.screen.take_bell_count()
+        if !bytes.is_empty() {
+            self.output_sequence = self.output_sequence.saturating_add(1);
+        }
+        self.terminal.feed(bytes);
+        self.terminal.screen_mut().take_bell_count()
+    }
+
+    pub(crate) const fn output_sequence(&self) -> u64 {
+        self.output_sequence
     }
 
     pub(crate) fn set_utf8_config(&mut self, utf8_config: Utf8Config) {
-        self.screen.set_utf8_config(utf8_config.clone());
+        self.terminal.set_utf8_config(utf8_config.clone());
         if let Some(PaneModeState::Copy(copy_mode)) = &mut self.mode {
             copy_mode.set_utf8_config(utf8_config.clone());
         }
@@ -75,7 +82,7 @@ impl PaneTranscript {
         range: ScreenCaptureRange,
         options: GridRenderOptions,
     ) -> Vec<u8> {
-        self.screen.capture_transcript(range, options)
+        self.terminal.screen().capture_transcript(range, options)
     }
 
     pub(crate) fn capture_saved(
@@ -83,7 +90,9 @@ impl PaneTranscript {
         range: ScreenCaptureRange,
         options: GridRenderOptions,
     ) -> Option<Vec<u8>> {
-        self.screen.capture_saved_transcript(range, options)
+        self.terminal
+            .screen()
+            .capture_saved_transcript(range, options)
     }
 
     pub(crate) fn capture_copy_mode(
@@ -100,11 +109,13 @@ impl PaneTranscript {
     }
 
     pub(crate) fn pending_bytes(&self) -> Vec<u8> {
-        self.parser.pending_bytes()
+        self.terminal.pending_bytes()
     }
 
     pub(crate) fn clear_history(&mut self, reset_hyperlinks: bool) {
-        self.screen.clear_history_and_hyperlinks(reset_hyperlinks);
+        self.terminal
+            .screen_mut()
+            .clear_history_and_hyperlinks(reset_hyperlinks);
     }
 
     pub(crate) fn mark_clear_on_dead_exit(&mut self) {
@@ -116,11 +127,13 @@ impl PaneTranscript {
             return false;
         }
 
-        self.parser = InputParser::new();
+        self.terminal.reset_parser();
         self.mode = None;
-        self.screen.clear_history_and_hyperlinks(true);
+        self.terminal
+            .screen_mut()
+            .clear_history_and_hyperlinks(true);
         // tmux drops the top visible row for remain-on-exit respawn deaths.
-        let _ = self.screen.delete_visible_line(0);
+        let _ = self.terminal.screen_mut().delete_visible_line(0);
         true
     }
 
@@ -133,36 +146,36 @@ impl PaneTranscript {
             return false;
         }
         if self.absolute_line_matches(absolute_y, submitted_text) {
-            return self.screen.delete_absolute_line(absolute_y);
+            return self.terminal.screen_mut().delete_absolute_line(absolute_y);
         }
 
-        (0..self.screen.absolute_line_count())
+        (0..self.terminal.screen().absolute_line_count())
             .rev()
             .find(|candidate| self.absolute_line_matches(*candidate, submitted_text))
-            .is_some_and(|candidate| self.screen.delete_absolute_line(candidate))
+            .is_some_and(|candidate| self.terminal.screen_mut().delete_absolute_line(candidate))
     }
 
     pub(crate) fn history_limit(&self) -> usize {
-        self.screen.history_limit()
+        self.terminal.screen().history_limit()
     }
 
     pub(crate) fn history_size(&self) -> usize {
-        self.screen.history_size()
+        self.terminal.screen().history_size()
     }
 
     pub(crate) fn history_bytes(&self) -> usize {
-        self.screen.history_bytes()
+        self.terminal.screen().history_bytes()
     }
 
     pub(crate) fn resize(&mut self, size: TerminalSize) {
-        self.screen.resize(size);
+        self.terminal.resize(size);
         if let Some(PaneModeState::Copy(copy_mode)) = &mut self.mode {
             copy_mode.resize(size);
         }
     }
 
     pub(crate) fn clone_screen(&self) -> Screen {
-        self.screen.clone()
+        self.terminal.screen().clone()
     }
 
     pub(crate) fn copy_mode_state(&self) -> Option<&CopyModeState> {
@@ -259,31 +272,31 @@ impl PaneTranscript {
     }
 
     pub(crate) fn mode(&self) -> u32 {
-        self.screen.mode()
+        self.terminal.screen().mode()
     }
 
     pub(crate) fn cursor_style(&self) -> u32 {
-        self.screen.cursor_style()
+        self.terminal.screen().cursor_style()
     }
 
     pub(crate) fn is_alternate(&self) -> bool {
-        self.screen.is_alternate()
+        self.terminal.screen().is_alternate()
     }
 
     pub(crate) fn title(&self) -> &str {
-        self.screen.title()
+        self.terminal.screen().title()
     }
 
     pub(crate) fn set_title(&mut self, title: impl Into<String>) {
-        self.screen.set_title(title);
+        self.terminal.screen_mut().set_title(title);
     }
 
     pub(crate) fn path(&self) -> &str {
-        self.screen.path()
+        self.terminal.screen().path()
     }
 
     fn absolute_line_matches(&self, absolute_y: usize, submitted_text: &str) -> bool {
-        let Some(line) = self.screen.absolute_line_view(absolute_y) else {
+        let Some(line) = self.terminal.screen().absolute_line_view(absolute_y) else {
             return false;
         };
         let rendered = line
@@ -306,7 +319,7 @@ impl PaneTranscript {
     #[cfg(test)]
     pub(crate) fn set_screen_for_test(&mut self, mut screen: Screen) {
         screen.set_utf8_config(self.utf8_config.clone());
-        self.screen = screen;
+        *self.terminal.screen_mut() = screen;
         self.mode = None;
     }
 
@@ -319,7 +332,7 @@ impl PaneTranscript {
 #[cfg(test)]
 mod tests {
     use super::PaneTranscript;
-    use rmux_core::{GridRenderOptions, Screen, ScreenCaptureRange};
+    use rmux_core::{GridRenderOptions, ScreenCaptureRange, TerminalScreen};
     use rmux_proto::TerminalSize;
 
     fn transcript(cols: u16, rows: u16, limit: usize) -> PaneTranscript {
@@ -392,9 +405,9 @@ mod tests {
         let mut transcript = transcript(8, 2, 10);
         transcript.append_bytes(b"base\n");
 
-        let mut mode_screen = Screen::new(TerminalSize { cols: 8, rows: 2 }, 10);
-        let mut parser = rmux_core::input::InputParser::new();
-        parser.parse(b"mode\n", &mut mode_screen);
+        let mut mode_terminal = TerminalScreen::new(TerminalSize { cols: 8, rows: 2 }, 10);
+        mode_terminal.feed(b"mode\n");
+        let mode_screen = mode_terminal.screen().clone();
         transcript.set_copy_mode_screen_for_test(Some(mode_screen));
 
         let capture = transcript

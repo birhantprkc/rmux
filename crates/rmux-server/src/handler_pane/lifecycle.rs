@@ -1,5 +1,6 @@
 use std::time::Duration;
 
+use rmux_core::events::{OutputCursorItem, PaneOutputSubscriptionKey};
 use rmux_core::LifecycleEvent;
 use rmux_proto::{OptionName, PaneTarget, RmuxError, Target, WindowTarget};
 
@@ -7,10 +8,9 @@ use super::super::{
     prepare_lifecycle_event, scripting_support::format_context_for_target, RequestHandler,
 };
 use crate::format_runtime::render_runtime_template;
-use crate::pane_io::{PaneExitCallback, PaneExitEvent};
+use crate::pane_io::{PaneExitCallback, PaneExitEvent, PaneOutputReceiver};
 use crate::pane_terminal_lookup::missing_pane_terminal;
 use crate::pane_terminals::{session_not_found, HandlerState, PaneExitMetadata};
-use tokio::sync::broadcast;
 use tracing::warn;
 
 const PANE_EXIT_STATUS_RETRY_DELAY: Duration = Duration::from_millis(10);
@@ -109,7 +109,7 @@ impl RequestHandler {
                             &LifecycleEvent::PaneExited {
                                 target: target.clone(),
                                 pane_id: Some(pane_id),
-                                window_id: Some(window_id),
+                                window_id: Some(window_id.as_u32()),
                                 window_name: Some(window_name.clone()),
                             },
                         );
@@ -136,7 +136,7 @@ impl RequestHandler {
                                 &mut state,
                                 &LifecycleEvent::SessionClosed {
                                     session_name: target.session_name().clone(),
-                                    session_id: Some(removed_session.id()),
+                                    session_id: Some(removed_session.id().as_u32()),
                                 },
                             );
                             let _ = state.options.remove_session(target.session_name());
@@ -240,6 +240,7 @@ impl RequestHandler {
                 window_destroyed,
                 pane_event,
             } => {
+                self.cleanup_exited_pane_output_subscription(&event).await;
                 self.emit_prepared(pane_event);
                 self.sync_session_silence_timers(&session_name).await;
                 if !window_destroyed {
@@ -259,6 +260,7 @@ impl RequestHandler {
                 pane_event,
                 session_event,
             } => {
+                self.cleanup_exited_pane_output_subscription(&event).await;
                 self.exit_attached_session(&session_name).await;
                 self.cancel_session_silence_timers(&session_name).await;
                 self.emit_prepared(pane_event);
@@ -267,6 +269,12 @@ impl RequestHandler {
                 let _ = self.request_shutdown_if_server_empty().await;
             }
         }
+    }
+
+    async fn cleanup_exited_pane_output_subscription(&self, event: &PaneExitEvent) {
+        let key = PaneOutputSubscriptionKey::new(event.session_name.clone(), event.pane_id);
+        self.cleanup_pane_output_subscriptions(std::slice::from_ref(&key))
+            .await;
     }
 
     async fn prepare_kept_dead_pane_transcript(&self, event: &PaneExitEvent, target: &PaneTarget) {
@@ -337,16 +345,15 @@ impl RequestHandler {
     }
 }
 
-async fn wait_for_pane_output_eof(output_rx: Option<broadcast::Receiver<Vec<u8>>>) {
+async fn wait_for_pane_output_eof(output_rx: Option<PaneOutputReceiver>) {
     let Some(mut output_rx) = output_rx else {
         return;
     };
     let _ = tokio::time::timeout(DEAD_PANE_OUTPUT_DRAIN_TIMEOUT, async move {
         loop {
             match output_rx.recv().await {
-                Ok(bytes) if bytes.is_empty() => break,
-                Ok(_) | Err(broadcast::error::RecvError::Lagged(_)) => {}
-                Err(broadcast::error::RecvError::Closed) => break,
+                OutputCursorItem::Event(event) if event.bytes().is_empty() => break,
+                OutputCursorItem::Event(_) | OutputCursorItem::Gap(_) => {}
             }
         }
     })

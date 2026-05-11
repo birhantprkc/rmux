@@ -11,11 +11,17 @@ use rmux_pty::{PtyChild, PtyMaster, Signal, TerminalSize as PtyTerminalSize};
 
 use crate::terminal::{spawn_pane_process, TerminalProfile};
 
+const GRACEFUL_TERMINATION_ATTEMPTS: usize = 10;
+const GRACEFUL_TERMINATION_SLEEP: Duration = Duration::from_millis(10);
+const HARD_TERMINATION_ATTEMPTS: usize = 50;
+const HARD_TERMINATION_SLEEP: Duration = Duration::from_millis(10);
+
 #[derive(Debug)]
 pub(crate) struct PaneTerminal {
     master: PtyMaster,
     child: PtyChild,
     exit_status: Option<ExitStatus>,
+    termination_attempted: bool,
     runtime_window_name: Option<String>,
     #[cfg_attr(not(test), allow(dead_code))]
     profile: TerminalProfile,
@@ -32,6 +38,7 @@ impl PaneTerminal {
             master,
             child,
             exit_status: None,
+            termination_attempted: false,
             runtime_window_name,
             profile,
         }
@@ -90,27 +97,45 @@ impl PaneTerminal {
     pub(crate) fn runtime_window_name(&self) -> Option<&str> {
         self.runtime_window_name.as_deref()
     }
+
+    pub(crate) fn terminate_with_bounded_grace(&mut self) {
+        if self.exit_status.is_some() || self.termination_attempted {
+            return;
+        }
+        self.termination_attempted = true;
+
+        self.signal_process_tree(Signal::HUP);
+        if self.wait_for_exit(GRACEFUL_TERMINATION_ATTEMPTS, GRACEFUL_TERMINATION_SLEEP) {
+            return;
+        }
+
+        self.signal_process_tree(Signal::KILL);
+        let _ = self.wait_for_exit(HARD_TERMINATION_ATTEMPTS, HARD_TERMINATION_SLEEP);
+    }
+
+    fn signal_process_tree(&self, signal: Signal) {
+        let _ = self.child.kill(signal);
+        let _ = self.child.kill_session_leader(signal);
+    }
+
+    fn wait_for_exit(&mut self, attempts: usize, sleep_duration: Duration) -> bool {
+        for _ in 0..attempts {
+            match self.child.try_wait() {
+                Ok(Some(status)) => {
+                    self.exit_status = Some(status);
+                    return true;
+                }
+                Ok(None) => std::thread::sleep(sleep_duration),
+                Err(_) => return true,
+            }
+        }
+        false
+    }
 }
 
 impl Drop for PaneTerminal {
     fn drop(&mut self) {
-        let _ = self.child.kill(Signal::HUP);
-        let _ = self.child.kill_session_leader(Signal::HUP);
-        for _ in 0..10 {
-            match self.child.try_wait() {
-                Ok(Some(_)) => return,
-                Ok(None) => std::thread::sleep(Duration::from_millis(10)),
-                Err(_) => return,
-            }
-        }
-        let _ = self.child.kill(Signal::KILL);
-        let _ = self.child.kill_session_leader(Signal::KILL);
-        for _ in 0..50 {
-            match self.child.try_wait() {
-                Ok(Some(_)) | Err(_) => return,
-                Ok(None) => std::thread::sleep(Duration::from_millis(10)),
-            }
-        }
+        self.terminate_with_bounded_grace();
     }
 }
 

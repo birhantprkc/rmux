@@ -3,7 +3,7 @@
 //! Based on the DEC parser reference DEC model as implemented in tmux `input.c`.
 //! This module provides the parser, state tables, command enums, parameter
 //! splitting, and SGR logic as pure safe Rust. Screen-write effects are
-//! delegated through the [`ScreenWriter`] trait.
+//! delegated through the [`crate::input::ScreenWriter`] trait.
 
 mod cell;
 mod colour;

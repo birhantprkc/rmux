@@ -1,9 +1,10 @@
 use super::{
     default_socket_path, remove_stale_socket_if_needed, socket_root_from_env, DaemonConfig,
+    ServerDaemon,
 };
 use std::ffi::OsStr;
 use std::fs;
-use std::os::unix::fs::PermissionsExt;
+use std::os::unix::fs::{FileTypeExt, PermissionsExt};
 use std::os::unix::net::{UnixListener as StdUnixListener, UnixStream as StdUnixStream};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -83,6 +84,25 @@ fn unsafe_managed_rmux_socket_directory_is_rejected() {
 }
 
 #[test]
+fn group_accessible_managed_rmux_socket_directory_is_rejected() {
+    let user_id = super::real_user_id().expect("real uid");
+    let root = unique_socket_path("group-permissions")
+        .parent()
+        .expect("socket parent")
+        .to_path_buf();
+    let socket_path = root.join(format!("rmux-{user_id}")).join("default");
+    let parent = socket_path.parent().expect("socket parent");
+    fs::create_dir_all(parent).expect("create managed socket parent");
+    fs::set_permissions(parent, fs::Permissions::from_mode(0o750)).expect("set perms");
+
+    let error = super::ensure_parent_directory(parent).expect_err("unsafe parent should fail");
+
+    assert_eq!(error.kind(), std::io::ErrorKind::PermissionDenied);
+    let _ = fs::set_permissions(parent, fs::Permissions::from_mode(0o700));
+    let _ = fs::remove_dir_all(root);
+}
+
+#[test]
 fn unsafe_managed_rmux_socket_directory_ancestor_is_rejected() {
     let user_id = super::real_user_id().expect("real uid");
     let root = unique_socket_path("nested-permissions")
@@ -100,6 +120,30 @@ fn unsafe_managed_rmux_socket_directory_ancestor_is_rejected() {
     assert_eq!(error.kind(), std::io::ErrorKind::PermissionDenied);
     let _ = fs::set_permissions(&managed, fs::Permissions::from_mode(0o700));
     let _ = fs::remove_dir_all(root);
+}
+
+#[tokio::test]
+async fn bound_socket_permissions_are_owner_only() {
+    let socket_path = unique_socket_path("bound-permissions");
+    let parent = socket_path.parent().expect("socket parent");
+    let _ = fs::remove_file(&socket_path);
+    let _ = fs::remove_dir_all(parent);
+
+    let handle = ServerDaemon::new(DaemonConfig::new(socket_path.clone()))
+        .bind()
+        .await
+        .expect("bind daemon");
+
+    let metadata = fs::symlink_metadata(&socket_path).expect("bound socket metadata");
+    assert!(metadata.file_type().is_socket());
+    assert_eq!(
+        metadata.permissions().mode() & 0o077,
+        0,
+        "bound daemon socket must not expose group/other permissions"
+    );
+
+    handle.shutdown().await.expect("shutdown daemon");
+    let _ = fs::remove_dir_all(parent);
 }
 
 #[test]

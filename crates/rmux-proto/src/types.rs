@@ -1,10 +1,15 @@
 //! Shared protocol value types.
+//!
+//! Identity newtypes (`SessionName`, `SessionId`, `WindowId`, `PaneId`)
+//! are defined exactly once in [`crate::identity`]; this module
+//! re-exports `SessionName` so legacy import paths continue to resolve.
 
 use std::fmt;
 use std::str::FromStr;
 
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Serialize};
 
+pub use crate::identity::SessionName;
 use crate::RmuxError;
 pub use rmux_types::TerminalSize;
 
@@ -16,116 +21,67 @@ mod options;
 pub use hooks::{HookLifecycle, HookName};
 pub use options::{OptionName, SetOptionMode};
 
-/// A validated RMUX session name.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
+/// Stable identifier for one pane-output subscription on a live server
+/// connection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(transparent)]
-pub struct SessionName(String);
+pub struct PaneOutputSubscriptionId(u64);
 
-impl SessionName {
-    /// Validates and stores a session name using tmux-compatible rewriting.
-    pub fn new(value: impl Into<String>) -> Result<Self, RmuxError> {
-        let value = value.into();
-
-        if value.is_empty() {
-            return Err(RmuxError::EmptySessionName);
-        }
-
-        Ok(Self(sanitize_session_name(value.as_bytes())))
+impl PaneOutputSubscriptionId {
+    /// Wraps a raw subscription identifier.
+    #[must_use]
+    pub const fn new(value: u64) -> Self {
+        Self(value)
     }
 
-    /// Returns the sanitized validated session name.
+    /// Returns the raw subscription identifier.
     #[must_use]
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-
-    /// Consumes the wrapper and returns the sanitized string.
-    #[must_use]
-    pub fn into_inner(self) -> String {
+    pub const fn as_u64(self) -> u64 {
         self.0
     }
 }
 
-fn sanitize_session_name(input: &[u8]) -> String {
-    let mut sanitized = String::with_capacity(input.len());
-    for &byte in input {
-        let rewritten = match byte {
-            b':' | b'.' => b'_',
-            other => other,
-        };
-        push_session_name_byte(rewritten, &mut sanitized);
-    }
-    sanitized
-}
+/// Opaque owner token for daemon-backed SDK waits.
+///
+/// The SDK assigns one owner token to each transport connection and then
+/// allocates [`SdkWaitId`] values within that owner. The server treats the
+/// owner as an opaque cancellation key; actual connection teardown cleanup is
+/// still keyed by the server's private connection identity.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct SdkWaitOwnerId(u64);
 
-fn push_session_name_byte(byte: u8, output: &mut String) {
-    if (0x20..=0x7e).contains(&byte) && byte != b'\\' {
-        output.push(char::from(byte));
-        return;
+impl SdkWaitOwnerId {
+    /// Wraps a raw SDK wait owner identifier.
+    #[must_use]
+    pub const fn new(value: u64) -> Self {
+        Self(value)
     }
 
-    match byte {
-        b'\0' => output.push_str("\\000"),
-        b'\x07' => output.push_str("\\a"),
-        b'\x08' => output.push_str("\\b"),
-        b'\t' => output.push_str("\\t"),
-        b'\n' => output.push_str("\\n"),
-        b'\x0b' => output.push_str("\\v"),
-        b'\x0c' => output.push_str("\\f"),
-        b'\r' => output.push_str("\\r"),
-        b'\\' => output.push_str("\\\\"),
-        _ => {
-            output.push('\\');
-            output.push(char::from(b'0' + ((byte >> 6) & 0x7)));
-            output.push(char::from(b'0' + ((byte >> 3) & 0x7)));
-            output.push(char::from(b'0' + (byte & 0x7)));
-        }
+    /// Returns the raw SDK wait owner identifier.
+    #[must_use]
+    pub const fn as_u64(self) -> u64 {
+        self.0
     }
 }
 
-impl AsRef<str> for SessionName {
-    fn as_ref(&self) -> &str {
-        self.as_str()
+/// Stable identifier for one daemon-backed SDK wait under an
+/// [`SdkWaitOwnerId`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct SdkWaitId(u64);
+
+impl SdkWaitId {
+    /// Wraps a raw SDK wait identifier.
+    #[must_use]
+    pub const fn new(value: u64) -> Self {
+        Self(value)
     }
-}
 
-impl fmt::Display for SessionName {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(self.as_str())
-    }
-}
-
-impl FromStr for SessionName {
-    type Err = RmuxError;
-
-    fn from_str(value: &str) -> Result<Self, Self::Err> {
-        Self::new(value)
-    }
-}
-
-impl TryFrom<&str> for SessionName {
-    type Error = RmuxError;
-
-    fn try_from(value: &str) -> Result<Self, Self::Error> {
-        Self::new(value)
-    }
-}
-
-impl TryFrom<String> for SessionName {
-    type Error = RmuxError;
-
-    fn try_from(value: String) -> Result<Self, Self::Error> {
-        Self::new(value)
-    }
-}
-
-impl<'de> Deserialize<'de> for SessionName {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let value = String::deserialize(deserializer)?;
-        Self::new(value).map_err(serde::de::Error::custom)
+    /// Returns the raw SDK wait identifier.
+    #[must_use]
+    pub const fn as_u64(self) -> u64 {
+        self.0
     }
 }
 

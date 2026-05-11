@@ -152,7 +152,7 @@ impl FormatVariables for RuntimeFormatContext<'_> {
                 .map(|value| value.to_string()),
             "next_session_id" => self
                 .session_store
-                .map(|sessions| sessions.next_session_id().to_string()),
+                .map(|sessions| sessions.next_session_id().as_u32().to_string()),
             "pane_at_left" => self.pane.map(|pane| bool_string(pane.geometry().x() == 0)),
             "pane_at_right" => self.pane.map(|pane| {
                 bool_string(self.window.is_some_and(|window| {
@@ -170,7 +170,7 @@ impl FormatVariables for RuntimeFormatContext<'_> {
             "mouse_sgr_flag" => self.pane_mode_flag(mode::MODE_MOUSE_SGR),
             "mouse_standard_flag" => self.pane_mode_flag(mode::MODE_MOUSE_STANDARD),
             "mouse_utf8_flag" => self.pane_mode_flag(mode::MODE_MOUSE_UTF8),
-            "pane_current_path" | "pane_path" | "pane_start_path" | "session_path" => self
+            "pane_current_path" | "pane_path" | "session_path" => self
                 .pane_current_path()
                 .or_else(|| self.environment_value_by_name("PWD"))
                 .or_else(|| self.environment_value_by_name("HOME")),
@@ -210,6 +210,9 @@ impl FormatVariables for RuntimeFormatContext<'_> {
             }),
             "pane_left" => self.pane.map(|pane| pane.geometry().x().to_string()),
             "pane_mode" => self.pane_mode_name(),
+            "pane_lifecycle_generation" | "pane_generation" => self.pane_lifecycle_generation(),
+            "pane_lifecycle_revision" | "pane_revision" => self.pane_lifecycle_revision(),
+            "pane_output_sequence" => self.pane_output_sequence(),
             "pane_pid" => self.pane_pid(),
             "pane_right" => self.pane.map(|pane| {
                 (pane.geometry().x() + pane.geometry().cols())
@@ -219,6 +222,11 @@ impl FormatVariables for RuntimeFormatContext<'_> {
             "pane_search_string" => self
                 .pane_copy_mode_summary()
                 .map(|summary| summary.pane_search_string),
+            "pane_start_command" => self.pane_start_command(),
+            "pane_start_path" => self
+                .pane_start_path()
+                .or_else(|| self.environment_value_by_name("PWD"))
+                .or_else(|| self.environment_value_by_name("HOME")),
             "pane_tty" => self.pane_tty(),
             "pane_title" => self.pane_title(),
             "pane_top" => self.pane.map(|pane| pane.geometry().y().to_string()),
@@ -320,7 +328,7 @@ impl FormatVariables for RuntimeFormatContext<'_> {
             "session_group_many_attached" => Some(bool_string(self.session_attached_count() > 1)),
             "session_group_size" => Some(self.session_group_members().len().to_string()),
             "session_grouped" => Some(bool_string(self.session_group_name().is_some())),
-            "session_id" => self.session.map(|session| format!("${}", session.id())),
+            "session_id" => self.session.map(|session| session.id().to_string()),
             "session_last_attached" => self
                 .session
                 .and_then(Session::last_attached_at)

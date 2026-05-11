@@ -1,22 +1,6 @@
 use rmux_proto::{PaneTarget, SessionName};
 
-/// Stable internal pane identity used for server-side ownership.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct PaneId(u32);
-
-impl PaneId {
-    /// Creates a stable pane identity.
-    #[must_use]
-    pub const fn new(value: u32) -> Self {
-        Self(value)
-    }
-
-    /// Returns the raw stable pane identity.
-    #[must_use]
-    pub const fn as_u32(self) -> u32 {
-        self.0
-    }
-}
+pub use rmux_proto::PaneId;
 
 /// A pane rectangle within terminal coordinates.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

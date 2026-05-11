@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use std::os::unix::process::ExitStatusExt;
 use std::process::ExitStatus;
 
-use rmux_core::{PaneGeometry, PaneId, Utf8Config};
+use rmux_core::{events::PaneOutputSubscriptionKey, PaneGeometry, PaneId, Utf8Config};
 use rmux_proto::{RmuxError, SessionName};
 #[cfg(windows)]
 use rmux_pty::PtyChild;
@@ -83,6 +83,7 @@ impl HandlerState {
             .and_then(|panes| panes.get(&pane_id))
             .copied()
         {
+            self.mark_pane_lifecycle_exited(pane_id, metadata);
             return Ok(Some(metadata));
         }
 
@@ -101,6 +102,7 @@ impl HandlerState {
             .entry(runtime_session_name.clone())
             .or_default()
             .insert(pane_id, metadata);
+        self.mark_pane_lifecycle_exited(pane_id, metadata);
         Ok(Some(metadata))
     }
 
@@ -188,11 +190,61 @@ impl HandlerState {
             .ok_or_else(|| missing_pane_terminal(session_name, window_index, pane_index))
     }
 
+    pub(crate) fn pane_output_subscription_key_for_target(
+        &self,
+        target: &rmux_proto::PaneTarget,
+    ) -> Result<PaneOutputSubscriptionKey, RmuxError> {
+        let pane_id = pane_id_for_target(
+            &self.sessions,
+            target.session_name(),
+            target.window_index(),
+            target.pane_index(),
+        )?;
+        let runtime_session_name =
+            self.runtime_session_name_for_window(target.session_name(), target.window_index());
+        Ok(PaneOutputSubscriptionKey::new(
+            runtime_session_name,
+            pane_id,
+        ))
+    }
+
+    pub(crate) fn pane_output_subscription_keys_for_kill(
+        &self,
+        target: &rmux_proto::PaneTarget,
+        kill_all_except: bool,
+    ) -> Result<Vec<PaneOutputSubscriptionKey>, RmuxError> {
+        let session = self
+            .sessions
+            .session(target.session_name())
+            .ok_or_else(|| session_not_found(target.session_name()))?;
+        let window = session.window_at(target.window_index()).ok_or_else(|| {
+            RmuxError::invalid_target(
+                format!("{}:{}", target.session_name(), target.window_index()),
+                "window index does not exist in session",
+            )
+        })?;
+        let runtime_session_name =
+            self.runtime_session_name_for_window(target.session_name(), target.window_index());
+        let keys = window
+            .panes()
+            .iter()
+            .filter(|pane| {
+                if kill_all_except {
+                    pane.index() != target.pane_index()
+                } else {
+                    pane.index() == target.pane_index()
+                }
+            })
+            .map(|pane| PaneOutputSubscriptionKey::new(runtime_session_name.clone(), pane.id()))
+            .collect();
+        Ok(keys)
+    }
+
     pub(crate) fn subscribe_runtime_pane_output(
         &self,
         runtime_session_name: &SessionName,
         pane_id: PaneId,
-    ) -> Option<tokio::sync::broadcast::Receiver<Vec<u8>>> {
+    ) -> Option<crate::pane_io::PaneOutputReceiver> {
         self.pane_outputs
             .get(runtime_session_name)
             .and_then(|panes| panes.get(&pane_id))
@@ -272,9 +324,11 @@ impl HandlerState {
             .or_default()
             .insert(pane_id, pane_output.clone());
         let generation = self.advance_pane_output_generation(session_name, pane_id);
+        pane_output.set_generation(generation);
         if let Some(dead_panes) = self.dead_panes.get_mut(session_name) {
             let _ = dead_panes.remove(&pane_id);
         }
+        self.update_pane_lifecycle_output_sequence(pane_id, generation);
         #[cfg(windows)]
         if let Some(exit_watcher) = spawn.exit_watcher {
             spawn_pane_exit_watcher(
@@ -333,9 +387,12 @@ impl HandlerState {
             .or_insert_with(pane_output_channel)
             .clone();
         let generation = self.advance_pane_output_generation(session_name, pane_id);
+        pane_output.set_generation(generation);
+        pane_output.clear_retained();
         if let Some(dead_panes) = self.dead_panes.get_mut(session_name) {
             let _ = dead_panes.remove(&pane_id);
         }
+        self.update_pane_lifecycle_output_sequence(pane_id, generation);
         #[cfg(windows)]
         if let Some(exit_watcher) = spawn.exit_watcher {
             spawn_pane_exit_watcher(
@@ -481,9 +538,21 @@ impl HandlerState {
             .get(&pane_id)
             .copied()
             .unwrap_or(0)
-            .wrapping_add(1);
+            .saturating_add(1);
         generations.insert(pane_id, next);
         next
+    }
+
+    pub(in crate::pane_terminals) fn pane_output_generation(
+        &self,
+        session_name: &SessionName,
+        pane_id: PaneId,
+    ) -> u64 {
+        self.pane_output_generations
+            .get(session_name)
+            .and_then(|panes| panes.get(&pane_id))
+            .copied()
+            .unwrap_or(0)
     }
 
     pub(crate) fn move_pane_outputs_between_sessions(

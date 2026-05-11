@@ -143,7 +143,7 @@ async fn read_pane_output(
     loop {
         let bytes_read = read_from_pane(&pane_reader, &mut buffer).await?;
         if bytes_read == 0 {
-            let _ = pane_output.send(Vec::new());
+            let _ = pane_output.send_for_generation(generation, Vec::new());
             if let Some(callback) = &pane_exit_callback {
                 callback(PaneExitEvent {
                     session_name: session_name.clone(),
@@ -189,7 +189,7 @@ fn read_pane_output_blocking(
             Err(error) => return Err(error),
         };
         if bytes_read == 0 {
-            let _ = pane_output.send(Vec::new());
+            let _ = pane_output.send_for_generation(generation, Vec::new());
             return Ok(());
         }
 
@@ -214,12 +214,18 @@ fn publish_pane_bytes(
     pane_alert_callback: Option<&PaneAlertCallback>,
     bytes: Vec<u8>,
 ) {
+    if !pane_output.accepts_generation(generation) {
+        return;
+    }
     let bell_count = {
         let mut transcript = transcript
             .lock()
             .expect("pane transcript mutex must not be poisoned");
         transcript.append_bytes(&bytes)
     };
+    if pane_output.send_for_generation(generation, bytes).is_none() {
+        return;
+    }
     if let Some(callback) = pane_alert_callback {
         callback(PaneAlertEvent {
             session_name: session_name.clone(),
@@ -228,7 +234,6 @@ fn publish_pane_bytes(
             generation,
         });
     }
-    let _ = pane_output.send(bytes);
 }
 
 #[cfg(all(test, windows))]

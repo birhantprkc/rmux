@@ -11,11 +11,14 @@ mod buffers;
 pub mod command_parser;
 pub mod command_queue;
 mod environment;
+/// Bounded event buffers and cursor accounting.
+pub mod events;
 pub mod formats;
 mod glob;
 mod grid;
 mod hooks;
 mod hyperlinks;
+pub mod identity;
 /// tmux-compatible VT parser state machine, CSI/ESC/OSC dispatch, and SGR.
 pub mod input;
 mod keys;
@@ -28,6 +31,8 @@ mod session;
 pub mod style;
 mod target;
 mod target_find;
+mod terminal;
+mod terminal_screen;
 mod terminal_sequences;
 mod transcript;
 mod utf8;
@@ -43,6 +48,7 @@ pub use hooks::{
     validate_hook_registration, validate_hook_scope, HookBindingView, HookDispatch, HookGlobalRoot,
     HookSetOptions, HookStore,
 };
+pub use identity::{PaneId, SessionId, SessionName, WindowId};
 pub use input::{
     colour_join_rgb, Colour, GridAttr, COLOUR_DEFAULT, COLOUR_FLAG_256, COLOUR_FLAG_RGB,
     COLOUR_NONE, COLOUR_TERMINAL,
@@ -62,7 +68,7 @@ pub use options::{
     validate_option_mutation, validate_option_name_mutation, OptionMutationOutcome,
     OptionNotification, OptionStore, ShowOptionsMode,
 };
-pub use pane::{Pane, PaneGeometry, PaneId};
+pub use pane::{Pane, PaneGeometry};
 pub use screen::{Screen, ScreenCellView, ScreenLineView};
 pub use session::{
     BreakPaneOptions, KillPaneOutcome, PaneJoinOptions, PaneSwapOptions, Session,
@@ -76,6 +82,7 @@ pub use target_find::{
     command_target_metadata, CommandTargetMetadata, CommandTargetSpec, TargetFindContext,
     TargetFindFlags, TargetFindType, UnresolvedTarget,
 };
+pub use terminal_screen::TerminalScreen;
 pub use terminal_sequences::{alternate_screen_enter_sequence, alternate_screen_exit_sequence};
 pub use transcript::{ScreenCaptureRange, Transcript};
 pub use utf8::{text_width, truncate_to_width, Utf8Config};

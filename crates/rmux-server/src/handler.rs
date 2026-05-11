@@ -1,9 +1,10 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::Mutex as StdMutex;
 use std::sync::{Arc, Weak};
 
+use rmux_core::events::{PaneSnapshotCoalescerRegistry, SubscriptionLimits};
 use rmux_ipc::PeerIdentity;
 use rmux_proto::{KillServerResponse, Response, RmuxError, TerminalSize, WindowTarget};
 use tokio::sync::{broadcast, Mutex};
@@ -49,8 +50,12 @@ mod scripting_support;
 mod server_access_support;
 #[path = "handler_session.rs"]
 mod session_support;
+#[path = "handler_subscriptions.rs"]
+mod subscription_support;
 #[path = "handler_targets.rs"]
 mod target_support;
+#[path = "handler_waits.rs"]
+mod wait_support;
 #[path = "handler_window.rs"]
 mod window_support;
 use crate::pane_terminals::HandlerState;
@@ -77,11 +82,13 @@ pub(in crate::handler) use lifecycle_support::after_hook_format_values;
 pub(in crate::handler) use lifecycle_support::prepare_lifecycle_event;
 pub(crate) use lifecycle_support::QueuedLifecycleEvent;
 use option_support::option_value_u32;
+use subscription_support::OutputSubscriptionState;
 pub(in crate::handler) use target_support::{
     active_session_target, active_window_target, fallback_current_target,
     resolve_existing_session_target, resolve_session_lookup, target_for_request_response,
     target_for_scope_selector, target_to_scope, SessionLookup,
 };
+use wait_support::SdkWaitState;
 
 /// Default detached session size used when `new-session` omits `-x` and `-y`.
 ///
@@ -105,6 +112,10 @@ pub(crate) struct RequestHandler {
     shutdown_requested: Arc<AtomicBool>,
     shutdown_handle: Arc<StdMutex<Option<ShutdownHandle>>>,
     config_loading_depth: Arc<AtomicUsize>,
+    next_connection_id: Arc<AtomicU64>,
+    subscriptions: Arc<StdMutex<OutputSubscriptionState>>,
+    sdk_waits: Arc<StdMutex<SdkWaitState>>,
+    pane_snapshot_coalescers: Arc<StdMutex<PaneSnapshotCoalescerRegistry>>,
     #[cfg(test)]
     cleanup_on_drop: bool,
     #[cfg(test)]
@@ -127,6 +138,10 @@ impl Clone for RequestHandler {
             shutdown_requested: self.shutdown_requested.clone(),
             shutdown_handle: self.shutdown_handle.clone(),
             config_loading_depth: self.config_loading_depth.clone(),
+            next_connection_id: self.next_connection_id.clone(),
+            subscriptions: self.subscriptions.clone(),
+            sdk_waits: self.sdk_waits.clone(),
+            pane_snapshot_coalescers: self.pane_snapshot_coalescers.clone(),
             #[cfg(test)]
             cleanup_on_drop: false,
             #[cfg(test)]
@@ -150,6 +165,10 @@ pub(crate) struct WeakRequestHandler {
     shutdown_requested: Weak<AtomicBool>,
     shutdown_handle: Weak<StdMutex<Option<ShutdownHandle>>>,
     config_loading_depth: Weak<AtomicUsize>,
+    next_connection_id: Weak<AtomicU64>,
+    subscriptions: Weak<StdMutex<OutputSubscriptionState>>,
+    sdk_waits: Weak<StdMutex<SdkWaitState>>,
+    pane_snapshot_coalescers: Weak<StdMutex<PaneSnapshotCoalescerRegistry>>,
     #[cfg(test)]
     paste_buffer_delete_pause: Weak<StdMutex<Option<Arc<PasteBufferDeletePause>>>>,
 }
@@ -170,6 +189,10 @@ impl WeakRequestHandler {
             shutdown_requested: self.shutdown_requested.upgrade()?,
             shutdown_handle: self.shutdown_handle.upgrade()?,
             config_loading_depth: self.config_loading_depth.upgrade()?,
+            next_connection_id: self.next_connection_id.upgrade()?,
+            subscriptions: self.subscriptions.upgrade()?,
+            sdk_waits: self.sdk_waits.upgrade()?,
+            pane_snapshot_coalescers: self.pane_snapshot_coalescers.upgrade()?,
             #[cfg(test)]
             cleanup_on_drop: false,
             #[cfg(test)]
@@ -206,19 +229,36 @@ impl Drop for RequestHandler {
 impl RequestHandler {
     #[cfg(test)]
     pub(crate) fn new() -> Self {
-        Self::with_owner_uid_and_environment(current_owner_uid(), None)
+        Self::with_owner_uid_and_environment(
+            current_owner_uid(),
+            None,
+            SubscriptionLimits::default(),
+        )
     }
 
     pub(crate) fn with_owner_uid(owner_uid: u32) -> Self {
         Self::with_owner_uid_and_environment(
             owner_uid,
             Some(current_process_environment_snapshot()),
+            SubscriptionLimits::default(),
+        )
+    }
+
+    pub(crate) fn with_owner_uid_and_subscription_limits(
+        owner_uid: u32,
+        subscription_limits: SubscriptionLimits,
+    ) -> Self {
+        Self::with_owner_uid_and_environment(
+            owner_uid,
+            Some(current_process_environment_snapshot()),
+            subscription_limits,
         )
     }
 
     fn with_owner_uid_and_environment(
         owner_uid: u32,
         environment: Option<HashMap<String, String>>,
+        subscription_limits: SubscriptionLimits,
     ) -> Self {
         let (hook_events, _receiver) = broadcast::channel(HOOK_EVENT_BUFFER);
         let mut state = HandlerState::default();
@@ -239,6 +279,14 @@ impl RequestHandler {
             shutdown_requested: Arc::new(AtomicBool::new(false)),
             shutdown_handle: Arc::new(StdMutex::new(None)),
             config_loading_depth: Arc::new(AtomicUsize::new(0)),
+            next_connection_id: Arc::new(AtomicU64::new(1)),
+            subscriptions: Arc::new(StdMutex::new(OutputSubscriptionState::new(
+                subscription_limits,
+            ))),
+            sdk_waits: Arc::new(StdMutex::new(SdkWaitState::default())),
+            pane_snapshot_coalescers: Arc::new(StdMutex::new(
+                PaneSnapshotCoalescerRegistry::with_default_rate(),
+            )),
             #[cfg(test)]
             cleanup_on_drop: true,
             #[cfg(test)]
@@ -261,9 +309,17 @@ impl RequestHandler {
             shutdown_requested: Arc::downgrade(&self.shutdown_requested),
             shutdown_handle: Arc::downgrade(&self.shutdown_handle),
             config_loading_depth: Arc::downgrade(&self.config_loading_depth),
+            next_connection_id: Arc::downgrade(&self.next_connection_id),
+            subscriptions: Arc::downgrade(&self.subscriptions),
+            sdk_waits: Arc::downgrade(&self.sdk_waits),
+            pane_snapshot_coalescers: Arc::downgrade(&self.pane_snapshot_coalescers),
             #[cfg(test)]
             paste_buffer_delete_pause: Arc::downgrade(&self.paste_buffer_delete_pause),
         }
+    }
+
+    pub(crate) fn allocate_connection_id(&self) -> u64 {
+        self.next_connection_id.fetch_add(1, Ordering::Relaxed)
     }
 
     pub(crate) fn set_socket_path(&self, socket_path: impl AsRef<Path>) {

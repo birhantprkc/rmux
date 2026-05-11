@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::{ControlModeResponse, LayoutName, RmuxError};
+use crate::{ControlModeResponse, HandshakeResponse, LayoutName, RmuxError, SdkWaitId};
 
 #[path = "response/session.rs"]
 mod session;
@@ -35,8 +35,12 @@ pub use window::{
 mod pane;
 pub use pane::{
     BreakPaneResponse, DisplayPanesResponse, JoinPaneResponse, KillPaneResponse, LastPaneResponse,
-    ListPanesResponse, MovePaneResponse, PipePaneResponse, ResizePaneResponse, RespawnPaneResponse,
-    SelectPaneResponse, SendKeysResponse, SplitWindowResponse, SwapPaneResponse,
+    ListPanesResponse, MovePaneResponse, PaneOutputCursor, PaneOutputCursorResponse,
+    PaneOutputEvent, PaneOutputLagNotice, PaneOutputLagResponse, PaneRecentOutput,
+    PaneSnapshotCell, PaneSnapshotCursor, PaneSnapshotResponse, PipePaneResponse,
+    ResizePaneResponse, RespawnPaneResponse, SelectPaneResponse, SendKeysResponse,
+    SplitWindowResponse, SubscribePaneOutputResponse, SwapPaneResponse,
+    UnsubscribePaneOutputResponse,
 };
 
 #[path = "response/client.rs"]
@@ -221,9 +225,121 @@ pub enum Response {
     UnlinkWindow(UnlinkWindowResponse),
     /// Success payload for internal detached target resolution.
     ResolveTarget(ResolveTargetResponse),
+    /// Success payload for SDK/daemon version and capability negotiation.
+    Handshake(HandshakeResponse),
+    /// Success payload for the daemon-backed pane snapshot endpoint.
+    PaneSnapshot(PaneSnapshotResponse),
+    /// Success payload for the daemon-backed pane output subscription endpoint.
+    SubscribePaneOutput(SubscribePaneOutputResponse),
+    /// Success payload for the daemon-backed pane output unsubscription endpoint.
+    UnsubscribePaneOutput(UnsubscribePaneOutputResponse),
+    /// Success payload for daemon-backed pane output cursor polling.
+    PaneOutputCursor(PaneOutputCursorResponse),
+    /// Lag notice for daemon-backed pane output cursor polling.
+    PaneOutputLag(PaneOutputLagResponse),
+    /// Success payload for a daemon-backed SDK byte wait.
+    SdkWaitForOutput(SdkWaitForOutputResponse),
+    /// Success payload for daemon-backed SDK wait cancellation.
+    CancelSdkWait(CancelSdkWaitResponse),
 }
 
 impl Response {
+    /// Returns the stable routing name for the response variant.
+    ///
+    /// `Error` is not tied to one command on the current wire and therefore
+    /// reports the generic `error` tag.
+    #[must_use]
+    pub const fn command_name(&self) -> &'static str {
+        match self {
+            Self::NewSession(_) => "new-session",
+            Self::HasSession(_) => "has-session",
+            Self::KillSession(_) => "kill-session",
+            Self::NewWindow(_) => "new-window",
+            Self::KillWindow(_) => "kill-window",
+            Self::SelectWindow(_) => "select-window",
+            Self::RenameWindow(_) => "rename-window",
+            Self::NextWindow(_) => "next-window",
+            Self::PreviousWindow(_) => "previous-window",
+            Self::LastWindow(_) => "last-window",
+            Self::ListWindows(_) => "list-windows",
+            Self::MoveWindow(_) => "move-window",
+            Self::SwapWindow(_) => "swap-window",
+            Self::RotateWindow(_) => "rotate-window",
+            Self::SplitWindow(_) => "split-window",
+            Self::SwapPane(_) => "swap-pane",
+            Self::LastPane(_) => "last-pane",
+            Self::JoinPane(_) => "join-pane",
+            Self::BreakPane(_) => "break-pane",
+            Self::KillPane(_) => "kill-pane",
+            Self::SelectLayout(_) => "select-layout",
+            Self::ResizePane(_) => "resize-pane",
+            Self::DisplayPanes(_) => "display-panes",
+            Self::SelectPane(_) => "select-pane",
+            Self::SendKeys(_) => "send-keys",
+            Self::AttachSession(_) => "attach-session",
+            Self::SwitchClient(_) => "switch-client",
+            Self::DetachClient(_) => "detach-client",
+            Self::SetOption(_) | Self::SetOptionByName(_) => "set-option",
+            Self::SetEnvironment(_) => "set-environment",
+            Self::SetHook(_) => "set-hook",
+            Self::Error(_) => "error",
+            Self::NextLayout(_) => "next-layout",
+            Self::PreviousLayout(_) => "previous-layout",
+            Self::ShowOptions(_) => "show-options",
+            Self::ShowEnvironment(_) => "show-environment",
+            Self::SetBuffer(_) => "set-buffer",
+            Self::ShowBuffer(_) => "show-buffer",
+            Self::PasteBuffer(_) => "paste-buffer",
+            Self::ListBuffers(_) => "list-buffers",
+            Self::DeleteBuffer(_) => "delete-buffer",
+            Self::LoadBuffer(_) => "load-buffer",
+            Self::SaveBuffer(_) => "save-buffer",
+            Self::CapturePane(_) => "capture-pane",
+            Self::DisplayMessage(_) => "display-message",
+            Self::RunShell(_) => "run-shell",
+            Self::IfShell(_) => "if-shell",
+            Self::WaitFor(_) => "wait-for",
+            Self::RenameSession(_) => "rename-session",
+            Self::ListSessions(_) => "list-sessions",
+            Self::ListPanes(_) => "list-panes",
+            Self::SourceFile(_) => "source-file",
+            Self::ShowHooks(_) => "show-hooks",
+            Self::BindKey(_) => "bind-key",
+            Self::UnbindKey(_) => "unbind-key",
+            Self::ListKeys(_) => "list-keys",
+            Self::SendPrefix(_) => "send-prefix",
+            Self::ClearHistory(_) => "clear-history",
+            Self::CopyMode(_) => "copy-mode",
+            Self::ControlMode(_) => "control-mode",
+            Self::ClockMode(_) => "clock-mode",
+            Self::ShowMessages(_) => "show-messages",
+            Self::KillServer(_) => "kill-server",
+            Self::LockServer(_) => "lock-server",
+            Self::LockSession(_) => "lock-session",
+            Self::LockClient(_) => "lock-client",
+            Self::ServerAccess(_) => "server-access",
+            Self::RefreshClient(_) => "refresh-client",
+            Self::ListClients(_) => "list-clients",
+            Self::SuspendClient(_) => "suspend-client",
+            Self::ResizeWindow(_) => "resize-window",
+            Self::RespawnWindow(_) => "respawn-window",
+            Self::MovePane(_) => "move-pane",
+            Self::PipePane(_) => "pipe-pane",
+            Self::RespawnPane(_) => "respawn-pane",
+            Self::PaneSnapshot(_) => "pane-snapshot",
+            Self::SubscribePaneOutput(_) => "subscribe-pane-output",
+            Self::UnsubscribePaneOutput(_) => "unsubscribe-pane-output",
+            Self::PaneOutputCursor(_) => "pane-output-cursor",
+            Self::PaneOutputLag(_) => "pane-output-lag",
+            Self::SdkWaitForOutput(_) => "sdk-wait-output",
+            Self::CancelSdkWait(_) => "cancel-sdk-wait",
+            Self::LinkWindow(_) => "link-window",
+            Self::UnlinkWindow(_) => "unlink-window",
+            Self::ResolveTarget(_) => "resolve-target",
+            Self::Handshake(_) => "handshake",
+        }
+    }
+
     /// Returns `true` when this response carries an error payload.
     #[must_use]
     pub const fn is_error(&self) -> bool {
@@ -257,6 +373,13 @@ impl Response {
             Self::ServerAccess(response) => Some(response.command_output()),
             Self::ListClients(response) => Some(response.command_output()),
             Self::BreakPane(response) => response.command_output(),
+            Self::Handshake(_) => None,
+            Self::SubscribePaneOutput(_)
+            | Self::UnsubscribePaneOutput(_)
+            | Self::PaneOutputCursor(_)
+            | Self::PaneOutputLag(_)
+            | Self::SdkWaitForOutput(_)
+            | Self::CancelSdkWait(_) => None,
             _ => None,
         }
     }
@@ -557,9 +680,95 @@ impl SourceFileResponse {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WaitForResponse;
 
+/// Terminal state for a daemon-backed SDK byte wait.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SdkWaitOutcome {
+    /// The requested byte sequence was observed.
+    Matched,
+    /// The wait was cancelled by a best-effort SDK cancel request or
+    /// connection cleanup.
+    Cancelled,
+}
+
+/// Response payload for a daemon-backed SDK byte wait.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SdkWaitForOutputResponse {
+    /// Wait ID that completed.
+    pub wait_id: SdkWaitId,
+    /// Terminal wait outcome.
+    pub outcome: SdkWaitOutcome,
+}
+
+/// Response payload for best-effort daemon-backed SDK wait cancellation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CancelSdkWaitResponse {
+    /// Wait ID named by the cancellation request.
+    pub wait_id: SdkWaitId,
+    /// Whether a live wait was removed by this request.
+    pub removed: bool,
+}
+
 /// Error response payload for detached RPC failures.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ErrorResponse {
     /// The shared wire-safe error value.
     pub error: RmuxError,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{OptionScopeSelector, SetOptionMode};
+
+    #[test]
+    fn response_command_names_cover_base_aliases_and_error_tag() {
+        assert_eq!(
+            Response::HasSession(HasSessionResponse { exists: true }).command_name(),
+            "has-session"
+        );
+        assert_eq!(
+            Response::SetOptionByName(SetOptionByNameResponse {
+                scope: OptionScopeSelector::ServerGlobal,
+                name: "status".to_owned(),
+                mode: SetOptionMode::Replace,
+            })
+            .command_name(),
+            "set-option"
+        );
+        assert_eq!(
+            Response::KillServer(KillServerResponse).command_name(),
+            "kill-server"
+        );
+        assert_eq!(
+            Response::Error(ErrorResponse {
+                error: RmuxError::Server("failed".to_owned()),
+            })
+            .command_name(),
+            "error"
+        );
+        assert_eq!(
+            Response::Handshake(HandshakeResponse::current()).command_name(),
+            "handshake"
+        );
+        assert_eq!(
+            Response::SdkWaitForOutput(SdkWaitForOutputResponse {
+                wait_id: SdkWaitId::new(1),
+                outcome: SdkWaitOutcome::Matched,
+            })
+            .command_name(),
+            "sdk-wait-output"
+        );
+        assert_eq!(
+            Response::CancelSdkWait(CancelSdkWaitResponse {
+                wait_id: SdkWaitId::new(1),
+                removed: false,
+            })
+            .command_name(),
+            "cancel-sdk-wait"
+        );
+        assert_eq!(
+            Response::WaitFor(WaitForResponse).command_name(),
+            "wait-for"
+        );
+    }
 }

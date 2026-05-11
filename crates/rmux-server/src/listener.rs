@@ -7,6 +7,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
+use rmux_core::events::SubscriptionLimits;
 use rmux_ipc::{wait_for_peer_close, LocalListener, LocalStream, PeerIdentity};
 use rmux_proto::{encode_frame, ErrorResponse, FrameDecoder, Request, Response, WaitForMode};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -28,10 +29,14 @@ pub(crate) async fn serve(
     shutdown_handle: ShutdownHandle,
     mut shutdown: oneshot::Receiver<()>,
     config_load: ConfigLoadOptions,
+    subscription_limits: SubscriptionLimits,
     owner_uid: u32,
 ) -> io::Result<()> {
     let _cleanup_on_drop = SocketCleanup::new(socket_path.clone());
-    let handler = Arc::new(RequestHandler::with_owner_uid(owner_uid));
+    let handler = Arc::new(RequestHandler::with_owner_uid_and_subscription_limits(
+        owner_uid,
+        subscription_limits,
+    ));
     handler.install_shutdown_handle(shutdown_handle.clone());
     handler.set_socket_path(&socket_path);
     handler.load_startup_config(config_load).await;
@@ -64,7 +69,11 @@ pub(crate) async fn serve(
                 let shutdown_handle = shutdown_handle.clone();
 
                 connection_tasks.spawn(async move {
-                    serve_connection(stream, requester, handler, connection_shutdown, shutdown_handle).await
+                    let connection_id = handler.allocate_connection_id();
+                    let result = serve_connection(stream, requester, Arc::clone(&handler), connection_id, connection_shutdown, shutdown_handle).await;
+                    handler.cleanup_connection_subscriptions(connection_id).await;
+                    handler.cleanup_connection_sdk_waits(connection_id).await;
+                    result
                 });
             }
             _ = &mut shutdown => {
@@ -91,6 +100,7 @@ async fn serve_connection(
     stream: LocalStream,
     requester: PeerIdentity,
     handler: Arc<RequestHandler>,
+    connection_id: u64,
     mut shutdown: watch::Receiver<()>,
     shutdown_handle: ShutdownHandle,
 ) -> io::Result<()> {
@@ -121,7 +131,7 @@ async fn serve_connection(
                 let cancel_on_peer_disconnect = request_cancels_on_peer_disconnect(&request);
                 debug!("dispatching {}", request.command_name());
                 let outcome = tokio::select! {
-                    outcome = handler.dispatch(requester.pid, request) => outcome,
+                    outcome = handler.dispatch_for_connection(requester.pid, connection_id, request) => outcome,
                     result = shutdown.changed() => {
                         if result.is_ok() {
                             debug!("closing client connection during shutdown");
@@ -238,7 +248,7 @@ fn request_cancels_on_peer_disconnect(request: &Request) -> bool {
         request,
         Request::WaitFor(wait)
             if matches!(wait.mode, WaitForMode::Wait | WaitForMode::Lock)
-    )
+    ) || matches!(request, Request::SdkWaitForOutput(_))
 }
 
 fn drain_finished_connection_tasks(tasks: &mut JoinSet<io::Result<()>>) {
@@ -318,6 +328,9 @@ impl SocketCleanup {
 impl Drop for SocketCleanup {
     fn drop(&mut self) {
         let _ = remove_socket_file_if_present(&self.socket_path);
+        for lock_path in startup_lock_paths(&self.socket_path) {
+            let _ = remove_regular_file_if_present(&lock_path);
+        }
     }
 }
 
@@ -341,10 +354,43 @@ fn remove_socket_file_if_present(path: &Path) -> io::Result<()> {
     }
 }
 
+#[cfg(unix)]
+fn startup_lock_paths(socket_path: &Path) -> Vec<PathBuf> {
+    let Some(parent) = socket_path.parent() else {
+        return Vec::new();
+    };
+    let Some(file_name) = socket_path.file_name() else {
+        return Vec::new();
+    };
+
+    let mut startup_lock_name = file_name.to_os_string();
+    startup_lock_name.push(".startup-lock");
+    let mut legacy_lock_name = file_name.to_os_string();
+    legacy_lock_name.push(".lock");
+
+    vec![
+        parent.join(startup_lock_name),
+        parent.join(legacy_lock_name),
+    ]
+}
+
+#[cfg(unix)]
+fn remove_regular_file_if_present(path: &Path) -> io::Result<()> {
+    match std::fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.file_type().is_file() => std::fs::remove_file(path),
+        Ok(_) => Ok(()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error),
+    }
+}
+
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;
-    use rmux_proto::{ErrorResponse, RmuxError, WaitForMode, WaitForRequest, WaitForResponse};
+    use rmux_proto::{
+        ErrorResponse, HandshakeRequest, RmuxError, WaitForMode, WaitForRequest, WaitForResponse,
+        RMUX_WIRE_VERSION,
+    };
 
     #[tokio::test]
     async fn client_disconnect_cancels_plain_waiter() -> io::Result<()> {
@@ -396,6 +442,109 @@ mod tests {
         Ok(())
     }
 
+    #[tokio::test]
+    async fn read_request_sends_framed_error_for_unsupported_wire_version() -> io::Result<()> {
+        let (server, mut client) = LocalStream::pair()?;
+        let mut connection = Connection::new(server);
+        let read_task = tokio::spawn(async move { connection.read_request().await });
+
+        let mut frame = encode_frame(&wait_for("bad-wire-version", WaitForMode::Signal))
+            .map_err(io::Error::other)?;
+        assert_eq!(frame.get(1).copied(), Some(RMUX_WIRE_VERSION as u8));
+        frame[1] = RMUX_WIRE_VERSION.saturating_add(1) as u8;
+        client.write_all(&frame).await?;
+
+        let response = read_test_response(&mut client).await?;
+        assert!(matches!(
+            response,
+            Response::Error(ErrorResponse {
+                error: RmuxError::UnsupportedWireVersion { .. },
+            })
+        ));
+        assert!(read_task.await.expect("read task")?.is_none());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn read_request_sends_framed_error_for_decode_mismatch() -> io::Result<()> {
+        let (server, mut client) = LocalStream::pair()?;
+        let mut connection = Connection::new(server);
+        let read_task = tokio::spawn(async move { connection.read_request().await });
+
+        let payload = 255_u32.to_le_bytes();
+        let mut frame = vec![rmux_proto::RMUX_FRAME_MAGIC, RMUX_WIRE_VERSION as u8];
+        frame.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+        frame.extend_from_slice(&payload);
+        client.write_all(&frame).await?;
+
+        let response = read_test_response(&mut client).await?;
+        assert!(matches!(
+            response,
+            Response::Error(ErrorResponse {
+                error: RmuxError::Decode(_),
+            })
+        ));
+        assert!(read_task.await.expect("read task")?.is_none());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn handshake_rejects_unsupported_wire_version_range() -> io::Result<()> {
+        let handler = Arc::new(RequestHandler::new());
+        let (mut client, _shutdown_tx, connection_task) = spawn_test_connection(&handler)?;
+
+        write_test_request(
+            &mut client,
+            Request::Handshake(HandshakeRequest {
+                minimum_wire_version: RMUX_WIRE_VERSION + 1,
+                maximum_wire_version: RMUX_WIRE_VERSION + 1,
+                required_capabilities: Vec::new(),
+            }),
+        )
+        .await?;
+
+        let response = read_test_response(&mut client).await?;
+        assert!(matches!(
+            response,
+            Response::Error(ErrorResponse {
+                error: RmuxError::UnsupportedWireVersion { .. },
+            })
+        ));
+
+        drop(client);
+        connection_task.await.expect("connection task")?;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn handshake_rejects_unsupported_required_capability() -> io::Result<()> {
+        let handler = Arc::new(RequestHandler::new());
+        let (mut client, _shutdown_tx, connection_task) = spawn_test_connection(&handler)?;
+
+        write_test_request(
+            &mut client,
+            Request::Handshake(HandshakeRequest::requiring(["capability.future"])),
+        )
+        .await?;
+
+        let response = read_test_response(&mut client).await?;
+        match response {
+            Response::Error(ErrorResponse {
+                error: RmuxError::UnsupportedCapability { feature, supported },
+            }) => {
+                assert_eq!(feature, "capability.future");
+                assert!(supported
+                    .iter()
+                    .any(|capability| capability == "rpc.detached"));
+            }
+            response => panic!("expected unsupported capability error, got {response:?}"),
+        }
+
+        drop(client);
+        connection_task.await.expect("connection task")?;
+        Ok(())
+    }
+
     fn spawn_test_connection(
         handler: &Arc<RequestHandler>,
     ) -> io::Result<(
@@ -407,19 +556,26 @@ mod tests {
         let handler = Arc::clone(handler);
         let (shutdown_tx, shutdown_rx) = watch::channel(());
         let (shutdown_handle, _shutdown_request_rx) = ShutdownHandle::new();
+        let connection_id = handler.allocate_connection_id();
         let task = tokio::spawn(async move {
-            serve_connection(
+            let result = serve_connection(
                 server,
                 PeerIdentity {
                     pid: std::process::id(),
                     uid: rmux_os::identity::real_user_id(),
                     user: rmux_os::identity::UserIdentity::Uid(rmux_os::identity::real_user_id()),
                 },
-                handler,
+                Arc::clone(&handler),
+                connection_id,
                 shutdown_rx,
                 shutdown_handle,
             )
-            .await
+            .await;
+            handler
+                .cleanup_connection_subscriptions(connection_id)
+                .await;
+            handler.cleanup_connection_sdk_waits(connection_id).await;
+            result
         });
         Ok((client, shutdown_tx, task))
     }
@@ -434,6 +590,26 @@ mod tests {
     async fn write_test_request(stream: &mut LocalStream, request: Request) -> io::Result<()> {
         let frame = encode_frame(&request).map_err(io::Error::other)?;
         stream.write_all(&frame).await
+    }
+
+    async fn read_test_response(stream: &mut LocalStream) -> io::Result<Response> {
+        let mut decoder = FrameDecoder::new();
+        let mut buffer = [0_u8; 512];
+
+        loop {
+            if let Some(response) = decoder.next_frame::<Response>().map_err(io::Error::other)? {
+                return Ok(response);
+            }
+
+            let bytes_read = stream.read(&mut buffer).await?;
+            if bytes_read == 0 {
+                return Err(io::Error::new(
+                    io::ErrorKind::UnexpectedEof,
+                    "server closed before response frame",
+                ));
+            }
+            decoder.push_bytes(&buffer[..bytes_read]);
+        }
     }
 
     async fn yield_until_counts(

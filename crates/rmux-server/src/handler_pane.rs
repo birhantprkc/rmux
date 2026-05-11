@@ -24,6 +24,8 @@ mod pane_prompt_input;
 mod pane_selection;
 #[path = "handler_pane/send_keys.rs"]
 mod pane_send_keys;
+#[path = "handler_pane/snapshot.rs"]
+mod pane_snapshot;
 
 pub(super) use pane_attached_input::retain_partial_attached_control_input;
 pub(super) use pane_inspection::{

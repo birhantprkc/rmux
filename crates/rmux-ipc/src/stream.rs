@@ -15,6 +15,8 @@ use crate::LocalEndpoint;
 use rmux_os::identity::UserIdentity;
 
 #[cfg(unix)]
+use rustix::event::{poll, PollFd, PollFlags, Timespec};
+#[cfg(unix)]
 use rustix::net::RecvFlags;
 #[cfg(windows)]
 #[path = "stream_windows.rs"]
@@ -66,11 +68,63 @@ async fn wait_for_peer_close_impl(stream: &LocalStream) -> io::Result<()> {
 
         match rustix::net::recv(stream, &mut probe, RecvFlags::PEEK) {
             Ok((_initialized, 0)) => return Ok(()),
-            Ok((_initialized, _available)) => return std::future::pending().await,
+            Ok((_initialized, _available)) => {
+                if peer_close_is_pollable(stream)? {
+                    return Ok(());
+                }
+                tokio::time::sleep(Duration::from_millis(25)).await;
+            }
             Err(rustix::io::Errno::INTR | rustix::io::Errno::AGAIN) => continue,
             Err(rustix::io::Errno::PIPE | rustix::io::Errno::CONNRESET) => return Ok(()),
             Err(error) => return Err(io::Error::from(error)),
         }
+    }
+}
+
+#[cfg(unix)]
+fn peer_close_is_pollable(stream: &LocalStream) -> io::Result<bool> {
+    let timeout = Timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    let mut fds = [PollFd::new(stream, peer_close_interest_flags())];
+    match poll(&mut fds, Some(&timeout)) {
+        Ok(0) => Ok(false),
+        Ok(_) => Ok(fds[0].revents().intersects(peer_close_ready_flags())),
+        Err(rustix::io::Errno::INTR) => Ok(false),
+        Err(error) => Err(error.into()),
+    }
+}
+
+#[cfg(unix)]
+fn peer_close_interest_flags() -> PollFlags {
+    PollFlags::IN | peer_close_ready_flags()
+}
+
+#[cfg(unix)]
+fn peer_close_ready_flags() -> PollFlags {
+    let flags = PollFlags::ERR | PollFlags::HUP;
+    #[cfg(any(
+        target_os = "freebsd",
+        target_os = "illumos",
+        all(
+            target_os = "linux",
+            not(any(target_arch = "sparc", target_arch = "sparc64"))
+        )
+    ))]
+    {
+        flags | PollFlags::RDHUP
+    }
+    #[cfg(not(any(
+        target_os = "freebsd",
+        target_os = "illumos",
+        all(
+            target_os = "linux",
+            not(any(target_arch = "sparc", target_arch = "sparc64"))
+        )
+    )))]
+    {
+        flags
     }
 }
 

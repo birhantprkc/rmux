@@ -83,12 +83,43 @@ impl HandlerState {
         session_name: &SessionName,
         window_index: u32,
     ) -> SessionName {
+        self.window_link_group_id_for_slot_or_group_peer(session_name, window_index)
+            .and_then(|group_id| self.window_link_groups.get(group_id))
+            .map(|group| group.runtime_session_name.clone())
+            .unwrap_or_else(|| self.runtime_session_name(session_name))
+    }
+
+    pub(in crate::pane_terminals) fn window_link_slots_for(
+        &self,
+        session_name: &SessionName,
+        window_index: u32,
+    ) -> Vec<WindowLinkSlot> {
         let slot = self.window_link_slot(session_name, window_index);
         self.window_link_slots
             .get(&slot)
             .and_then(|group_id| self.window_link_groups.get(group_id))
-            .map(|group| group.runtime_session_name.clone())
-            .unwrap_or_else(|| self.runtime_session_name(session_name))
+            .map(|group| group.slots.clone())
+            .unwrap_or_else(|| vec![slot])
+    }
+
+    fn window_link_group_id_for_slot_or_group_peer(
+        &self,
+        session_name: &SessionName,
+        window_index: u32,
+    ) -> Option<&u64> {
+        let slot = self.window_link_slot(session_name, window_index);
+        if let Some(group_id) = self.window_link_slots.get(&slot) {
+            return Some(group_id);
+        }
+
+        self.sessions
+            .session_group_members(session_name)
+            .into_iter()
+            .filter(|member| member != session_name)
+            .find_map(|member| {
+                let member_slot = self.window_link_slot(&member, window_index);
+                self.window_link_slots.get(&member_slot)
+            })
     }
 
     pub(in crate::pane_terminals) fn detach_window_link_slot(

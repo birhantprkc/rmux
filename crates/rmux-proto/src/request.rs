@@ -3,7 +3,10 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-use crate::{ControlModeRequest, PaneTarget, SessionName, Target, WindowTarget};
+use crate::{
+    ControlModeRequest, HandshakeRequest, PaneTarget, SdkWaitId, SdkWaitOwnerId, SessionName,
+    Target, WindowTarget,
+};
 
 #[path = "request/show.rs"]
 mod show;
@@ -21,10 +24,12 @@ pub use layout::{
 mod pane;
 pub use pane::{
     BreakPaneRequest, DisplayPanesRequest, JoinPaneRequest, KillPaneRequest, LastPaneRequest,
-    MovePaneRequest, PaneSplitSize, PipePaneRequest, ResizePaneRequest, RespawnPaneRequest,
+    MovePaneRequest, PaneOutputCursorRequest, PaneOutputSubscriptionStart, PaneSnapshotRequest,
+    PaneSplitSize, PipePaneRequest, ResizePaneRequest, RespawnPaneRequest,
     SelectPaneAdjacentRequest, SelectPaneDirection, SelectPaneMarkRequest, SelectPaneRequest,
     SendKeysExtRequest, SendKeysRequest, SplitWindowExtRequest, SplitWindowRequest,
-    SplitWindowTarget, SwapPaneDirection, SwapPaneRequest,
+    SplitWindowTarget, SubscribePaneOutputRequest, SwapPaneDirection, SwapPaneRequest,
+    UnsubscribePaneOutputRequest,
 };
 
 #[path = "request/window.rs"]
@@ -84,7 +89,8 @@ pub use buffer::{
     LoadBufferRequest, PasteBufferRequest, SaveBufferRequest, SetBufferRequest, ShowBufferRequest,
 };
 
-/// All detached public command requests supported by the wire protocol.
+/// All detached public command and internal RPC requests supported by the wire
+/// protocol.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Request {
     /// `new-session`
@@ -273,10 +279,24 @@ pub enum Request {
     ResolveTarget(ResolveTargetRequest),
     /// Extended `split-window` semantics including an explicit shell command.
     SplitWindowExt(SplitWindowExtRequest),
+    /// Internal SDK/daemon version and capability negotiation.
+    Handshake(HandshakeRequest),
+    /// Internal daemon-backed structured pane snapshot endpoint.
+    PaneSnapshot(PaneSnapshotRequest),
+    /// Internal daemon-backed pane output subscription endpoint.
+    SubscribePaneOutput(SubscribePaneOutputRequest),
+    /// Internal daemon-backed pane output unsubscription endpoint.
+    UnsubscribePaneOutput(UnsubscribePaneOutputRequest),
+    /// Internal daemon-backed pane output cursor polling endpoint.
+    PaneOutputCursor(PaneOutputCursorRequest),
+    /// Internal daemon-backed SDK byte wait endpoint.
+    SdkWaitForOutput(SdkWaitForOutputRequest),
+    /// Internal daemon-backed SDK wait cancellation endpoint.
+    CancelSdkWait(CancelSdkWaitRequest),
 }
 
 impl Request {
-    /// Returns the stable public command name for the request variant.
+    /// Returns the stable routing name for the request variant.
     #[must_use]
     pub const fn command_name(&self) -> &'static str {
         match self {
@@ -326,6 +346,12 @@ impl Request {
             Self::LoadBuffer(_) => "load-buffer",
             Self::SaveBuffer(_) => "save-buffer",
             Self::CapturePane(_) => "capture-pane",
+            Self::PaneSnapshot(_) => "pane-snapshot",
+            Self::SubscribePaneOutput(_) => "subscribe-pane-output",
+            Self::UnsubscribePaneOutput(_) => "unsubscribe-pane-output",
+            Self::PaneOutputCursor(_) => "pane-output-cursor",
+            Self::SdkWaitForOutput(_) => "sdk-wait-output",
+            Self::CancelSdkWait(_) => "cancel-sdk-wait",
             Self::DisplayMessage(_) => "display-message",
             Self::ResolveTarget(_) => "resolve-target",
             Self::RunShell(_) => "run-shell",
@@ -372,6 +398,7 @@ impl Request {
             Self::DetachClientExt(_) => "detach-client",
             Self::AttachSessionExt2(_) => "attach-session",
             Self::SwitchClientExt3(_) => "switch-client",
+            Self::Handshake(_) => "handshake",
         }
     }
 }
@@ -515,6 +542,35 @@ pub struct WaitForRequest {
     pub mode: WaitForMode,
 }
 
+/// Request payload for a daemon-backed SDK byte wait.
+///
+/// This is intentionally distinct from tmux-compatible [`WaitForRequest`].
+/// SDK waits are pane-output waits with typed IDs used only for cancellation
+/// and teardown bookkeeping; they never signal or lock tmux `wait-for`
+/// channels.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SdkWaitForOutputRequest {
+    /// Opaque SDK transport owner for this wait.
+    pub owner_id: SdkWaitOwnerId,
+    /// Wait ID allocated by the SDK under `owner_id`.
+    pub wait_id: SdkWaitId,
+    /// Pane whose raw output stream is observed.
+    pub target: PaneTarget,
+    /// Raw byte sequence to search for in pane output.
+    pub bytes: Vec<u8>,
+    /// Cursor position used when arming the wait.
+    pub start: PaneOutputSubscriptionStart,
+}
+
+/// Request payload for best-effort cancellation of a daemon-backed SDK wait.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CancelSdkWaitRequest {
+    /// Opaque SDK transport owner for the wait being cancelled.
+    pub owner_id: SdkWaitOwnerId,
+    /// Wait ID allocated by the SDK under `owner_id`.
+    pub wait_id: SdkWaitId,
+}
+
 /// Request payload for `list-panes`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ListPanesRequest {
@@ -530,3 +586,171 @@ pub struct ListPanesRequest {
 #[cfg(test)]
 #[path = "request/compat_tests.rs"]
 mod compat_tests;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        OptionScopeSelector, PaneTarget, ScopeSelector, SelectPaneDirection, SetOptionMode,
+        SplitDirection,
+    };
+
+    fn alpha() -> SessionName {
+        SessionName::new("alpha").expect("valid session")
+    }
+
+    fn pane() -> PaneTarget {
+        PaneTarget::new(alpha(), 0)
+    }
+
+    #[test]
+    fn request_command_names_cover_extended_aliases_and_internal_tags() {
+        assert_eq!(
+            Request::NewSessionExt(NewSessionExtRequest {
+                session_name: None,
+                working_directory: None,
+                detached: true,
+                size: None,
+                environment: None,
+                group_target: None,
+                attach_if_exists: false,
+                detach_other_clients: false,
+                kill_other_clients: false,
+                flags: None,
+                window_name: None,
+                print_session_info: false,
+                print_format: None,
+                command: None,
+            })
+            .command_name(),
+            "new-session"
+        );
+        assert_eq!(
+            Request::SplitWindowExt(SplitWindowExtRequest {
+                target: SplitWindowTarget::Pane(pane()),
+                direction: SplitDirection::Vertical,
+                environment: None,
+                command: None,
+            })
+            .command_name(),
+            "split-window"
+        );
+        assert_eq!(
+            Request::SelectPaneAdjacent(SelectPaneAdjacentRequest {
+                target: pane(),
+                direction: SelectPaneDirection::Right,
+            })
+            .command_name(),
+            "select-pane"
+        );
+        assert_eq!(
+            Request::SelectPaneMark(SelectPaneMarkRequest {
+                target: pane(),
+                clear: false,
+                title: None,
+            })
+            .command_name(),
+            "select-pane"
+        );
+        assert_eq!(
+            Request::SetOptionByName(SetOptionByNameRequest {
+                scope: OptionScopeSelector::ServerGlobal,
+                name: "status".to_owned(),
+                value: Some("on".to_owned()),
+                mode: SetOptionMode::Replace,
+                only_if_unset: false,
+                unset: false,
+                unset_pane_overrides: false,
+            })
+            .command_name(),
+            "set-option"
+        );
+        assert_eq!(
+            Request::SetHookMutation(SetHookMutationRequest {
+                scope: ScopeSelector::Global,
+                hook: crate::HookName::AfterNewSession,
+                command: None,
+                lifecycle: crate::HookLifecycle::Persistent,
+                append: false,
+                unset: true,
+                run_immediately: false,
+                index: None,
+            })
+            .command_name(),
+            "set-hook"
+        );
+        assert_eq!(
+            Request::AttachSessionExt2(AttachSessionExt2Request {
+                target: Some(alpha()),
+                target_spec: None,
+                detach_other_clients: false,
+                kill_other_clients: false,
+                read_only: false,
+                skip_environment_update: false,
+                flags: None,
+                working_directory: None,
+                client_terminal: crate::ClientTerminalContext::default(),
+                client_size: None,
+            })
+            .command_name(),
+            "attach-session"
+        );
+        assert_eq!(
+            Request::SwitchClientExt3(SwitchClientExt3Request {
+                target_client: None,
+                target: Some("alpha:0.0".to_owned()),
+                key_table: None,
+                last_session: false,
+                next_session: false,
+                previous_session: false,
+                toggle_read_only: false,
+                sort_order: None,
+                skip_environment_update: false,
+                zoom: false,
+            })
+            .command_name(),
+            "switch-client"
+        );
+        assert_eq!(
+            Request::ResolveTarget(ResolveTargetRequest {
+                target: Some("alpha:0.0".to_owned()),
+                target_type: ResolveTargetType::Pane,
+                window_index: false,
+                prefer_unattached: false,
+            })
+            .command_name(),
+            "resolve-target"
+        );
+        assert_eq!(
+            Request::Handshake(HandshakeRequest::current()).command_name(),
+            "handshake"
+        );
+        assert_eq!(
+            Request::SdkWaitForOutput(SdkWaitForOutputRequest {
+                owner_id: SdkWaitOwnerId::new(1),
+                wait_id: SdkWaitId::new(1),
+                target: pane(),
+                bytes: b"ready".to_vec(),
+                start: PaneOutputSubscriptionStart::Now,
+            })
+            .command_name(),
+            "sdk-wait-output"
+        );
+        assert_eq!(
+            Request::CancelSdkWait(CancelSdkWaitRequest {
+                owner_id: SdkWaitOwnerId::new(1),
+                wait_id: SdkWaitId::new(1),
+            })
+            .command_name(),
+            "cancel-sdk-wait"
+        );
+        assert_eq!(
+            Request::WaitFor(WaitForRequest {
+                channel: "ready".to_owned(),
+                mode: WaitForMode::Wait,
+            })
+            .command_name(),
+            "wait-for"
+        );
+    }
+}
