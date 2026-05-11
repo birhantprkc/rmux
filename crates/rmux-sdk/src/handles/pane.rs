@@ -187,7 +187,7 @@ impl Pane {
     ///
     /// Setup performs one `subscribe-pane-output` round trip and is
     /// fallible: a stale pane slot, a transport failure, or a refused
-    /// daemon capability propagates as [`RmuxError`].
+    /// daemon capability propagates as [`crate::RmuxError`].
     ///
     /// The returned [`PaneOutputStream`] preserves arbitrary bytes,
     /// pairs every chunk with the daemon's monotonic per-pane sequence,
