@@ -1,7 +1,9 @@
 //! Opaque RMUX SDK facade handle.
 
+use std::ffi::OsStr;
 use std::fmt;
 use std::io;
+use std::process::{Command, Stdio};
 use std::time::Duration;
 
 use super::builder::RmuxBuilder;
@@ -19,6 +21,8 @@ use rmux_proto::{
     HandshakeRequest, KillServerRequest, Request, Response, CAPABILITY_DAEMON_SHUTDOWN,
     CAPABILITY_HANDSHAKE, RMUX_WIRE_VERSION,
 };
+
+const INTERNAL_DAEMON_FLAG: &str = "--__internal-daemon";
 
 /// Inert SDK facade for daemon-backed RMUX operations.
 ///
@@ -42,6 +46,35 @@ impl Rmux {
     #[must_use]
     pub fn builder() -> RmuxBuilder {
         RmuxBuilder::new()
+    }
+
+    /// Connects to a running daemon at `endpoint`.
+    ///
+    /// Passing [`RmuxEndpoint::Default`] resolves the platform default through
+    /// SDK discovery. This method never starts a daemon.
+    pub async fn connect(endpoint: RmuxEndpoint) -> Result<Self> {
+        RmuxBuilder::new().endpoint(endpoint).connect().await
+    }
+
+    /// Connects to the default daemon, starting it if no daemon is reachable.
+    ///
+    /// The hidden daemon binary is resolved from
+    /// [`crate::bootstrap::discovery::SDK_DAEMON_BINARY_ENV`] when set,
+    /// otherwise `rmux` is resolved through the host `PATH`. Startup races are
+    /// serialized by the platform bootstrap layer.
+    pub async fn connect_or_start() -> Result<Self> {
+        RmuxBuilder::new().connect_or_start().await
+    }
+
+    /// Connects to `endpoint`, starting a hidden daemon if no daemon is
+    /// reachable there.
+    ///
+    /// This is the explicit-endpoint form of [`Self::connect_or_start`].
+    pub async fn connect_or_start_at(endpoint: RmuxEndpoint) -> Result<Self> {
+        RmuxBuilder::new()
+            .endpoint(endpoint)
+            .connect_or_start()
+            .await
     }
 
     /// Returns the endpoint selection recorded by this facade.
@@ -180,6 +213,19 @@ impl Rmux {
             endpoint,
             default_timeout,
             transport: None,
+            drop_guard: DropGuard::noop(),
+        }
+    }
+
+    pub(crate) fn from_connected_transport(
+        endpoint: RmuxEndpoint,
+        default_timeout: Option<Duration>,
+        transport: TransportClient,
+    ) -> Self {
+        Self {
+            endpoint,
+            default_timeout,
+            transport: Some(transport),
             drop_guard: DropGuard::noop(),
         }
     }
@@ -363,6 +409,77 @@ pub(crate) async fn connect_transport_to_endpoint(
     timeout: Option<Duration>,
 ) -> Result<TransportClient> {
     connect_transport(endpoint, timeout).await
+}
+
+pub(crate) async fn connect_or_start_transport(
+    endpoint: &RmuxEndpoint,
+    _default_timeout: Option<Duration>,
+) -> Result<TransportClient> {
+    connect_or_start_transport_for_platform(endpoint).await
+}
+
+#[cfg(unix)]
+async fn connect_or_start_transport_for_platform(
+    endpoint: &RmuxEndpoint,
+) -> Result<TransportClient> {
+    let RmuxEndpoint::UnixSocket(socket_path) = endpoint else {
+        return connect_transport(endpoint, None).await;
+    };
+    let socket_path = socket_path.clone();
+    let outcome = crate::bootstrap::startup_unix::connect_or_start(&socket_path, || {
+        let socket_path = socket_path.clone();
+        async move { spawn_hidden_daemon(socket_path.as_os_str()) }
+    })
+    .await
+    .map_err(startup_error)?;
+    Ok(TransportClient::spawn(outcome.into_stream()))
+}
+
+#[cfg(windows)]
+async fn connect_or_start_transport_for_platform(
+    endpoint: &RmuxEndpoint,
+) -> Result<TransportClient> {
+    let RmuxEndpoint::WindowsPipe(pipe) = endpoint else {
+        return connect_transport(endpoint, None).await;
+    };
+    let pipe_path = std::path::PathBuf::from(pipe);
+    crate::bootstrap::startup_windows::connect_or_start(&pipe_path, || {
+        let pipe_path = pipe_path.clone();
+        async move { spawn_hidden_daemon(pipe_path.as_os_str()) }
+    })
+    .await
+    .map_err(startup_error)?;
+    connect_transport(endpoint, None).await
+}
+
+#[cfg(not(any(unix, windows)))]
+async fn connect_or_start_transport_for_platform(
+    endpoint: &RmuxEndpoint,
+) -> Result<TransportClient> {
+    connect_transport(endpoint, None).await
+}
+
+fn spawn_hidden_daemon(endpoint: &OsStr) -> io::Result<()> {
+    let child = Command::new(daemon_binary())
+        .arg(INTERNAL_DAEMON_FLAG)
+        .arg(endpoint)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()?;
+    drop(child);
+    Ok(())
+}
+
+fn daemon_binary() -> std::ffi::OsString {
+    std::env::var_os(discovery::SDK_DAEMON_BINARY_ENV).unwrap_or_else(|| "rmux".into())
+}
+
+fn startup_error(error: impl fmt::Display) -> RmuxError {
+    RmuxError::transport(
+        "connect or start rmux daemon",
+        io::Error::other(error.to_string()),
+    )
 }
 
 #[cfg(windows)]

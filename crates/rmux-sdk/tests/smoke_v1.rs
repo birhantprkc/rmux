@@ -1,6 +1,7 @@
 #![cfg(unix)]
 
 use std::error::Error;
+use std::ffi::OsString;
 use std::fs;
 use std::os::unix::fs::FileTypeExt;
 use std::path::{Component, Path, PathBuf};
@@ -9,8 +10,8 @@ use std::sync::OnceLock;
 use std::time::Duration;
 
 use rmux_sdk::{
-    PaneInfo, PaneOutputChunk, PaneOutputStart, PaneOutputStream, PaneProcessState, RmuxBuilder,
-    SessionName,
+    bootstrap::discovery::SDK_DAEMON_BINARY_ENV, EnsureSession, EnsureSessionPolicy, PaneInfo,
+    PaneOutputChunk, PaneOutputStart, PaneOutputStream, PaneProcessState, RmuxBuilder, SessionName,
 };
 use tokio::time::{sleep, timeout, Instant};
 
@@ -26,21 +27,44 @@ async fn daemon_backed_sdk_happy_path_cleans_tmp_socket_lock_daemon_and_child() 
     let lock_path = root.join("daemon.sock.startup-lock");
     let session_name = SessionName::new("sdksmokev1")?;
     let cleanup = Cleanup::new(root.clone(), socket_path.clone());
+    let daemon_binary = rmux_binary()?.to_path_buf();
+    let _daemon_binary_env = EnvGuard::set(SDK_DAEMON_BINARY_ENV, daemon_binary.as_os_str());
 
-    start_session_through_cli_autostart(&socket_path, &session_name)?;
-    assert_socket(&socket_path)?;
-    assert!(
-        lock_path.is_file(),
-        "CLI autostart did not create startup lock {}",
-        lock_path.display()
-    );
+    if let Some(parent) = socket_path.parent() {
+        let _ = fs::remove_dir_all(parent);
+    }
 
-    let daemon_pid = wait_for_daemon_pid(&socket_path).await?;
     let rmux = RmuxBuilder::new()
         .unix_socket(&socket_path)
         .default_timeout(Duration::from_secs(5))
-        .build();
-    let session = rmux.session(session_name.clone()).await?;
+        .connect_or_start()
+        .await?;
+    assert_socket(&socket_path)?;
+    assert!(
+        lock_path.is_file(),
+        "SDK connect_or_start did not create startup lock {}",
+        lock_path.display()
+    );
+    let daemon_pid = wait_for_daemon_pid(&socket_path).await?;
+
+    let warm = RmuxBuilder::new()
+        .unix_socket(&socket_path)
+        .default_timeout(Duration::from_secs(5))
+        .connect_or_start()
+        .await?;
+    assert!(
+        warm.list_sessions().await?.is_empty(),
+        "fresh smoke daemon should start without preexisting sessions"
+    );
+    drop(warm);
+
+    let session = rmux
+        .ensure_session(
+            EnsureSession::named(session_name.clone())
+                .policy(EnsureSessionPolicy::CreateOrReuse)
+                .detached(true),
+        )
+        .await?;
     assert!(session.exists().await?);
     assert!(session.is_listed().await?);
 
@@ -65,34 +89,6 @@ async fn daemon_backed_sdk_happy_path_cleans_tmp_socket_lock_daemon_and_child() 
     assert!(!socket_path.exists(), "socket path remained after cleanup");
     assert!(!lock_path.exists(), "startup lock remained after cleanup");
     assert!(!root.exists(), "endpoint root remained after cleanup");
-    Ok(())
-}
-
-fn start_session_through_cli_autostart(
-    socket_path: &Path,
-    session_name: &SessionName,
-) -> TestResult {
-    if let Some(parent) = socket_path.parent() {
-        let _ = fs::remove_dir_all(parent);
-    }
-
-    let status = Command::new(rmux_binary()?)
-        .arg("-S")
-        .arg(socket_path)
-        .arg("new-session")
-        .arg("-d")
-        .arg("-s")
-        .arg(session_name.to_string())
-        .env("RMUX_TMPDIR", "/tmp")
-        .env_remove("RMUX")
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()?;
-    if !status.success() {
-        return Err(format!("rmux CLI autostart failed with status {status}").into());
-    }
-
     Ok(())
 }
 
@@ -380,5 +376,27 @@ impl Drop for Cleanup {
                 .status();
         }
         let _ = fs::remove_dir_all(&self.root);
+    }
+}
+
+struct EnvGuard {
+    key: &'static str,
+    previous: Option<OsString>,
+}
+
+impl EnvGuard {
+    fn set(key: &'static str, value: &std::ffi::OsStr) -> Self {
+        let previous = std::env::var_os(key);
+        std::env::set_var(key, value);
+        Self { key, previous }
+    }
+}
+
+impl Drop for EnvGuard {
+    fn drop(&mut self) {
+        match &self.previous {
+            Some(value) => std::env::set_var(self.key, value),
+            None => std::env::remove_var(self.key),
+        }
     }
 }

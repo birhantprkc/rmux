@@ -21,6 +21,8 @@ use crate::{Result, RmuxEndpoint, RmuxError};
 
 /// Environment variable for the SDK endpoint override.
 pub const SDK_ENDPOINT_ENV: &str = "RMUX_SDK_ENDPOINT";
+/// Environment variable for the `rmux` binary used by SDK daemon startup.
+pub const SDK_DAEMON_BINARY_ENV: &str = "RMUX_SDK_DAEMON_BINARY";
 /// Environment variable for the SDK operation timeout override in milliseconds.
 pub const SDK_TIMEOUT_MS_ENV: &str = "RMUX_SDK_TIMEOUT_MS";
 /// Default v1 SDK operation timeout.

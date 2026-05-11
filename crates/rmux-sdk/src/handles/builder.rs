@@ -4,7 +4,7 @@ use std::fmt;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use super::rmux::Rmux;
+use super::rmux::{connect_or_start_transport, connect_transport_to_endpoint, Rmux};
 use crate::bootstrap::discovery;
 use crate::{Result, RmuxEndpoint};
 
@@ -104,6 +104,36 @@ impl RmuxBuilder {
     #[must_use]
     pub fn build(self) -> Rmux {
         Rmux::from_config(self.endpoint, self.default_timeout)
+    }
+
+    /// Connects to the configured daemon endpoint and returns a live facade.
+    ///
+    /// Unlike [`Self::build`], this resolves the endpoint immediately and
+    /// opens the local IPC transport. It never starts a daemon.
+    pub async fn connect(self) -> Result<Rmux> {
+        let endpoint = discovery::resolve_endpoint(&self.endpoint)?;
+        let timeout = discovery::resolve_timeout(None, self.default_timeout);
+        let transport = connect_transport_to_endpoint(&endpoint, timeout).await?;
+        Ok(Rmux::from_connected_transport(
+            endpoint,
+            self.default_timeout,
+            transport,
+        ))
+    }
+
+    /// Connects to a daemon, starting the platform hidden daemon if needed.
+    ///
+    /// Startup is serialized by the OS-specific bootstrap primitive. Dropping
+    /// the returned facade never kills the daemon; callers use
+    /// [`Rmux::shutdown`] for an explicit shutdown request.
+    pub async fn connect_or_start(self) -> Result<Rmux> {
+        let endpoint = discovery::resolve_endpoint(&self.endpoint)?;
+        let transport = connect_or_start_transport(&endpoint, self.default_timeout).await?;
+        Ok(Rmux::from_connected_transport(
+            endpoint,
+            self.default_timeout,
+            transport,
+        ))
     }
 }
 

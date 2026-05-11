@@ -16,13 +16,12 @@
 //! `rmux-proto` and are re-exported here so SDK users import them through
 //! `rmux_sdk` without ever depending on those internal crates.
 //!
-//! # Inert quickstart
+//! # Quickstart
 //!
-//! The shortest legal SDK program records intent without contacting a
-//! daemon. The doctest below executes in `cargo test --workspace --doc`
-//! and exercises the same surface as `examples/quickstart.rs`:
+//! The shortest daemon-backed SDK program connects to a daemon, starting one
+//! through the platform hidden-daemon path if needed, then ensures a session:
 //!
-//! ```
+//! ```no_run
 //! use std::time::Duration;
 //!
 //! use rmux_sdk::{
@@ -30,26 +29,29 @@
 //!     TerminalSizeSpec,
 //! };
 //!
+//! # async fn run() -> rmux_sdk::Result<()> {
 //! let rmux = Rmux::builder()
-//!     .default_endpoint()
 //!     .default_timeout(Duration::from_secs(5))
-//!     .build();
-//! assert!(matches!(rmux.endpoint(), RmuxEndpoint::Default));
-//! assert_eq!(
-//!     rmux.configured_default_timeout(),
-//!     Some(Duration::from_secs(5)),
-//! );
+//!     .connect_or_start()
+//!     .await?;
+//! assert!(!matches!(rmux.endpoint(), RmuxEndpoint::Default));
 //!
 //! let session = SessionName::new("quickstart").expect("valid session name");
-//! let ensure = EnsureSession::named(session)
-//!     .policy(EnsureSessionPolicy::CreateOrReuse)
-//!     .detached(true)
-//!     .size(TerminalSizeSpec::new(120, 32))
-//!     .process(ProcessSpec {
-//!         command: Some(vec!["bash".to_owned(), "-l".to_owned()]),
-//!         environment: None,
-//!     });
-//! assert_eq!(ensure.configured_policy(), EnsureSessionPolicy::CreateOrReuse);
+//! let session = rmux
+//!     .ensure_session(
+//!         EnsureSession::named(session)
+//!             .policy(EnsureSessionPolicy::CreateOrReuse)
+//!             .detached(true)
+//!             .size(TerminalSizeSpec::new(120, 32))
+//!             .process(ProcessSpec {
+//!                 command: None,
+//!                 environment: None,
+//!             }),
+//!     )
+//!     .await?;
+//! assert!(session.exists().await?);
+//! # Ok(())
+//! # }
 //! ```
 //!
 //! See the crate public overview (`crates/rmux-sdk/src/lib.rs`) for the public
