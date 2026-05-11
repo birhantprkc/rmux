@@ -175,7 +175,10 @@ fn current_path_impl(pid: u32) -> io::Result<Option<String>> {
             size_i32,
         )
     };
-    if usize::try_from(read).map_or(true, |read| read < size) {
+    if usize::try_from(read)
+        .map(|read| read < size)
+        .unwrap_or(true)
+    {
         return Ok(None);
     }
 
@@ -245,7 +248,10 @@ fn fd_path_impl(pid: u32, fd: i32) -> io::Result<Option<PathBuf>> {
             size_i32,
         )
     };
-    if usize::try_from(read).map_or(true, |read| read < size) {
+    if usize::try_from(read)
+        .map(|read| read < size)
+        .unwrap_or(true)
+    {
         return Ok(None);
     }
 

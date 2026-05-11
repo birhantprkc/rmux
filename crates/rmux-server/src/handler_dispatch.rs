@@ -63,6 +63,7 @@ impl RequestHandler {
         outcome
     }
 
+    #[async_recursion::async_recursion]
     pub(crate) async fn dispatch_captured(
         &self,
         requester_pid: u32,
@@ -77,6 +78,7 @@ impl RequestHandler {
         .await
     }
 
+    #[async_recursion::async_recursion]
     async fn dispatch_request(
         &self,
         requester_pid: u32,

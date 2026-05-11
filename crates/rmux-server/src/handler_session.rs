@@ -198,7 +198,8 @@ impl RequestHandler {
 
             let needs_terminal = created_group
                 .as_ref()
-                .is_none_or(|created| created.template_session.is_none());
+                .map(|created| created.template_session.is_none())
+                .unwrap_or(true);
             if needs_terminal {
                 match state.insert_initial_session_terminal(
                     &session_name,

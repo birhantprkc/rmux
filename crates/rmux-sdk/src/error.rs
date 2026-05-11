@@ -303,6 +303,7 @@ impl NonCloneGuard for CollectError {}
 
 const _: fn() = sdk_errors_remain_non_clone;
 
+#[allow(dead_code)]
 fn sdk_errors_remain_non_clone() {
     fn assert_non_clone_guard<T: NonCloneGuard>() {}
 

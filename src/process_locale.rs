@@ -5,7 +5,7 @@ use std::ffi::CString;
 // SAFETY: This declares libc's process-global timezone refresh entrypoint.
 // Calls are wrapped in `LibcLocaleBackend::tzset`.
 #[cfg(unix)]
-unsafe extern "C" {
+extern "C" {
     fn tzset();
 }
 

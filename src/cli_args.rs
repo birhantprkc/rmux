@@ -2,7 +2,7 @@
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
-use std::sync::LazyLock;
+use std::sync::OnceLock;
 
 use clap::{ArgAction, Args, CommandFactory, FromArgMatches, Parser};
 use rmux_core::command_parser::{CommandEntry, ParsedCommands, COMMAND_TABLE};
@@ -97,10 +97,9 @@ const DOCUMENTED_CLI_ALIASES: &[DocumentedCliAlias] = &[
     },
 ];
 
-static IMPLEMENTED_COMMAND_SURFACE: LazyLock<Vec<&'static CommandEntry>> =
-    LazyLock::new(|| COMMAND_TABLE.iter().collect());
+static IMPLEMENTED_COMMAND_SURFACE: OnceLock<Vec<&'static CommandEntry>> = OnceLock::new();
 
-static IMPLEMENTED_COMMAND_HELP: LazyLock<String> = LazyLock::new(build_implemented_command_help);
+static IMPLEMENTED_COMMAND_HELP: OnceLock<String> = OnceLock::new();
 
 pub(crate) fn parse<I, T>(args: I) -> Result<Cli, clap::Error>
 where
@@ -108,7 +107,7 @@ where
     T: Into<OsString> + Clone,
 {
     let mut command = RawCli::command();
-    command = command.after_help(IMPLEMENTED_COMMAND_HELP.as_str());
+    command = command.after_help(implemented_command_help());
     let matches = command.try_get_matches_from(args)?;
     let raw = RawCli::from_arg_matches(&matches)?;
     let parsed_commands = parse_command_queue(&raw.command)?;
@@ -141,7 +140,15 @@ fn build_implemented_command_help() -> String {
 }
 
 pub(crate) fn implemented_command_surface() -> &'static [&'static CommandEntry] {
-    IMPLEMENTED_COMMAND_SURFACE.as_slice()
+    IMPLEMENTED_COMMAND_SURFACE
+        .get_or_init(|| COMMAND_TABLE.iter().collect())
+        .as_slice()
+}
+
+fn implemented_command_help() -> &'static str {
+    IMPLEMENTED_COMMAND_HELP
+        .get_or_init(build_implemented_command_help)
+        .as_str()
 }
 
 pub(crate) fn documented_cli_aliases() -> &'static [DocumentedCliAlias] {

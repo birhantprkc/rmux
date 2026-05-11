@@ -242,7 +242,7 @@ pub(super) fn run_list_commands(args: ListCommandsArgs) -> Result<i32, ExitFailu
     let lines = entries
         .iter()
         .copied()
-        .filter(|entry| requested.is_none_or(|name| entry.name == name))
+        .filter(|entry| requested.map(|name| entry.name == name).unwrap_or(true))
         .map(|entry| render_list_commands_line(format, entry.name, entry.alias))
         .collect::<Vec<_>>();
 

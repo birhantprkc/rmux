@@ -324,7 +324,8 @@ impl RequestHandler {
         if active
             .overlay
             .as_ref()
-            .is_none_or(|current| current.id() != overlay.id())
+            .map(|current| current.id() != overlay.id())
+            .unwrap_or(true)
         {
             return Ok(());
         }
@@ -390,7 +391,8 @@ impl RequestHandler {
         if active
             .overlay
             .as_ref()
-            .is_none_or(|overlay| overlay.id() != popup_id)
+            .map(|overlay| overlay.id() != popup_id)
+            .unwrap_or(true)
         {
             return Ok(());
         }

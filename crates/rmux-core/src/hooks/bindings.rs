@@ -76,7 +76,7 @@ impl HookBindings {
     pub(super) fn views(&self, filter: Option<HookName>) -> Vec<HookBindingView> {
         hook_inventory()
             .into_iter()
-            .filter(|hook| filter.is_none_or(|expected| *hook == expected))
+            .filter(|hook| filter.map(|expected| *hook == expected).unwrap_or(true))
             .flat_map(|hook| {
                 self.hooks
                     .get(&hook)

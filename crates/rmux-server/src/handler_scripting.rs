@@ -124,6 +124,7 @@ impl RequestHandler {
         self.parse_command_string_one_group(command).await
     }
 
+    #[async_recursion::async_recursion]
     pub(super) async fn execute_parsed_commands(
         &self,
         requester_pid: u32,
@@ -153,6 +154,7 @@ impl RequestHandler {
         .await
     }
 
+    #[async_recursion::async_recursion]
     async fn execute_command_queue(
         &self,
         requester_pid: u32,
@@ -226,6 +228,7 @@ impl RequestHandler {
         }
     }
 
+    #[async_recursion::async_recursion]
     async fn execute_queued_command(
         &self,
         requester_pid: u32,

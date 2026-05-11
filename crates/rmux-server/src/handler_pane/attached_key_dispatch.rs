@@ -23,6 +23,7 @@ use commands::{execute_attached_binding_commands, AttachedBindingCommandContext}
 use copy_mode::direct_copy_mode_command;
 
 impl RequestHandler {
+    #[async_recursion::async_recursion]
     pub(super) async fn dispatch_attached_key(
         &self,
         attach_pid: u32,
@@ -45,6 +46,7 @@ impl RequestHandler {
         Ok(())
     }
 
+    #[async_recursion::async_recursion]
     pub(super) async fn dispatch_attached_key_inner(
         &self,
         target: &PaneTarget,

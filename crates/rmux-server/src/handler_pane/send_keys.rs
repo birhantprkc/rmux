@@ -31,6 +31,7 @@ impl RequestHandler {
         write_bytes_to_target(prepared.0, prepared.1, key_count).await
     }
 
+    #[async_recursion::async_recursion]
     pub(in crate::handler) async fn handle_send_keys_ext(
         &self,
         requester_pid: u32,

@@ -99,7 +99,8 @@ impl RequestHandler {
         } else if mode
             .selected_id
             .as_ref()
-            .is_none_or(|id| !build.items.contains_key(id))
+            .map(|id| !build.items.contains_key(id))
+            .unwrap_or(true)
         {
             mode.selected_id = mode_tree_default_selection(mode, &build, attach_pid, &state)
                 .or_else(|| build.visible.first().cloned());
@@ -110,7 +111,8 @@ impl RequestHandler {
             let status_on = state
                 .options
                 .resolve(Some(session.name()), OptionName::Status)
-                .is_none_or(|value| value != "off");
+                .map(|value| value != "off")
+                .unwrap_or(true);
             let usable = rows.saturating_sub(u16::from(status_on));
             mode.last_list_rows = usize::from(mode_tree_list_rows(
                 usable,

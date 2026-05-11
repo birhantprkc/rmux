@@ -16,6 +16,7 @@ pub(super) struct AttachedBindingCommandContext {
     pub(super) commands: ParsedCommands,
 }
 
+#[async_recursion::async_recursion]
 pub(super) async fn execute_attached_binding_commands(
     handler: &RequestHandler,
     command_context: AttachedBindingCommandContext,

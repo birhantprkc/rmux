@@ -248,7 +248,7 @@ impl RequestHandler {
             let matches_state = active
                 .display_panes
                 .as_ref()
-                .is_some_and(|state| expected_state_id.is_none_or(|id| id == state.id));
+                .is_some_and(|state| expected_state_id.map(|id| id == state.id).unwrap_or(true));
             if !matches_state {
                 return Ok(false);
             }

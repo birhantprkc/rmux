@@ -173,7 +173,6 @@ pub fn connect_blocking(
     endpoint: &LocalEndpoint,
     timeout: Duration,
 ) -> io::Result<BlockingLocalStream> {
-    use rustix::event::{poll, PollFd, PollFlags, Timespec};
     use rustix::net::sockopt::socket_error;
     use rustix::net::{
         connect as socket_connect, socket_with, AddressFamily, SocketAddrUnix, SocketType,

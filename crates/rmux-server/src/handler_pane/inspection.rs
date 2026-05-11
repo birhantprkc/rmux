@@ -399,7 +399,9 @@ fn collect_list_pane_lines(
         .windows()
         .iter()
         .filter(|(window_index, _)| {
-            target_window_index.is_none_or(|target| **window_index == target)
+            target_window_index
+                .map(|target| **window_index == target)
+                .unwrap_or(true)
         })
         .flat_map(|(window_index, window)| {
             let active = *window_index == active_window;

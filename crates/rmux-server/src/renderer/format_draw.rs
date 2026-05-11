@@ -496,7 +496,7 @@ fn parse_expanded_styles(expanded: &str, base: &Style, utf8: &Utf8Config) -> Par
             while index + count < bytes.len() && bytes[index + count] == b'#' {
                 count += 1;
             }
-            let even = count.is_multiple_of(2);
+            let even = count & 1 == 0;
 
             if bytes.get(index + count).copied() != Some(b'[') {
                 index += count;

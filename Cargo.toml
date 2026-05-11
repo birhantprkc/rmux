@@ -31,7 +31,7 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-clap = { version = "4.5.39", features = ["derive"] }
+clap = { version = "=4.5.39", features = ["derive"] }
 libc = "0.2"
 rmux-client = { path = "crates/rmux-client" }
 rmux-core = { path = "crates/rmux-core" }
@@ -51,7 +51,7 @@ rmux-sdk = { path = "crates/rmux-sdk", version = "0.1.0" }
 rustix = { version = "1.1.4", features = ["event", "termios"] }
 
 [build-dependencies]
-embed-manifest = "1.5.0"
+embed-manifest = "=1.4.0"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Storage_FileSystem"] }

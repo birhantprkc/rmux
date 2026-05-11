@@ -228,7 +228,8 @@ pub(super) fn persistent_overlay_replacement_pending(
                 && !overlay.frame.is_empty()
                 && overlay
                     .persistent_state_id
-                    .is_none_or(|state_id| state_id >= current_state_id)
+                    .map(|state_id| state_id >= current_state_id)
+                    .unwrap_or(true)
         }
         _ => false,
     })

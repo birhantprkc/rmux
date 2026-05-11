@@ -115,7 +115,8 @@ impl Utf8Config {
         let mut config = Self {
             variation_selector_always_wide: options
                 .resolve(None, OptionName::VariationSelectorAlwaysWide)
-                .is_none_or(option_flag_is_on),
+                .map(option_flag_is_on)
+                .unwrap_or(true),
             ..Self::default()
         };
         for entry in options.resolve_array_values(None, OptionName::CodepointWidths) {

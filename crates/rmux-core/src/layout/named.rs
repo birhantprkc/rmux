@@ -339,7 +339,7 @@ fn tiled_grid_size(pane_count: usize, max_columns: Option<usize>) -> (usize, usi
     while rows.saturating_mul(columns) < pane_count {
         rows += 1;
         if rows.saturating_mul(columns) < pane_count
-            && max_columns.is_none_or(|limit| columns < limit)
+            && max_columns.map(|limit| columns < limit).unwrap_or(true)
         {
             columns += 1;
         }

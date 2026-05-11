@@ -23,7 +23,8 @@ pub(super) fn render_mode_tree_overlay(
     let status_on = state
         .options
         .resolve(Some(session.name()), OptionName::Status)
-        .is_none_or(|value| value != "off");
+        .map(|value| value != "off")
+        .unwrap_or(true);
     let usable_rows = size.rows.saturating_sub(u16::from(status_on));
     if usable_rows == 0 || size.cols == 0 {
         return Vec::new();
@@ -188,7 +189,8 @@ fn mode_tree_is_flat_sibling_list(build: &ModeTreeBuild, item: &ModeTreeItem) ->
         build
             .items
             .get(sibling_id)
-            .is_none_or(|sibling| sibling.children.is_empty())
+            .map(|sibling| sibling.children.is_empty())
+            .unwrap_or(true)
     })
 }
 
@@ -294,8 +296,12 @@ fn mode_tree_is_last_sibling(build: &ModeTreeBuild, id: &str) -> bool {
         .as_ref()
         .and_then(|parent| build.items.get(parent))
     {
-        Some(parent) => parent.children.last().is_none_or(|child| child == id),
-        None => build.roots.last().is_none_or(|root| root == id),
+        Some(parent) => parent
+            .children
+            .last()
+            .map(|child| child == id)
+            .unwrap_or(true),
+        None => build.roots.last().map(|root| root == id).unwrap_or(true),
     }
 }
 

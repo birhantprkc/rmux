@@ -439,7 +439,8 @@ impl RequestHandler {
         let status_on = state
             .options
             .resolve(Some(session.name()), OptionName::Status)
-            .is_none_or(|value| value != "off");
+            .map(|value| value != "off")
+            .unwrap_or(true);
         Ok(rows.saturating_sub(u16::from(status_on)))
     }
 }

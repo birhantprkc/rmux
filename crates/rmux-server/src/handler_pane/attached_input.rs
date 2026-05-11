@@ -133,6 +133,7 @@ impl RequestHandler {
         Ok(false)
     }
 
+    #[async_recursion::async_recursion]
     async fn handle_attached_prompt_input(
         &self,
         attach_pid: u32,
@@ -505,7 +506,8 @@ impl RequestHandler {
         let status_on = state
             .options
             .resolve(Some(session.name()), OptionName::Status)
-            .is_none_or(|value| value != "off");
+            .map(|value| value != "off")
+            .unwrap_or(true);
         let usable_rows = size.rows.saturating_sub(u16::from(status_on));
         if usable_rows == 0 || size.cols == 0 {
             return Some(Vec::new());

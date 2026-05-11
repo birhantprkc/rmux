@@ -18,6 +18,7 @@ pub use rmux::Rmux;
 pub use session::Session;
 pub use window::{Window, WindowCloseOutcome, WindowPane};
 
+#[allow(dead_code)]
 fn assert_static_facade_contract<T: Send + Sync + 'static>() {
     let _ = std::marker::PhantomData::<T>;
 }

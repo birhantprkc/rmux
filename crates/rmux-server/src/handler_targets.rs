@@ -38,7 +38,8 @@ impl RequestHandler {
         let preferred_session = if request
             .target
             .as_deref()
-            .is_none_or(unresolved_target_needs_current_session)
+            .map(unresolved_target_needs_current_session)
+            .unwrap_or(true)
         {
             self.preferred_session_name().await.ok()
         } else {

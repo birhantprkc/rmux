@@ -11,6 +11,7 @@ use crate::input_keys::{decode_extended_key, decode_mouse, ExtendedKeyDecode, Mo
 use crate::key_table::{decode_attached_key, AttachedKeyDecode, PREFIX_TABLE};
 
 impl RequestHandler {
+    #[async_recursion::async_recursion]
     pub(crate) async fn handle_attached_live_input(
         &self,
         attach_pid: u32,
@@ -22,6 +23,7 @@ impl RequestHandler {
             .map(|_| ())
     }
 
+    #[async_recursion::async_recursion]
     pub(crate) async fn handle_attached_live_input_inner(
         &self,
         attach_pid: u32,

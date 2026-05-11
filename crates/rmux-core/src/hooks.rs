@@ -258,7 +258,7 @@ impl HookStore {
     pub fn shipped_global_hooks(root: HookGlobalRoot, hook: Option<HookName>) -> Vec<HookName> {
         hook_inventory()
             .into_iter()
-            .filter(|candidate| hook.is_none_or(|expected| *candidate == expected))
+            .filter(|candidate| hook.map(|expected| *candidate == expected).unwrap_or(true))
             .filter(|candidate| {
                 hook_is_visible_in_show_hooks(*candidate) && root_for_hook(*candidate) == root
             })
