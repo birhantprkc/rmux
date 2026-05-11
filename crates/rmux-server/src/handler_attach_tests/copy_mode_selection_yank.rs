@@ -225,13 +225,21 @@ async fn copy_mode_vi_escape_clears_active_selection_without_exiting_or_leaking(
     let target = PaneTarget::new(alpha.clone(), 0);
 
     set_top_buffer_bytes(&handler, ORACLE_OLD_BUFFER_BYTES).await;
-    let (mut pending_input, before_capture) =
+    let (mut pending_input, _before_capture) =
         enter_vi_selection_yank_fixture(&handler, requester_pid, &alpha, &target).await;
 
-    handler
-        .handle_attached_live_input_for_test(requester_pid, b"\x1b")
+    let forwarded_to_pane = handler
+        .handle_attached_live_input_inner(requester_pid, &mut pending_input, b"\x1b")
         .await
         .expect("Escape clears active vi selection");
+    assert!(
+        !forwarded_to_pane,
+        "Escape must be consumed by copy-mode instead of reaching pane IO"
+    );
+    assert!(
+        pending_input.is_empty(),
+        "Escape should fully decode and leave no pending input"
+    );
     assert_eq!(
         copy_selection_status(&handler, target.clone()).await,
         "1:5,0:0:0::,:,\n",
@@ -241,11 +249,6 @@ async fn copy_mode_vi_escape_clears_active_selection_without_exiting_or_leaking(
         show_top_buffer_bytes(&handler).await,
         ORACLE_OLD_BUFFER_BYTES,
         "selection cancel must not mutate the top buffer"
-    );
-    assert_eq!(
-        capture_pane_print(&handler, target.clone()).await,
-        before_capture,
-        "Escape must be consumed by copy-mode instead of reaching pane IO"
     );
 
     send_copy_selection_key(&handler, requester_pid, &mut pending_input, b"q").await;

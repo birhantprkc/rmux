@@ -363,7 +363,11 @@ async fn attached_prefix_q_inside_choose_tree_restores_the_tree_overlay_without_
         loop {
             let next = control_rx.recv().await.expect("follow-up control");
             match next {
-                AttachControl::Overlay(overlay) => break overlay,
+                AttachControl::Overlay(overlay) => {
+                    if String::from_utf8_lossy(&overlay.frame).contains("sort: index") {
+                        break overlay;
+                    }
+                }
                 AttachControl::AdvancePersistentOverlayState(_) => {}
                 AttachControl::Switch(_) => {}
                 AttachControl::Write(_) => {}
