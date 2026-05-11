@@ -171,6 +171,10 @@ async fn kill_session_last_session_requests_shutdown() {
         Response::KillSession(rmux_proto::KillSessionResponse { existed: true })
     );
     assert!(
+        handler.request_shutdown_if_pending(),
+        "last-session kill should queue shutdown after the response is ready"
+    );
+    assert!(
         tokio::time::timeout(Duration::from_millis(50), shutdown_rx)
             .await
             .expect("last-session kill should request shutdown")
@@ -273,6 +277,10 @@ async fn kill_session_last_session_detaches_attached_clients_before_shutdown() {
         "attached clients should be gone before shutdown is requested"
     );
     drop(active_attach);
+    assert!(
+        handler.request_shutdown_if_pending(),
+        "last-session kill should queue shutdown after detaching clients"
+    );
     assert!(
         tokio::time::timeout(Duration::from_millis(50), shutdown_rx)
             .await

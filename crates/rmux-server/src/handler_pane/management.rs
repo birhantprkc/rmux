@@ -408,7 +408,7 @@ impl RequestHandler {
                 self.exit_attached_session(&session_name).await;
                 self.cancel_session_silence_timers(&session_name).await;
                 self.refresh_control_session(&session_name).await;
-                let _ = self.request_shutdown_if_server_empty().await;
+                let _ = self.queue_shutdown_if_server_empty().await;
             } else {
                 self.sync_session_silence_timers(&session_name).await;
                 if let Response::KillPane(success) = &response {

@@ -406,7 +406,7 @@ impl RequestHandler {
             self.emit_prepared(event);
         }
 
-        let _ = self.request_shutdown_if_server_empty().await;
+        let _ = self.queue_shutdown_if_server_empty().await;
 
         response
     }
@@ -559,6 +559,14 @@ impl RequestHandler {
     }
 
     pub(in crate::handler) async fn request_shutdown_if_server_empty(&self) -> bool {
+        if !self.queue_shutdown_if_server_empty().await {
+            return false;
+        }
+
+        self.request_shutdown_if_pending()
+    }
+
+    pub(in crate::handler) async fn queue_shutdown_if_server_empty(&self) -> bool {
         let should_shutdown = {
             let state = self.state.lock().await;
             state.sessions.is_empty()
@@ -567,11 +575,9 @@ impl RequestHandler {
                     Some("on")
                 )
         };
-        if !should_shutdown {
-            return false;
+        if should_shutdown {
+            self.shutdown_requested.store(true, Ordering::SeqCst);
         }
-
-        self.shutdown_requested.store(true, Ordering::SeqCst);
-        self.request_shutdown_if_pending()
+        should_shutdown
     }
 }
