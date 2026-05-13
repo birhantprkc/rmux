@@ -182,6 +182,7 @@ async fn list_windows_format_uses_each_windows_active_pane_context() {
             .handle(Request::SplitWindow(SplitWindowRequest {
                 target: SplitWindowTarget::Session(alpha.clone()),
                 direction: rmux_proto::SplitDirection::Vertical,
+                before: false,
                 environment: None,
             }))
             .await,

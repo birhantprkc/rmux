@@ -33,6 +33,7 @@ async fn resize_pane_zoom_toggles_the_target_window() {
             .handle(Request::SplitWindow(SplitWindowRequest {
                 target: SplitWindowTarget::Session(alpha.clone()),
                 direction: SplitDirection::Horizontal,
+                before: false,
                 environment: None,
             }))
             .await,
@@ -85,6 +86,7 @@ async fn display_panes_sends_overlay_to_attached_session_without_waiting_for_cle
             .handle(Request::SplitWindow(SplitWindowRequest {
                 target: SplitWindowTarget::Session(alpha.clone()),
                 direction: SplitDirection::Horizontal,
+                before: false,
                 environment: None,
             }))
             .await,

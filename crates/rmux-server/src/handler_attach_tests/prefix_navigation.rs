@@ -11,6 +11,7 @@ async fn attached_prefix_right_dispatches_select_pane_right() {
             .handle(Request::SplitWindow(SplitWindowRequest {
                 target: SplitWindowTarget::Session(alpha.clone()),
                 direction: rmux_proto::SplitDirection::Horizontal,
+                before: false,
                 environment: None,
             }))
             .await,
@@ -125,6 +126,7 @@ async fn attached_prefix_o_cycles_to_the_next_pane() {
             .handle(Request::SplitWindow(SplitWindowRequest {
                 target: SplitWindowTarget::Session(alpha.clone()),
                 direction: rmux_proto::SplitDirection::Horizontal,
+                before: false,
                 environment: None,
             }))
             .await,
@@ -151,6 +153,7 @@ async fn attached_prefix_meta_digits_select_tmux_layout_presets() {
                 .handle(Request::SplitWindow(SplitWindowRequest {
                     target: SplitWindowTarget::Session(alpha.clone()),
                     direction: rmux_proto::SplitDirection::Vertical,
+                    before: false,
                     environment: None,
                 }))
                 .await,
@@ -207,6 +210,7 @@ async fn attached_prefix_meta_digit_dispatch_survives_escape_split_across_reads(
                 .handle(Request::SplitWindow(SplitWindowRequest {
                     target: SplitWindowTarget::Session(alpha.clone()),
                     direction: rmux_proto::SplitDirection::Vertical,
+                    before: false,
                     environment: None,
                 }))
                 .await,
@@ -255,6 +259,7 @@ async fn attached_prefix_space_cycles_next_layout_using_current_window_target() 
                 .handle(Request::SplitWindow(SplitWindowRequest {
                     target: SplitWindowTarget::Session(alpha.clone()),
                     direction: rmux_proto::SplitDirection::Vertical,
+                    before: false,
                     environment: None,
                 }))
                 .await,
@@ -287,6 +292,7 @@ async fn attached_prefix_q_emits_a_display_panes_overlay() {
             .handle(Request::SplitWindow(SplitWindowRequest {
                 target: SplitWindowTarget::Session(alpha.clone()),
                 direction: rmux_proto::SplitDirection::Vertical,
+                before: false,
                 environment: None,
             }))
             .await,

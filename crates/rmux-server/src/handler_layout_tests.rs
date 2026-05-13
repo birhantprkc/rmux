@@ -38,6 +38,7 @@ async fn split_pane_zero(handler: &RequestHandler, session_name: &SessionName, e
         .handle(Request::SplitWindow(SplitWindowRequest {
             target: SplitWindowTarget::Pane(PaneTarget::new(session_name.clone(), 0)),
             direction: rmux_proto::SplitDirection::Vertical,
+            before: false,
             environment: None,
         }))
         .await;

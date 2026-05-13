@@ -54,6 +54,7 @@ async fn pane_transfer_commands_move_live_ptys_between_windows() -> Result<(), B
             .send_request(&Request::SplitWindow(SplitWindowRequest {
                 target: SplitWindowTarget::Session(session.clone()),
                 direction: SplitDirection::Vertical,
+                before: false,
                 environment: None,
             }))
             .await?,
@@ -206,6 +207,7 @@ async fn pane_transfer_commands_move_live_ptys_between_windows() -> Result<(), B
             .send_request(&Request::SplitWindow(SplitWindowRequest {
                 target: SplitWindowTarget::Pane(PaneTarget::with_window(session.clone(), 3, 0)),
                 direction: SplitDirection::Vertical,
+                before: false,
                 environment: None,
             }))
             .await?,

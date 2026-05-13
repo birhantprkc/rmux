@@ -232,6 +232,7 @@ async fn send_keys_targets_the_correct_pane_in_a_multi_pane_session() -> Result<
         .send_request(&Request::SplitWindow(SplitWindowRequest {
             target: SplitWindowTarget::Session(session_name("beta")),
             direction: rmux_proto::SplitDirection::Vertical,
+            before: false,
             environment: None,
         }))
         .await?;

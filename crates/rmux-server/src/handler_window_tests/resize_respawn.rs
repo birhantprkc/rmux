@@ -210,6 +210,7 @@ async fn respawn_window_retains_surviving_pane_lifecycle_counters_and_redacts_en
         .handle(Request::SplitWindow(SplitWindowRequest {
             target: SplitWindowTarget::Session(alpha.clone()),
             direction: rmux_proto::SplitDirection::Vertical,
+            before: false,
             environment: Some(vec![split_secret.clone()]),
         }))
         .await;

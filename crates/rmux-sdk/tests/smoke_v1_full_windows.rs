@@ -9,7 +9,7 @@ use common::windows_smoke::{
 };
 use rmux_sdk::{
     EnsureSession, EnsureSessionPolicy, PaneExitState, PaneOutputStart, ProcessSpec, RmuxError,
-    SplitDirectionSpec,
+    SplitDirection,
 };
 
 #[tokio::test]
@@ -26,11 +26,10 @@ async fn rust_app_autostarts_and_drives_a_session_windows() -> TestResult {
         )
         .await?;
 
-    let split = session
-        .window(0)
-        .split(SplitDirectionSpec::Vertical)
-        .await?;
-    let pane = session.pane(split.window_index, split.pane_index);
+    // The captured `SplitDirectionSpec::Vertical` semantic was a stacked
+    // split — keep that meaning under the new `SplitDirection { Right,
+    // Left, Up, Down }` API.
+    let pane = session.pane(0, 0).split(SplitDirection::Down).await?;
     let marker = "RMUX_FULL_WINDOWS_RUST_APP_OK";
     let mut output = pane.output_stream_starting_at(PaneOutputStart::Now).await?;
     pane.send_text(cmd_echo_text(marker)).await?;

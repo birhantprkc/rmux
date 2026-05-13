@@ -338,13 +338,21 @@ impl FromStr for LayoutName {
     }
 }
 
-/// The split orientation accepted by `split-window`.
+/// Wire-level split orientation accepted by `split-window`.
+///
+/// The variant names follow tmux's flag convention (pane arrangement), not
+/// the divider-line convention: `Horizontal` means "panes arranged
+/// horizontally" (side by side), `Vertical` means "panes arranged
+/// vertically" (stacked). New SDK code should prefer
+/// [`rmux_sdk::SplitDirection`](https://docs.rs/rmux-sdk/latest/rmux_sdk/enum.SplitDirection.html)
+/// (`Right`/`Left`/`Up`/`Down`), which avoids this ambiguity.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum SplitDirection {
-    /// Split into left and right panes.
+    /// Stacked panes (top + bottom). Matches tmux `split-window -v`,
+    /// the tmux default when no flag is passed.
     #[default]
     Vertical,
-    /// Split into top and bottom panes, matching tmux `split-window -h`.
+    /// Side-by-side panes (left + right). Matches tmux `split-window -h`.
     Horizontal,
 }
 

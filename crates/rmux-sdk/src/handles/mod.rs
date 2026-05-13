@@ -8,6 +8,7 @@ mod builder;
 mod pane;
 mod rmux;
 pub(crate) mod session;
+mod split;
 mod window;
 
 pub use builder::RmuxBuilder;
@@ -16,6 +17,7 @@ pub use pane::{Pane, PaneCloseOutcome, PaneRespawnOptions};
 pub(crate) use rmux::connect_transport_to_endpoint;
 pub use rmux::Rmux;
 pub use session::Session;
+pub use split::SplitDirection;
 pub use window::{Window, WindowCloseOutcome, WindowPane};
 
 #[allow(dead_code)]

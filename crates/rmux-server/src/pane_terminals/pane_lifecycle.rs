@@ -3,12 +3,11 @@ use std::path::Path;
 use rmux_core::PaneId;
 use rmux_proto::{
     KillPaneResponse, PaneTarget, RespawnPaneRequest, RespawnPaneResponse, RmuxError, SessionName,
-    SplitDirection, SplitWindowResponse, SplitWindowTarget,
 };
 use rmux_pty::PtyMaster;
 
 use crate::pane_io::{PaneAlertCallback, PaneExitCallback};
-use crate::pane_terminal_lookup::{initial_pane, missing_pane_terminal};
+use crate::pane_terminal_lookup::initial_pane;
 use crate::pane_terminal_process::{open_pane_terminal, PaneTerminal};
 use crate::terminal::TerminalProfile;
 
@@ -21,9 +20,10 @@ use super::{
 #[path = "pane_lifecycle/preview.rs"]
 mod preview;
 
-use preview::{
-    preview_kill_pane, preview_split, split_window_internal_direction, split_window_session_name,
-};
+#[path = "pane_lifecycle/split.rs"]
+mod split;
+
+use preview::preview_kill_pane;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PaneOutputMode {
@@ -255,188 +255,6 @@ impl HandlerState {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn split_window(
-        &mut self,
-        target: SplitWindowTarget,
-        direction: SplitDirection,
-        socket_path: &Path,
-        environment_overrides: Option<&[String]>,
-        command: Option<&[String]>,
-        pane_alert_callback: Option<PaneAlertCallback>,
-        pane_exit_callback: Option<PaneExitCallback>,
-    ) -> Result<SplitWindowResponse, RmuxError> {
-        let session_name = split_window_session_name(&target).clone();
-        let internal_direction = split_window_internal_direction(direction);
-        let previous_session = self
-            .sessions
-            .session(&session_name)
-            .cloned()
-            .ok_or_else(|| session_not_found(&session_name))?;
-        let (window_index, new_pane_index, _preview_pane_geometry) =
-            preview_split(&self.sessions, &target, internal_direction)?;
-        let runtime_session_name =
-            self.runtime_session_name_for_window(&session_name, window_index);
-        let new_pane_id = self.sessions.allocate_pane_id();
-        let (session_id, window_id, new_pane_id, new_pane_geometry, requested_cwd) = {
-            let session = self
-                .sessions
-                .session_mut(&session_name)
-                .ok_or_else(|| session_not_found(&session_name))?;
-            let committed_index = match target {
-                SplitWindowTarget::Session(_) => session
-                    .split_pane_in_window_with_id_and_direction(
-                        session.active_window_index(),
-                        session.active_pane_index(),
-                        new_pane_id,
-                        internal_direction,
-                    )?,
-                SplitWindowTarget::Pane(target) => session
-                    .split_pane_in_window_with_id_and_direction(
-                        target.window_index(),
-                        target.pane_index(),
-                        new_pane_id,
-                        internal_direction,
-                    )?,
-            };
-            debug_assert_eq!(committed_index, new_pane_index);
-            session
-                .window_at(window_index)
-                .expect("split target window must exist")
-                .pane(committed_index)
-                .map(|pane| {
-                    (
-                        pane.id(),
-                        pane_terminal_geometry_for_session(session, &self.options, pane.geometry()),
-                    )
-                })
-                .ok_or_else(|| missing_pane_terminal(&session_name, window_index, committed_index))
-                .map(|(pane_id, pane_geometry)| {
-                    let window_id = session
-                        .window_at(window_index)
-                        .expect("split target window must exist")
-                        .id();
-                    (
-                        session.id(),
-                        window_id,
-                        pane_id,
-                        pane_geometry,
-                        session.cwd(),
-                    )
-                })
-        }?;
-        let profile = TerminalProfile::for_session(
-            &self.environment,
-            &self.options,
-            &session_name,
-            session_id.as_u32(),
-            socket_path,
-            true,
-            environment_overrides,
-            Some(new_pane_id),
-            requested_cwd,
-        )?;
-        let runtime_window_name = profile.runtime_window_name(command);
-        let lifecycle_cwd = profile.cwd().to_path_buf();
-        let terminal = open_pane_terminal(
-            new_pane_geometry,
-            profile,
-            runtime_window_name.clone(),
-            command,
-        )?;
-        let pid = terminal.pid();
-        let output_reader =
-            match clone_terminal_for_output_reader(&terminal, &session_name, new_pane_id) {
-                Ok(output_reader) => output_reader,
-                Err(error) => {
-                    self.replace_session(&session_name, previous_session)?;
-                    return Err(error);
-                }
-            };
-        #[cfg(windows)]
-        let exit_watcher =
-            match clone_terminal_for_exit_watcher(&terminal, &session_name, new_pane_id) {
-                Ok(exit_watcher) => exit_watcher,
-                Err(error) => {
-                    self.replace_session(&session_name, previous_session)?;
-                    return Err(error);
-                }
-            };
-
-        if let Err(error) = self.terminals.insert_pane(
-            runtime_session_name.clone(),
-            new_pane_id,
-            window_index,
-            new_pane_index,
-            terminal,
-        ) {
-            self.replace_session(&session_name, previous_session)?;
-            return Err(error);
-        }
-        if let Err(error) = self.insert_pane_output(
-            &runtime_session_name,
-            new_pane_id,
-            PaneOutputSpawn {
-                geometry: new_pane_geometry,
-                output_reader,
-                #[cfg(windows)]
-                exit_watcher: Some(exit_watcher),
-                pane_alert_callback,
-                pane_exit_callback,
-            },
-        ) {
-            let _ = self
-                .terminals
-                .remove_pane(&runtime_session_name, new_pane_id);
-            self.replace_session(&session_name, previous_session)?;
-            return Err(error);
-        }
-
-        if let Err(error) = self.resize_terminals(&session_name) {
-            let rollback_target =
-                PaneTarget::with_window(session_name.clone(), window_index, new_pane_index);
-            self.remove_pane_output(&runtime_session_name, new_pane_id);
-            if self
-                .terminals
-                .remove_pane(&runtime_session_name, new_pane_id)
-                .is_none()
-            {
-                return Err(RmuxError::Server(format!(
-                    "failed to roll back session {session_name} after {error}: missing pane terminal for {rollback_target}"
-                )));
-            }
-
-            self.restore_session_after_resize_error(&session_name, previous_session, &error)?;
-            return Err(error);
-        }
-
-        let sessions_to_synchronize = self
-            .window_link_slots_for(&session_name, window_index)
-            .into_iter()
-            .map(|slot| slot.session_name)
-            .collect::<Vec<_>>();
-        self.synchronize_linked_window_from_slot(&session_name, window_index)?;
-        for synchronized_session in sessions_to_synchronize {
-            self.synchronize_session_group_from(&synchronized_session)?;
-        }
-        self.record_pane_lifecycle_spawn(PaneLifecycleSpawn {
-            session_id,
-            window_id,
-            pane_id: new_pane_id,
-            command: command.map(<[String]>::to_vec),
-            working_directory: Some(lifecycle_cwd),
-            private_environment: environment_overrides.map(<[String]>::to_vec),
-            dimensions: terminal_size_from_geometry(new_pane_geometry),
-            pid: Some(pid),
-        });
-        let output_sequence = self.pane_output_generation(&runtime_session_name, new_pane_id);
-        self.update_pane_lifecycle_output_sequence(new_pane_id, output_sequence);
-        self.sync_pane_lifecycle_dimensions_for_session(&session_name);
-
-        Ok(SplitWindowResponse {
-            pane: PaneTarget::with_window(session_name, window_index, new_pane_index),
-        })
-    }
-
     pub(crate) fn kill_pane(&mut self, target: PaneTarget) -> Result<KilledPaneResult, RmuxError> {
         self.kill_pane_with_options(target, false)
     }

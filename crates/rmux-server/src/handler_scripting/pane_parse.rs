@@ -155,6 +155,7 @@ pub(super) fn parse_split_window(
 ) -> Result<Request, RmuxError> {
     let mut direction = SplitDirection::Vertical;
     let mut direction_set = false;
+    let mut before = false;
     let mut environment = Vec::new();
     let mut target = None;
 
@@ -184,6 +185,10 @@ pub(super) fn parse_split_window(
                 direction = SplitDirection::Vertical;
                 direction_set = true;
             }
+            "-b" => {
+                let _ = args.optional();
+                before = true;
+            }
             "-t" => {
                 let _ = args.optional();
                 target = Some(parse_split_window_target(args.required("-t target")?)?);
@@ -206,6 +211,7 @@ pub(super) fn parse_split_window(
         return Ok(Request::SplitWindowExt(SplitWindowExtRequest {
             target,
             direction,
+            before,
             environment: (!environment.is_empty()).then_some(environment),
             command,
         }));
@@ -214,6 +220,7 @@ pub(super) fn parse_split_window(
     Ok(Request::SplitWindow(SplitWindowRequest {
         target,
         direction,
+        before,
         environment: (!environment.is_empty()).then_some(environment),
     }))
 }

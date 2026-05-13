@@ -278,13 +278,20 @@ impl From<RefreshClientSpec> for rmux_proto::RefreshClientRequest {
     }
 }
 
-/// SDK split orientation.
+/// Low-level split orientation used by [`SplitSpec`] and the script-level
+/// `RmuxCommand` API.
+///
+/// Variants follow tmux's flag convention (pane arrangement). Prefer the
+/// ergonomic [`SplitDirection`](crate::SplitDirection) (`Right`/`Left`/`Up`/
+/// `Down`) on [`Pane::split`](crate::Pane::split), which removes the
+/// arrangement-vs-divider-line ambiguity.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum SplitDirectionSpec {
-    /// Split into left and right panes.
+    /// Stacked panes (top + bottom). Matches tmux `split-window -v`,
+    /// the tmux default when no flag is passed.
     #[default]
     Vertical,
-    /// Split into top and bottom panes, matching tmux `split-window -h`.
+    /// Side-by-side panes (left + right). Matches tmux `split-window -h`.
     Horizontal,
 }
 
@@ -350,6 +357,10 @@ pub struct SplitSpec {
     /// Requested split direction.
     #[serde(default)]
     pub direction: SplitDirectionSpec,
+    /// Whether the new pane is inserted before the target on the chosen
+    /// axis (tmux `-b`). Default `false` puts the new pane after the target.
+    #[serde(default)]
+    pub before: bool,
     /// Process-spawn fields for the new pane.
     #[serde(default)]
     pub process: ProcessSpec,
@@ -360,6 +371,7 @@ impl From<SplitSpec> for rmux_proto::SplitWindowExtRequest {
         Self {
             target: value.target.into(),
             direction: value.direction.into(),
+            before: value.before,
             environment: value.process.environment,
             command: value.process.command,
         }

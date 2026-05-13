@@ -6,6 +6,8 @@ publish.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[dependencies]
+
 [[bin]]
 name = "xtask"
 path = "src/main.rs"

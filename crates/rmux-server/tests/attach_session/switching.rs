@@ -165,6 +165,7 @@ async fn switch_client_to_multi_pane_session_emits_border_frame_before_forwardin
         &Request::SplitWindow(SplitWindowRequest {
             target: SplitWindowTarget::Session(beta.clone()),
             direction: rmux_proto::SplitDirection::Horizontal,
+            before: false,
             environment: None,
         }),
     )
@@ -176,6 +177,7 @@ async fn switch_client_to_multi_pane_session_emits_border_frame_before_forwardin
         &Request::SplitWindow(SplitWindowRequest {
             target: SplitWindowTarget::Pane(PaneTarget::new(beta.clone(), 1)),
             direction: rmux_proto::SplitDirection::Horizontal,
+            before: false,
             environment: None,
         }),
     )

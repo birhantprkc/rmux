@@ -63,6 +63,7 @@ async fn session_target_refreshes_follow_the_current_active_window() {
         .handle(Request::SplitWindow(SplitWindowRequest {
             target: SplitWindowTarget::Session(alpha.clone()),
             direction: rmux_proto::SplitDirection::Horizontal,
+            before: false,
             environment: None,
         }))
         .await;
@@ -100,6 +101,7 @@ async fn attach_session_upgrade_renders_only_the_active_window() {
             .handle(Request::SplitWindow(SplitWindowRequest {
                 target: SplitWindowTarget::Session(alpha.clone()),
                 direction: rmux_proto::SplitDirection::Vertical,
+                before: false,
                 environment: None,
             }))
             .await,
@@ -226,6 +228,7 @@ async fn attach_session_replays_all_visible_pane_screens() {
             .handle(Request::SplitWindowExt(SplitWindowExtRequest {
                 target: SplitWindowTarget::Session(alpha.clone()),
                 direction: rmux_proto::SplitDirection::Vertical,
+                before: false,
                 environment: None,
                 command: Some(quiet_ready_command(bottom_ready)),
             }))
@@ -372,6 +375,7 @@ async fn attach_session_target_spec_selects_requested_window_and_pane_before_att
             .handle(Request::SplitWindow(SplitWindowRequest {
                 target: SplitWindowTarget::Pane(PaneTarget::with_window(alpha.clone(), 1, 0)),
                 direction: rmux_proto::SplitDirection::Horizontal,
+                before: false,
                 environment: None,
             }))
             .await,

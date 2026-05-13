@@ -73,6 +73,7 @@ async fn attached_prefix_x_during_display_panes_opens_kill_pane_prompt() {
             .handle(Request::SplitWindow(SplitWindowRequest {
                 target: SplitWindowTarget::Session(alpha.clone()),
                 direction: rmux_proto::SplitDirection::Vertical,
+                before: false,
                 environment: None,
             }))
             .await,
@@ -130,6 +131,7 @@ async fn attached_prefix_q_emits_a_display_panes_overlay_when_prefix_and_q_arriv
             .handle(Request::SplitWindow(SplitWindowRequest {
                 target: SplitWindowTarget::Session(alpha.clone()),
                 direction: rmux_proto::SplitDirection::Vertical,
+                before: false,
                 environment: None,
             }))
             .await,
@@ -243,6 +245,7 @@ async fn attached_prefix_q_emits_a_display_panes_clear_after_the_timeout() {
             .handle(Request::SplitWindow(SplitWindowRequest {
                 target: SplitWindowTarget::Session(alpha.clone()),
                 direction: rmux_proto::SplitDirection::Vertical,
+                before: false,
                 environment: None,
             }))
             .await,

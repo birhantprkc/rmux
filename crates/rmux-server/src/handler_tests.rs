@@ -37,6 +37,9 @@ mod clients;
 #[path = "handler_tests/panes.rs"]
 mod panes;
 
+#[path = "handler_tests/split_before.rs"]
+mod split_before;
+
 #[path = "handler_tests/rename_session.rs"]
 mod rename_session;
 

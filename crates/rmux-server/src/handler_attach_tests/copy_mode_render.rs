@@ -199,6 +199,7 @@ async fn attached_copy_mode_unhandled_key_falls_back_to_prefix_table() {
             .handle(Request::SplitWindow(SplitWindowRequest {
                 target: SplitWindowTarget::Session(alpha.clone()),
                 direction: rmux_proto::SplitDirection::Horizontal,
+                before: false,
                 environment: None,
             }))
             .await,

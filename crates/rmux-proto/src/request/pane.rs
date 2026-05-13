@@ -22,6 +22,10 @@ pub struct SplitWindowRequest {
     pub target: SplitWindowTarget,
     /// The requested split direction.
     pub direction: SplitDirection,
+    /// Whether the new pane is inserted *before* the target on the chosen
+    /// axis (tmux `-b`). Default `false` puts the new pane after the target.
+    #[serde(default)]
+    pub before: bool,
     /// Optional per-spawn environment overrides in `NAME=VALUE` form.
     #[serde(default)]
     pub environment: Option<Vec<String>>,
@@ -34,6 +38,10 @@ pub struct SplitWindowExtRequest {
     pub target: SplitWindowTarget,
     /// The requested split direction.
     pub direction: SplitDirection,
+    /// Whether the new pane is inserted *before* the target on the chosen
+    /// axis (tmux `-b`). Default `false` puts the new pane after the target.
+    #[serde(default)]
+    pub before: bool,
     /// Optional per-spawn environment overrides in `NAME=VALUE` form.
     #[serde(default)]
     pub environment: Option<Vec<String>>,

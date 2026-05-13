@@ -7,6 +7,7 @@ pub(super) fn preview_split(
     sessions: &SessionStore,
     target: &SplitWindowTarget,
     direction: SplitDirection,
+    before: bool,
 ) -> Result<(u32, u32, PaneGeometry), RmuxError> {
     let session_name = split_window_session_name(target);
     let mut session = sessions
@@ -14,15 +15,16 @@ pub(super) fn preview_split(
         .ok_or_else(|| session_not_found(session_name))?
         .clone();
     let window_index = split_window_target_window_index(&session, target);
-
-    let new_pane_index = match target {
-        SplitWindowTarget::Session(_) => session.split_active_pane_with_direction(direction)?,
-        SplitWindowTarget::Pane(target) => session.split_pane_in_window_with_direction(
-            target.window_index(),
-            target.pane_index(),
-            direction,
-        )?,
+    let pane_index = match target {
+        SplitWindowTarget::Session(_) => session.active_pane_index(),
+        SplitWindowTarget::Pane(target) => target.pane_index(),
     };
+    let new_pane_index = session.split_pane_in_window_with_direction_before(
+        window_index,
+        pane_index,
+        direction,
+        before,
+    )?;
     let geometry = session
         .window_at(window_index)
         .expect("split preview target window must exist")

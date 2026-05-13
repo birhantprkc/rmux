@@ -181,6 +181,7 @@ async fn display_message_print_uses_full_detached_geometry_for_window_and_pane_f
             .handle(Request::SplitWindow(SplitWindowRequest {
                 target: SplitWindowTarget::Session(alpha.clone()),
                 direction: SplitDirection::Vertical,
+                before: false,
                 environment: None,
             }))
             .await,
@@ -420,6 +421,7 @@ async fn display_message_print_reports_marked_pane_runtime_flags() {
             .handle(Request::SplitWindow(SplitWindowRequest {
                 target: SplitWindowTarget::Pane(PaneTarget::with_window(alpha.clone(), 0, 0)),
                 direction: SplitDirection::Horizontal,
+                before: false,
                 environment: None,
             }))
             .await,
@@ -529,6 +531,7 @@ async fn display_message_print_expands_runtime_session_window_and_pane_loops() {
             .handle(Request::SplitWindow(SplitWindowRequest {
                 target: SplitWindowTarget::Pane(PaneTarget::with_window(alpha.clone(), 0, 0)),
                 direction: SplitDirection::Horizontal,
+                before: false,
                 environment: None,
             }))
             .await,

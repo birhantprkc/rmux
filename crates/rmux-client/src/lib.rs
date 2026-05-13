@@ -28,6 +28,7 @@ pub use auto_start::{
     AutoStartConfigSelection, AutoStartError, INTERNAL_DAEMON_FLAG,
 };
 pub use commands::server::StartServerError;
+pub use commands::window::SplitWindowOptions;
 pub use connection::{
     connect, connect_or_absent, default_socket_path, resolve_socket_path, socket_path_for_label,
     AttachSessionUpgrade, AttachTransition, ConnectResult, Connection, ControlModeUpgrade,

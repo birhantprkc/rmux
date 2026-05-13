@@ -116,6 +116,7 @@ async fn default_terminal_applies_to_initial_panes_and_yields_to_explicit_term()
         .handle(Request::SplitWindow(rmux_proto::SplitWindowRequest {
             target: rmux_proto::SplitWindowTarget::Session(session_name("alpha")),
             direction: rmux_proto::SplitDirection::Vertical,
+            before: false,
             environment: None,
         }))
         .await;
@@ -132,6 +133,7 @@ async fn default_terminal_applies_to_initial_panes_and_yields_to_explicit_term()
         .handle(Request::SplitWindow(rmux_proto::SplitWindowRequest {
             target: rmux_proto::SplitWindowTarget::Session(session_name("alpha")),
             direction: rmux_proto::SplitDirection::Vertical,
+            before: false,
             environment: Some(vec!["TERM=screen-256color".to_owned()]),
         }))
         .await;
@@ -192,6 +194,7 @@ async fn environment_mutations_apply_only_to_future_panes_and_session_values_win
         .handle(Request::SplitWindow(rmux_proto::SplitWindowRequest {
             target: rmux_proto::SplitWindowTarget::Session(session_name("alpha")),
             direction: rmux_proto::SplitDirection::Vertical,
+            before: false,
             environment: None,
         }))
         .await;
@@ -238,6 +241,7 @@ async fn environment_mutations_apply_only_to_future_panes_and_session_values_win
         .handle(Request::SplitWindow(rmux_proto::SplitWindowRequest {
             target: rmux_proto::SplitWindowTarget::Session(session_name("alpha")),
             direction: rmux_proto::SplitDirection::Vertical,
+            before: false,
             environment: None,
         }))
         .await;
@@ -364,6 +368,7 @@ async fn pane_exited_hooks_fire_with_removed_pane_context_before_pane_hooks_are_
         .handle(Request::SplitWindow(rmux_proto::SplitWindowRequest {
             target: rmux_proto::SplitWindowTarget::Session(session_name("alpha")),
             direction: rmux_proto::SplitDirection::Vertical,
+            before: false,
             environment: None,
         }))
         .await;
@@ -669,6 +674,7 @@ async fn split_window_runs_explicit_and_generic_after_hooks() {
         .handle(Request::SplitWindow(rmux_proto::SplitWindowRequest {
             target: rmux_proto::SplitWindowTarget::Session(session_name("alpha")),
             direction: rmux_proto::SplitDirection::Vertical,
+            before: false,
             environment: None,
         }))
         .await;

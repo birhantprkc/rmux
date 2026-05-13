@@ -10,7 +10,7 @@ use std::time::Duration;
 use rmux_proto::{encode_frame, FrameDecoder, HasSessionRequest, Request, Response};
 use rmux_sdk::{
     EnsureSession, PaneCloseOutcome, PaneInfo, PaneProcessState, PaneRespawnOptions, ProcessSpec,
-    RmuxBuilder, SessionName, SplitDirectionSpec,
+    RmuxBuilder, SessionName, SplitDirection,
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::UnixStream;
@@ -80,11 +80,8 @@ async fn pane_close_and_respawn_preserve_slot_semantics() -> TestResult {
         "respawn must clear old visible parser state"
     );
 
-    let stubborn_target = session
-        .window(0)
-        .split(SplitDirectionSpec::Vertical)
-        .await?;
-    let stubborn_pane = session.pane(stubborn_target.window_index, stubborn_target.pane_index);
+    let stubborn_pane = session.pane(0, 0).split(SplitDirection::Down).await?;
+    let stubborn_target = stubborn_pane.target().clone();
     let stubborn_before = only_pane_info(&stubborn_pane.info().await?);
     stubborn_pane
         .respawn(PaneRespawnOptions {
@@ -111,11 +108,8 @@ async fn pane_close_and_respawn_preserve_slot_semantics() -> TestResult {
     );
     wait_for_process_absent(stubborn_pid).await?;
 
-    let close_target = session
-        .window(0)
-        .split(SplitDirectionSpec::Vertical)
-        .await?;
-    let close_pane = session.pane(close_target.window_index, close_target.pane_index);
+    let close_pane = session.pane(0, 0).split(SplitDirection::Down).await?;
+    let close_target = close_pane.target().clone();
     let stale_observer = rmux.pane(close_target.clone()).await?;
     assert_eq!(
         close_pane.close().await?,

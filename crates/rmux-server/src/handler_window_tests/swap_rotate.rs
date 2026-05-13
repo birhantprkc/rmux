@@ -86,6 +86,7 @@ async fn rotate_window_updates_the_active_pane_after_reordering_the_window() {
             .handle(Request::SplitWindow(SplitWindowRequest {
                 target: SplitWindowTarget::Session(alpha.clone()),
                 direction: rmux_proto::SplitDirection::Vertical,
+                before: false,
                 environment: None,
             }))
             .await,
@@ -96,6 +97,7 @@ async fn rotate_window_updates_the_active_pane_after_reordering_the_window() {
             .handle(Request::SplitWindow(SplitWindowRequest {
                 target: SplitWindowTarget::Session(alpha.clone()),
                 direction: rmux_proto::SplitDirection::Vertical,
+                before: false,
                 environment: None,
             }))
             .await,
@@ -171,6 +173,7 @@ async fn rotate_window_down_selects_the_previous_pane_in_window_order() {
             .handle(Request::SplitWindow(SplitWindowRequest {
                 target: SplitWindowTarget::Session(alpha.clone()),
                 direction: rmux_proto::SplitDirection::Vertical,
+                before: false,
                 environment: None,
             }))
             .await,
@@ -181,6 +184,7 @@ async fn rotate_window_down_selects_the_previous_pane_in_window_order() {
             .handle(Request::SplitWindow(SplitWindowRequest {
                 target: SplitWindowTarget::Session(alpha.clone()),
                 direction: rmux_proto::SplitDirection::Vertical,
+                before: false,
                 environment: None,
             }))
             .await,

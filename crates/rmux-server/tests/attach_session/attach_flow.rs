@@ -131,6 +131,7 @@ async fn attach_stream_emits_border_frames_for_multi_pane_sessions() -> Result<(
         &Request::SplitWindow(SplitWindowRequest {
             target: SplitWindowTarget::Session(alpha.clone()),
             direction: rmux_proto::SplitDirection::Horizontal,
+            before: false,
             environment: None,
         }),
     )
@@ -142,6 +143,7 @@ async fn attach_stream_emits_border_frames_for_multi_pane_sessions() -> Result<(
         &Request::SplitWindow(SplitWindowRequest {
             target: SplitWindowTarget::Pane(PaneTarget::new(alpha.clone(), 1)),
             direction: rmux_proto::SplitDirection::Horizontal,
+            before: false,
             environment: None,
         }),
     )

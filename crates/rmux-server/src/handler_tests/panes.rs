@@ -23,6 +23,7 @@ async fn split_window_routes_session_and_pane_targets_to_the_expected_panes() {
         .handle(Request::SplitWindow(SplitWindowRequest {
             target: SplitWindowTarget::Session(alpha.clone()),
             direction: rmux_proto::SplitDirection::Vertical,
+            before: false,
 
             environment: None,
         }))
@@ -51,6 +52,7 @@ async fn split_window_routes_session_and_pane_targets_to_the_expected_panes() {
         .handle(Request::SplitWindow(SplitWindowRequest {
             target: SplitWindowTarget::Session(alpha.clone()),
             direction: rmux_proto::SplitDirection::Vertical,
+            before: false,
 
             environment: None,
         }))
@@ -66,6 +68,7 @@ async fn split_window_routes_session_and_pane_targets_to_the_expected_panes() {
         .handle(Request::SplitWindow(SplitWindowRequest {
             target: SplitWindowTarget::Pane(PaneTarget::new(alpha.clone(), 0)),
             direction: rmux_proto::SplitDirection::Vertical,
+            before: false,
 
             environment: None,
         }))
@@ -120,6 +123,7 @@ async fn split_window_rolls_back_the_session_when_terminal_resize_fails() {
         .handle(Request::SplitWindow(SplitWindowRequest {
             target: SplitWindowTarget::Session(alpha.clone()),
             direction: rmux_proto::SplitDirection::Vertical,
+            before: false,
 
             environment: None,
         }))
@@ -145,6 +149,7 @@ async fn split_window_rolls_back_the_session_when_terminal_resize_fails() {
         .handle(Request::SplitWindow(SplitWindowRequest {
             target: SplitWindowTarget::Session(alpha.clone()),
             direction: rmux_proto::SplitDirection::Vertical,
+            before: false,
 
             environment: None,
         }))
@@ -180,6 +185,7 @@ async fn horizontal_split_updates_layout_and_geometry() {
         .handle(Request::SplitWindow(SplitWindowRequest {
             target: SplitWindowTarget::Session(alpha.clone()),
             direction: rmux_proto::SplitDirection::Horizontal,
+            before: false,
 
             environment: None,
         }))
@@ -228,6 +234,7 @@ async fn kill_pane_removes_the_terminal_and_uses_last_pane_fallback() {
             .handle(Request::SplitWindow(SplitWindowRequest {
                 target: SplitWindowTarget::Session(alpha.clone()),
                 direction: rmux_proto::SplitDirection::Vertical,
+                before: false,
 
                 environment: None,
             }))
@@ -339,6 +346,7 @@ async fn kill_pane_rolls_back_when_terminal_resize_fails() {
             .handle(Request::SplitWindow(SplitWindowRequest {
                 target: SplitWindowTarget::Session(alpha.clone()),
                 direction: rmux_proto::SplitDirection::Vertical,
+                before: false,
 
                 environment: None,
             }))
@@ -448,6 +456,7 @@ async fn resize_pane_rolls_back_geometry_when_terminal_resize_fails() {
         .handle(Request::SplitWindow(SplitWindowRequest {
             target: SplitWindowTarget::Session(alpha.clone()),
             direction: rmux_proto::SplitDirection::Horizontal,
+            before: false,
 
             environment: None,
         }))

@@ -30,6 +30,7 @@ async fn pane_management_requests_round_trip_through_the_socket() -> Result<(), 
         .send_request(&Request::SplitWindow(SplitWindowRequest {
             target: SplitWindowTarget::Session(session_name("missing")),
             direction: rmux_proto::SplitDirection::Vertical,
+            before: false,
             environment: None,
         }))
         .await?;
@@ -86,6 +87,7 @@ async fn pane_management_requests_round_trip_through_the_socket() -> Result<(), 
         .send_request(&Request::SplitWindow(SplitWindowRequest {
             target: SplitWindowTarget::Session(session.clone()),
             direction: rmux_proto::SplitDirection::Vertical,
+            before: false,
             environment: None,
         }))
         .await?;
@@ -100,6 +102,7 @@ async fn pane_management_requests_round_trip_through_the_socket() -> Result<(), 
         .send_request(&Request::SplitWindow(SplitWindowRequest {
             target: SplitWindowTarget::Pane(PaneTarget::new(session.clone(), 0)),
             direction: rmux_proto::SplitDirection::Vertical,
+            before: false,
             environment: None,
         }))
         .await?;
@@ -181,6 +184,7 @@ async fn horizontal_split_and_kill_pane_round_trip_through_the_socket() -> Resul
         .send_request(&Request::SplitWindow(SplitWindowRequest {
             target: SplitWindowTarget::Session(session.clone()),
             direction: rmux_proto::SplitDirection::Horizontal,
+            before: false,
             environment: None,
         }))
         .await?;
@@ -209,6 +213,7 @@ async fn horizontal_split_and_kill_pane_round_trip_through_the_socket() -> Resul
         .send_request(&Request::SplitWindow(SplitWindowRequest {
             target: SplitWindowTarget::Session(session.clone()),
             direction: rmux_proto::SplitDirection::Vertical,
+            before: false,
             environment: None,
         }))
         .await?;
@@ -251,6 +256,7 @@ async fn select_layout_even_layouts_resize_panes_through_the_socket() -> Result<
             .send_request(&Request::SplitWindow(SplitWindowRequest {
                 target: SplitWindowTarget::Pane(PaneTarget::new(session.clone(), 0)),
                 direction: rmux_proto::SplitDirection::Vertical,
+                before: false,
                 environment: None,
             }))
             .await?;
@@ -494,6 +500,7 @@ async fn killing_the_last_pane_destroys_the_window_and_session_targets_fall_back
         .send_request(&Request::SplitWindow(SplitWindowRequest {
             target: SplitWindowTarget::Session(session.clone()),
             direction: rmux_proto::SplitDirection::Vertical,
+            before: false,
             environment: None,
         }))
         .await?;

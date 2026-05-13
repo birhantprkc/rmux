@@ -10,6 +10,7 @@ members = [
     "crates/rmux-client",
     "crates/rmux-server",
     "crates/rmux-sdk",
+    "crates/rmux-render-core",
     "crates/ratatui-rmux",
     "xtask",
 ]

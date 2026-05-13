@@ -153,6 +153,7 @@ async fn kill_window_all_others_cleans_up_removed_window_ptys() -> Result<(), Bo
             .send_request(&Request::SplitWindow(SplitWindowRequest {
                 target: SplitWindowTarget::Session(session.clone()),
                 direction: rmux_proto::SplitDirection::Vertical,
+                before: false,
                 environment: None,
             }))
             .await?,
@@ -458,6 +459,7 @@ async fn window_move_swap_and_rotate_requests_round_trip_through_the_socket(
             .send_request(&Request::SplitWindow(SplitWindowRequest {
                 target: SplitWindowTarget::Pane(PaneTarget::with_window(alpha.clone(), 2, 0)),
                 direction: rmux_proto::SplitDirection::Vertical,
+                before: false,
                 environment: None,
             }))
             .await?,

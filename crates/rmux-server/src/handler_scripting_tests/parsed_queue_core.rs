@@ -385,6 +385,7 @@ async fn parsed_queue_uses_current_target_for_kill_pane_without_t() {
             .handle(Request::SplitWindow(SplitWindowRequest {
                 target: SplitWindowTarget::Pane(PaneTarget::with_window(alpha.clone(), 0, 0)),
                 direction: SplitDirection::Horizontal,
+                before: false,
                 environment: None,
             }))
             .await,

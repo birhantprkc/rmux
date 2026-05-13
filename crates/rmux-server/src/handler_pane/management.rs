@@ -261,8 +261,14 @@ impl RequestHandler {
         &self,
         request: rmux_proto::SplitWindowRequest,
     ) -> Response {
-        self.handle_split_window_parts(request.target, request.direction, request.environment, None)
-            .await
+        self.handle_split_window_parts(
+            request.target,
+            request.direction,
+            request.before,
+            request.environment,
+            None,
+        )
+        .await
     }
 
     pub(in crate::handler) async fn handle_split_window_ext(
@@ -272,6 +278,7 @@ impl RequestHandler {
         self.handle_split_window_parts(
             request.target,
             request.direction,
+            request.before,
             request.environment,
             request.command,
         )
@@ -282,6 +289,7 @@ impl RequestHandler {
         &self,
         target: rmux_proto::SplitWindowTarget,
         direction: rmux_proto::SplitDirection,
+        before: bool,
         environment_overrides: Option<Vec<String>>,
         command: Option<Vec<String>>,
     ) -> Response {
@@ -295,6 +303,7 @@ impl RequestHandler {
             match state.split_window(
                 target,
                 direction,
+                before,
                 &socket_path,
                 environment_overrides.as_deref(),
                 command.as_deref(),

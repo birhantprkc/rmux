@@ -101,6 +101,7 @@ fn every_request_variant_round_trips_through_the_frame_codec() {
         Request::SplitWindow(SplitWindowRequest {
             target: SplitWindowTarget::Pane(pane.clone()),
             direction: SplitDirection::Vertical,
+            before: false,
             environment: None,
         }),
         Request::SwapPane(SwapPaneRequest {
@@ -170,6 +171,7 @@ fn every_request_variant_round_trips_through_the_frame_codec() {
         Request::SplitWindowExt(SplitWindowExtRequest {
             target: SplitWindowTarget::Pane(PaneTarget::with_window(beta.clone(), 0, 1)),
             direction: SplitDirection::Horizontal,
+            before: false,
             environment: Some(vec!["FOO=bar".to_owned()]),
             command: Some(vec!["printf done".to_owned()]),
         }),

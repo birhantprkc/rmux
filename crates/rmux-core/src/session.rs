@@ -131,22 +131,59 @@ impl Session {
         pane_index: u32,
         direction: SplitDirection,
     ) -> Result<u32, RmuxError> {
+        self.split_pane_in_window_with_direction_before(window_index, pane_index, direction, false)
+    }
+
+    /// Splits the addressed pane in the addressed window using the requested
+    /// direction, controlling whether the new pane is inserted before the
+    /// target on the chosen axis (tmux `-b`).
+    pub fn split_pane_in_window_with_direction_before(
+        &mut self,
+        window_index: u32,
+        pane_index: u32,
+        direction: SplitDirection,
+        before: bool,
+    ) -> Result<u32, RmuxError> {
         let pane_id = self.allocate_pane_id();
-        self.split_pane_in_window_with_id_and_direction(
+        self.split_pane_in_window_with_id_and_direction_before(
             window_index,
             pane_index,
             pane_id,
             direction,
+            before,
         )
     }
 
     /// Splits the addressed pane in the addressed window using the provided pane identity.
+    ///
+    /// The new pane is inserted after the target on the chosen axis. Callers
+    /// that need tmux `-b` semantics (insert before) should use
+    /// [`Session::split_pane_in_window_with_id_and_direction_before`].
     pub fn split_pane_in_window_with_id_and_direction(
         &mut self,
         window_index: u32,
         pane_index: u32,
         pane_id: PaneId,
         direction: SplitDirection,
+    ) -> Result<u32, RmuxError> {
+        self.split_pane_in_window_with_id_and_direction_before(
+            window_index,
+            pane_index,
+            pane_id,
+            direction,
+            false,
+        )
+    }
+
+    /// Splits the addressed pane, controlling whether the new pane lands
+    /// before (`-b`) or after the target on the chosen axis.
+    pub fn split_pane_in_window_with_id_and_direction_before(
+        &mut self,
+        window_index: u32,
+        pane_index: u32,
+        pane_id: PaneId,
+        direction: SplitDirection,
+        before: bool,
     ) -> Result<u32, RmuxError> {
         let window = self
             .window_at(window_index)
@@ -165,7 +202,7 @@ impl Session {
         Ok(self
             .window_at_mut(window_index)
             .expect("addressed session window must exist")
-            .split_after_position_with_id_and_direction(position, pane_id, direction))
+            .split_at_position_with_id_and_direction(position, pane_id, direction, before))
     }
 
     /// Removes the addressed pane in the active window.

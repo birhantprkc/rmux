@@ -207,6 +207,7 @@ async fn parsed_queue_resolves_attached_short_target_values_for_select_pane() {
             .handle(Request::SplitWindow(SplitWindowRequest {
                 target: SplitWindowTarget::Pane(PaneTarget::with_window(alpha.clone(), 0, 0)),
                 direction: SplitDirection::Horizontal,
+                before: false,
                 environment: None,
             }))
             .await,
@@ -259,6 +260,7 @@ async fn parsed_queue_resolves_select_pane_mark_against_the_current_pane() {
             .handle(Request::SplitWindow(SplitWindowRequest {
                 target: SplitWindowTarget::Pane(PaneTarget::with_window(alpha.clone(), 0, 0)),
                 direction: SplitDirection::Horizontal,
+                before: false,
                 environment: None,
             }))
             .await,

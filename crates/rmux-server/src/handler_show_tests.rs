@@ -443,6 +443,7 @@ async fn kill_pane_removes_pane_option_overrides() {
             .handle(Request::SplitWindow(SplitWindowRequest {
                 target: SplitWindowTarget::Session(session_name("alpha")),
                 direction: SplitDirection::Vertical,
+                before: false,
                 environment: None,
             }))
             .await,

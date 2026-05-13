@@ -37,8 +37,7 @@ Commands:
     feature-inventory --check-file-sizes
                                 Check tracked rmux-sdk source-size exceptions.
     feature-inventory --render-markdown
-                                Render the YAML inventory as a Markdown table.
-";
+                                Render the YAML inventory as a Markdown table.";
 
 fn main() -> ExitCode {
     match parse_args(env::args().skip(1)) {

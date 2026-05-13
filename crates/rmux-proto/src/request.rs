@@ -629,6 +629,7 @@ mod tests {
             Request::SplitWindowExt(SplitWindowExtRequest {
                 target: SplitWindowTarget::Pane(pane()),
                 direction: SplitDirection::Vertical,
+                before: false,
                 environment: None,
                 command: None,
             })

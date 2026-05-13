@@ -13,6 +13,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use crate::events::streams::{PaneLineStream, PaneOutputStart, PaneOutputStream};
+use crate::handles::split::SplitDirection;
 use crate::transport::TransportClient;
 use crate::{
     ArmedWait, CollectedPaneOutput, InfoSnapshot, PaneExitState, PaneId, PaneRef, PaneSnapshot,
@@ -27,6 +28,8 @@ mod input;
 mod lifecycle;
 #[path = "pane/snapshot.rs"]
 mod snapshot;
+#[path = "pane/split.rs"]
+mod split;
 #[path = "pane/target.rs"]
 mod target;
 
@@ -34,6 +37,7 @@ use info::{current_pane_entry, pane_info_snapshot};
 use input::{resize_to_size, send_key, send_text};
 use lifecycle::{close_pane, respawn_pane};
 use snapshot::pane_snapshot;
+use split::split_pane;
 pub(crate) use target::is_already_closed_pane_error;
 
 /// Result of consuming a [`Pane`] handle with [`Pane::close`].
@@ -374,6 +378,23 @@ impl Pane {
     /// left untouched. Use [`Self::close`] when the pane itself should be
     /// killed.
     pub fn detach(self) {}
+
+    /// Splits this pane and returns a handle for the freshly spawned pane.
+    ///
+    /// The direction names where the new pane lands relative to this one:
+    /// `Right`/`Left` create a side-by-side arrangement (vertical divider),
+    /// `Up`/`Down` create a stacked arrangement (horizontal divider).
+    /// `Left` and `Up` map to tmux's `-b` flag — the new pane is inserted
+    /// *before* this one on the chosen axis.
+    pub async fn split(&self, direction: SplitDirection) -> Result<Self> {
+        let new_target = split_pane(&self.transport, &self.target, direction).await?;
+        Ok(Self::new(
+            new_target,
+            self.endpoint.clone(),
+            self.default_timeout,
+            self.transport.clone(),
+        ))
+    }
 
     /// Respawns the process in this pane slot through the daemon.
     ///

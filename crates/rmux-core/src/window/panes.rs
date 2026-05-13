@@ -38,6 +38,19 @@ impl Window {
         pane_id: PaneId,
         direction: SplitDirection,
     ) -> u32 {
+        self.split_at_position_with_id_and_direction(position, pane_id, direction, false)
+    }
+
+    /// Splits the pane at `position`. When `before` is `true`, the new pane is
+    /// inserted before the target on the chosen axis (tmux `-b` behaviour);
+    /// otherwise it is inserted after the target.
+    pub(crate) fn split_at_position_with_id_and_direction(
+        &mut self,
+        position: usize,
+        pane_id: PaneId,
+        direction: SplitDirection,
+        before: bool,
+    ) -> u32 {
         assert!(
             position < self.panes.len(),
             "split target position must reference an existing pane"
@@ -50,7 +63,7 @@ impl Window {
         self.layout = layout_for_split(direction);
         let previous_active_pane_id = self.active_pane().map(Pane::id);
         let new_index = self.allocate_pane_index();
-        let insert_at = position + 1;
+        let insert_at = if before { position } else { position + 1 };
         self.panes.insert(
             insert_at,
             Pane::new_with_id(pane_id, new_index, PaneGeometry::new(0, 0, 0, 0)),
@@ -59,7 +72,7 @@ impl Window {
             tree.split_leaf(
                 position,
                 LayoutDirection::from_split_direction(direction),
-                false,
+                before,
             )
         });
         if !split {

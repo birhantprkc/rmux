@@ -464,6 +464,7 @@ async fn forward_attach_emits_display_panes_overlay_for_prefix_q_keystrokes() {
         .handle(Request::SplitWindow(rmux_proto::SplitWindowRequest {
             target: rmux_proto::SplitWindowTarget::Session(session_name.clone()),
             direction: rmux_proto::SplitDirection::Vertical,
+            before: false,
             environment: None,
         }))
         .await;

@@ -269,6 +269,7 @@ async fn sticky_lifecycle_state_is_id_keyed_and_redacts_spawn_env() {
         .handle(Request::SplitWindowExt(SplitWindowExtRequest {
             target: SplitWindowTarget::Session(alpha.clone()),
             direction: SplitDirection::Vertical,
+            before: false,
             environment: Some(vec![split_secret.clone()]),
             command: Some(vec![split_command.clone()]),
         }))
@@ -535,6 +536,7 @@ async fn move_pane_routes_through_join_semantics() {
             .handle(Request::SplitWindow(SplitWindowRequest {
                 target: SplitWindowTarget::Session(alpha.clone()),
                 direction: SplitDirection::Vertical,
+                before: false,
                 environment: None,
             }))
             .await,
@@ -613,6 +615,7 @@ async fn break_pane_print_target_uses_custom_format() {
             .handle(Request::SplitWindow(SplitWindowRequest {
                 target: SplitWindowTarget::Session(alpha.clone()),
                 direction: SplitDirection::Vertical,
+                before: false,
                 environment: None,
             }))
             .await,
@@ -942,6 +945,7 @@ async fn display_panes_uses_the_default_select_pane_template() {
             .handle(Request::SplitWindow(SplitWindowRequest {
                 target: SplitWindowTarget::Session(alpha.clone()),
                 direction: SplitDirection::Vertical,
+                before: false,
                 environment: None,
             }))
             .await,
@@ -1000,6 +1004,7 @@ async fn display_panes_without_a_command_keeps_the_active_pane() {
             .handle(Request::SplitWindow(SplitWindowRequest {
                 target: SplitWindowTarget::Session(alpha.clone()),
                 direction: SplitDirection::Vertical,
+                before: false,
                 environment: None,
             }))
             .await,
@@ -1209,6 +1214,7 @@ async fn swap_pane_self_swap_is_a_no_op() {
             .handle(Request::SplitWindow(SplitWindowRequest {
                 target: SplitWindowTarget::Session(alpha.clone()),
                 direction: SplitDirection::Vertical,
+                before: false,
                 environment: None,
             }))
             .await,

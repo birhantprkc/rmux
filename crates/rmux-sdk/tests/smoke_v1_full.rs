@@ -13,7 +13,7 @@ use std::time::Duration;
 use rmux_sdk::{
     bootstrap::discovery::SDK_DAEMON_BINARY_ENV, EnsureSession, EnsureSessionPolicy, PaneExitState,
     PaneOutputChunk, PaneOutputStart, PaneOutputStream, PaneProcessState, ProcessSpec, Rmux,
-    RmuxBuilder, RmuxError, SessionName, SplitDirectionSpec,
+    RmuxBuilder, RmuxError, SessionName, SplitDirection,
 };
 use tokio::sync::Mutex;
 use tokio::time::{sleep, timeout, Instant};
@@ -41,11 +41,7 @@ async fn rust_app_autostarts_and_drives_a_session() -> TestResult {
         .await?;
     assert!(session.exists().await?);
 
-    let split = session
-        .window(0)
-        .split(SplitDirectionSpec::Vertical)
-        .await?;
-    let pane = session.pane(split.window_index, split.pane_index);
+    let pane = session.pane(0, 0).split(SplitDirection::Down).await?;
     let marker = "RMUX_FULL_RUST_APP_OK";
     let mut output = pane.output_stream_starting_at(PaneOutputStart::Now).await?;
     pane.send_text(format!("printf '{marker}\\n'\n")).await?;

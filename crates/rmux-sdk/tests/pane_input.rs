@@ -12,7 +12,7 @@ use rmux_proto::{
     HasSessionRequest, KillPaneRequest, NewWindowRequest, PaneTarget, Request, Response,
 };
 use rmux_sdk::{
-    EnsureSession, PaneRef, PaneSnapshot, RmuxBuilder, SessionName, SplitDirectionSpec,
+    EnsureSession, PaneRef, PaneSnapshot, RmuxBuilder, SessionName, SplitDirection,
     TerminalSizeSpec,
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -103,10 +103,7 @@ async fn resize_updates_geometry_and_emits_window_layout_change() -> TestResult 
         .create_only()
         .ensure(&rmux)
         .await?;
-    session
-        .window(0)
-        .split(SplitDirectionSpec::Horizontal)
-        .await?;
+    session.pane(0, 0).split(SplitDirection::Right).await?;
     let pane = session.pane(0, 0);
     let baseline = pane.snapshot().await?;
     let pane_info = pane.info().await?;

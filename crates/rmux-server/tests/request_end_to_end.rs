@@ -491,6 +491,7 @@ async fn rename_listing_and_wait_for_requests_round_trip_over_real_socket(
             &Request::SplitWindow(SplitWindowRequest {
                 target: SplitWindowTarget::Session(alpha.clone()),
                 direction: SplitDirection::Vertical,
+                before: false,
                 environment: None,
             }),
         )

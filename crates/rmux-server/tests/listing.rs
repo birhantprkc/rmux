@@ -113,6 +113,7 @@ async fn list_panes_uses_shared_formatter_through_real_socket() -> Result<(), Bo
         &Request::SplitWindow(SplitWindowRequest {
             target: SplitWindowTarget::Session(alpha.clone()),
             direction: rmux_proto::SplitDirection::Vertical,
+            before: false,
             environment: None,
         }),
     )

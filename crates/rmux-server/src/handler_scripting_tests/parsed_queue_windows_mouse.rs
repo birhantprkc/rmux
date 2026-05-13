@@ -20,6 +20,7 @@ async fn parsed_queue_resolves_bare_select_pane_against_the_current_pane() {
             .handle(Request::SplitWindow(SplitWindowRequest {
                 target: SplitWindowTarget::Pane(PaneTarget::with_window(alpha.clone(), 0, 0)),
                 direction: SplitDirection::Horizontal,
+                before: false,
                 environment: None,
             }))
             .await,
@@ -72,6 +73,7 @@ async fn parsed_queue_select_pane_title_sets_target_title_without_selecting_it()
             .handle(Request::SplitWindow(SplitWindowRequest {
                 target: SplitWindowTarget::Pane(PaneTarget::with_window(alpha.clone(), 0, 0)),
                 direction: SplitDirection::Horizontal,
+                before: false,
                 environment: None,
             }))
             .await,

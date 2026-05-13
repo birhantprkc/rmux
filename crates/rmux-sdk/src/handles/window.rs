@@ -7,11 +7,10 @@ use crate::handles::session::unexpected_response;
 use crate::transport::TransportClient;
 use crate::{
     InfoSnapshot, PaneId, PaneInfo, PaneProcessState, PaneRef, Result, RmuxEndpoint, RmuxError,
-    SessionId, SessionInfo, SplitDirectionSpec, TerminalSizeSpec, WindowId, WindowInfo, WindowRef,
+    SessionId, SessionInfo, TerminalSizeSpec, WindowId, WindowInfo, WindowRef,
 };
 use rmux_proto::{
-    KillWindowRequest, ListPanesRequest, ListSessionsRequest, ListWindowsRequest, Request,
-    Response, SplitWindowExtRequest, SplitWindowTarget,
+    KillWindowRequest, ListPanesRequest, ListSessionsRequest, ListWindowsRequest, Request, Response,
 };
 
 const SESSION_INFO_FORMAT: &str = "#{session_name}\t#{session_id}";
@@ -121,28 +120,6 @@ impl Window {
         window_info_snapshot(&self.transport, &self.target).await
     }
 
-    /// Splits the active pane in this window and returns the new pane target.
-    ///
-    /// The SDK resolves the active pane through the target session/index before
-    /// issuing the daemon split request. For linked windows, the returned pane
-    /// target is expressed through this handle's addressed session/index while
-    /// the underlying pane list is shared by every linked or grouped view.
-    pub async fn split(&self, direction: SplitDirectionSpec) -> Result<PaneRef> {
-        let panes = list_window_panes(&self.transport, &self.target).await?;
-        let pane = panes
-            .iter()
-            .find(|pane| pane.active)
-            .or_else(|| panes.first())
-            .ok_or_else(|| {
-                RmuxError::protocol(rmux_proto::RmuxError::Server(format!(
-                    "window {} has no panes to split",
-                    self.target.to_proto()
-                )))
-            })?;
-
-        split_window_pane(&self.transport, pane.target.clone(), direction).await
-    }
-
     /// Consumes this handle and kills the addressed window through the daemon.
     ///
     /// A stale handle is treated as an idempotent no-op and returns
@@ -161,25 +138,6 @@ impl fmt::Debug for Window {
             .debug_struct("Window")
             .field("target", &self.target)
             .finish_non_exhaustive()
-    }
-}
-
-async fn split_window_pane(
-    client: &TransportClient,
-    target: PaneRef,
-    direction: SplitDirectionSpec,
-) -> Result<PaneRef> {
-    match client
-        .request(Request::SplitWindowExt(SplitWindowExtRequest {
-            target: SplitWindowTarget::Pane((&target).into()),
-            direction: direction.into(),
-            environment: None,
-            command: None,
-        }))
-        .await?
-    {
-        Response::SplitWindow(response) => Ok(response.pane.into()),
-        response => Err(unexpected_response("split-window", response)),
     }
 }
 

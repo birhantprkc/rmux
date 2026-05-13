@@ -95,6 +95,7 @@ fn twenty_pane_layout_produces_valid_geometry_and_resizes_all_ptys() -> Result<(
         let split = connection.roundtrip(&Request::SplitWindow(SplitWindowRequest {
             target: SplitWindowTarget::Session(session_name.clone()),
             direction: rmux_proto::SplitDirection::Vertical,
+            before: false,
             environment: None,
         }))?;
         assert_eq!(
@@ -504,6 +505,7 @@ fn shutdown_removes_socket_files_after_all_sessions_are_killed() -> Result<(), B
         let split = connection.roundtrip(&Request::SplitWindow(SplitWindowRequest {
             target: SplitWindowTarget::Session(session_name.clone()),
             direction: rmux_proto::SplitDirection::Vertical,
+            before: false,
             environment: None,
         }))?;
         assert!(matches!(split, Response::SplitWindow(_)));

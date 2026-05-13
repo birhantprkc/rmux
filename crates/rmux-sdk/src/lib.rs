@@ -93,8 +93,8 @@ pub use events::{
 };
 pub use extract::{CollectedPaneOutput, PaneTextMatch};
 pub use handles::{
-    Pane, PaneCloseOutcome, PaneRespawnOptions, Rmux, RmuxBuilder, Session, Window,
-    WindowCloseOutcome, WindowPane,
+    Pane, PaneCloseOutcome, PaneRespawnOptions, Rmux, RmuxBuilder, Session, SplitDirection,
+    Window, WindowCloseOutcome, WindowPane,
 };
 pub use info::{InfoSnapshot, PaneExitState, PaneInfo, PaneProcessState, SessionInfo, WindowInfo};
 pub use input::{

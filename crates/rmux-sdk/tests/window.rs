@@ -12,7 +12,7 @@ use rmux_proto::{
     ListWindowsRequest, NewWindowRequest, Request, Response, WindowListEntry, WindowTarget,
 };
 use rmux_sdk::{
-    EnsureSession, RmuxBuilder, SessionName, SplitDirectionSpec, WindowCloseOutcome, WindowRef,
+    EnsureSession, RmuxBuilder, SessionName, SplitDirection, WindowCloseOutcome, WindowRef,
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::UnixStream;
@@ -45,9 +45,10 @@ async fn window_split_info_pane_listing_ids_and_idempotent_close_use_daemon_path
         rmux_sdk::PaneRef::new(alpha.clone(), 1, 0)
     );
 
-    let split_pane = window.split(SplitDirectionSpec::Vertical).await?;
-    assert_eq!(split_pane.session_name, alpha);
-    assert_eq!(split_pane.window_index, 1);
+    let split_pane = session.pane(1, 0).split(SplitDirection::Down).await?;
+    let split_pane_ref = split_pane.target().clone();
+    assert_eq!(split_pane_ref.session_name, alpha);
+    assert_eq!(split_pane_ref.window_index, 1);
 
     let panes = window.panes().await?;
     assert_eq!(panes.len(), 2);
@@ -56,7 +57,7 @@ async fn window_split_info_pane_listing_ids_and_idempotent_close_use_daemon_path
         1,
         "list-panes format should identify the active pane"
     );
-    assert!(panes.iter().any(|pane| pane.target == split_pane));
+    assert!(panes.iter().any(|pane| pane.target == split_pane_ref));
 
     let info = window.info().await?;
     assert_eq!(info.sessions.len(), 1);
@@ -293,15 +294,20 @@ async fn window_split_through_linked_target_updates_every_linked_view() -> TestR
     let window_id = linked_target.id().await?.expect("linked target is listed");
     assert_eq!(linked_target.panes().await?.len(), 1);
 
-    let split_pane = linked_target.split(SplitDirectionSpec::Horizontal).await?;
-    assert_eq!(split_pane.session_name, linked_b);
-    assert_eq!(split_pane.window_index, 1);
+    let split_pane = rmux
+        .pane(rmux_sdk::PaneRef::new(linked_b.clone(), 1, 0))
+        .await?
+        .split(SplitDirection::Right)
+        .await?;
+    let split_ref = split_pane.target().clone();
+    assert_eq!(split_ref.session_name, linked_b);
+    assert_eq!(split_ref.window_index, 1);
 
     let linked_target_panes = linked_target.panes().await?;
     assert_eq!(linked_target_panes.len(), 2);
     assert!(linked_target_panes
         .iter()
-        .any(|pane| pane.target == split_pane));
+        .any(|pane| pane.target == split_ref));
 
     let linked_a_window = raw_window(harness.socket_path(), linked_a.clone(), 0).await?;
     let linked_b_window = raw_window(harness.socket_path(), linked_b.clone(), 1).await?;

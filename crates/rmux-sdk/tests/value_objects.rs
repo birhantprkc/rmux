@@ -224,6 +224,7 @@ fn split_spec_round_trip_and_maps_direction_and_target() {
     let spec = round_trip(SplitSpec {
         target: SplitTargetSpec::Pane(PaneRef::new(session_name("alpha"), 2, 3)),
         direction: SplitDirectionSpec::Horizontal,
+        before: false,
         process: ProcessSpec {
             command: Some(vec!["htop".to_owned()]),
             environment: Some(vec!["A=B".to_owned()]),
@@ -389,6 +390,7 @@ fn explicit_empty_options_are_not_normalized_away_in_proto_mappings() {
     let split = SplitSpec {
         target: SplitTargetSpec::Session(session_name("alpha")),
         direction: SplitDirectionSpec::Vertical,
+        before: false,
         process: ProcessSpec {
             command: Some(Vec::new()),
             environment: Some(Vec::new()),
@@ -406,6 +408,7 @@ fn command_value_object_round_trip_and_materializes_proto_request() {
         RmuxCommandKind::SplitWindow(SplitSpec {
             target: SplitTargetSpec::Session(session_name("alpha")),
             direction: SplitDirectionSpec::Vertical,
+            before: false,
             process: ProcessSpec::default(),
         }),
     ));
@@ -418,6 +421,7 @@ fn command_value_object_round_trip_and_materializes_proto_request() {
         rmux_proto::Request::SplitWindowExt(rmux_proto::SplitWindowExtRequest {
             target: rmux_proto::SplitWindowTarget::Session(_),
             direction: rmux_proto::SplitDirection::Vertical,
+            before: false,
             environment: None,
             command: None,
         })

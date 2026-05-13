@@ -9,6 +9,22 @@ use rmux_proto::{
 
 use crate::{connection::Connection, ClientError};
 
+/// Full options for a `split-window` request.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SplitWindowOptions {
+    /// The exact split target.
+    pub target: SplitWindowTarget,
+    /// Axis on which to split (`Vertical` = side-by-side, `Horizontal` = stacked).
+    pub direction: SplitDirection,
+    /// `true` to insert the new pane *before* the target on the chosen axis
+    /// (tmux `-b`); `false` to insert after (default).
+    pub before: bool,
+    /// Optional per-spawn environment overrides in `NAME=VALUE` form.
+    pub environment: Option<Vec<String>>,
+    /// Optional command argv for the new pane.
+    pub command: Option<Vec<String>>,
+}
+
 impl Connection {
     /// Sends a `new-window` request over the detached RPC channel.
     pub fn new_window(
@@ -289,6 +305,9 @@ impl Connection {
     }
 
     /// Sends a `split-window` request with explicit spawn options.
+    ///
+    /// New pane is inserted *after* the target. To insert before (tmux `-b`),
+    /// use [`Connection::split_window_with_options`].
     pub fn split_window_with_spawn(
         &mut self,
         target: SplitWindowTarget,
@@ -296,10 +315,32 @@ impl Connection {
         environment: Option<Vec<String>>,
         command: Option<Vec<String>>,
     ) -> Result<Response, ClientError> {
+        self.split_window_with_options(SplitWindowOptions {
+            target,
+            direction,
+            before: false,
+            environment,
+            command,
+        })
+    }
+
+    /// Sends a `split-window` request with full options including `before`.
+    pub fn split_window_with_options(
+        &mut self,
+        options: SplitWindowOptions,
+    ) -> Result<Response, ClientError> {
+        let SplitWindowOptions {
+            target,
+            direction,
+            before,
+            environment,
+            command,
+        } = options;
         if command.is_some() {
             return self.roundtrip(&Request::SplitWindowExt(SplitWindowExtRequest {
                 target,
                 direction,
+                before,
                 environment,
                 command,
             }));
@@ -307,6 +348,7 @@ impl Connection {
         self.roundtrip(&Request::SplitWindow(SplitWindowRequest {
             target,
             direction,
+            before,
             environment,
         }))
     }

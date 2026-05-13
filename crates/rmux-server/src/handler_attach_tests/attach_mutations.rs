@@ -28,6 +28,7 @@ async fn attached_session_mutations_emit_refresh_switches() {
         .handle(Request::SplitWindow(SplitWindowRequest {
             target: SplitWindowTarget::Session(alpha.clone()),
             direction: rmux_proto::SplitDirection::Horizontal,
+            before: false,
             environment: None,
         }))
         .await;
@@ -111,6 +112,7 @@ async fn switch_client_updates_the_tracked_session_for_follow_up_refreshes() {
         .handle(Request::SplitWindow(SplitWindowRequest {
             target: SplitWindowTarget::Session(beta.clone()),
             direction: rmux_proto::SplitDirection::Horizontal,
+            before: false,
             environment: None,
         }))
         .await;

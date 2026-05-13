@@ -364,6 +364,7 @@ async fn live_attach_mouse_down_selects_the_clicked_pane() {
         .handle(Request::SplitWindow(SplitWindowRequest {
             target: SplitWindowTarget::Session(alpha.clone()),
             direction: SplitDirection::Horizontal,
+            before: false,
             environment: None,
         }))
         .await;
