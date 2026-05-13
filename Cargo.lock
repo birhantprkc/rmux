@@ -1373,9 +1373,11 @@ dependencies = [
 name = "xtask"
 version = "0.1.0"
 dependencies = [
+ "rmux-sdk",
  "serde",
  "serde_json",
  "sha2",
+ "tokio",
  "toml",
 ]
 
