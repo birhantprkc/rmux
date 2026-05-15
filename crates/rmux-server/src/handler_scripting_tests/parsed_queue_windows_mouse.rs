@@ -291,7 +291,7 @@ async fn parsed_queue_exposes_gated_mouse_target_errors() {
     let error = handler
         .execute_parsed_commands_for_test(std::process::id(), parsed)
         .await
-        .expect_err("mouse target is gated");
+        .expect_err("mouse target is deferred");
 
     assert!(
         error

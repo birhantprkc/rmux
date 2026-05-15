@@ -636,7 +636,7 @@ async fn rename_listing_and_wait_for_requests_round_trip_over_real_socket(
         send_request(
             harness.socket_path(),
             &Request::WaitFor(WaitForRequest {
-                channel: "gate".to_owned(),
+                channel: "check".to_owned(),
                 mode: WaitForMode::Lock,
             }),
         )
@@ -646,7 +646,7 @@ async fn rename_listing_and_wait_for_requests_round_trip_over_real_socket(
     let gate_socket = harness.socket_path().to_path_buf();
     let lock_waiter = tokio::spawn(async move {
         let request = Request::WaitFor(WaitForRequest {
-            channel: "gate".to_owned(),
+            channel: "check".to_owned(),
             mode: WaitForMode::Lock,
         });
         send_request(&gate_socket, &request)
@@ -662,7 +662,7 @@ async fn rename_listing_and_wait_for_requests_round_trip_over_real_socket(
         send_request(
             harness.socket_path(),
             &Request::WaitFor(WaitForRequest {
-                channel: "gate".to_owned(),
+                channel: "check".to_owned(),
                 mode: WaitForMode::Unlock,
             }),
         )

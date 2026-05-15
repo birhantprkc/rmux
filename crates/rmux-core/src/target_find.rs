@@ -67,7 +67,7 @@ impl SessionStore {
         }
         if matches!(raw, "~" | "{marked}") {
             return Err(RmuxError::Server(
-                "target form {marked} is recognized but gated until marked-pane state exists"
+                "target form {marked} is recognized but deferred until marked-pane state exists"
                     .to_owned(),
             ));
         }

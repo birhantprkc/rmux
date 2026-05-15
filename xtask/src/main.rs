@@ -25,7 +25,7 @@ Usage:
 Commands:
     --help, -h, help            Print this help text.
     feature-inventory --check
-                                Validate docs/feature-inventory-v1.yaml.
+                                Validate spec/feature-inventory-v1.yaml.
     feature-inventory --check-file-sizes
                                 Check tracked rmux-sdk source-size exceptions.
     feature-inventory --render-markdown

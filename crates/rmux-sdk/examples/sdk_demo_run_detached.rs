@@ -50,7 +50,7 @@ async fn main() -> Result<()> {
         )
         .await?;
     // The handle is dropped here. The daemon keeps the python server
-    // alive in the background — the client can move on and reconnect
+    // alive in the background — the caller can move on and reconnect
     // to inspect output later.
     // example:end
 

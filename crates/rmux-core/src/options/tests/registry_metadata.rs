@@ -179,7 +179,7 @@ fn frozen_options_table_source() -> Option<String> {
             eprintln!(
                 "skipping frozen tmux options-table assertions: \
                  {path} unavailable: {error}. Set {REQUIRE_FROZEN_TMUX_ENV}=1 \
-                 to make this a hard gate."
+                 to make this a hard check."
             );
             None
         }

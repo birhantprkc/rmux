@@ -4,7 +4,7 @@ use super::support::*;
 fn tmux_compat_nested_attach_session_inside_tmux_uses_switch_client_surface(
 ) -> Result<(), Box<dyn Error>> {
     // Cluster J nested-TMUX coverage: the explicit `-f <missing> new-session -d`
-    // row is the designated 0.1.0 failure check for this cluster. This row
+    // row is the designated baseline build failure check for this cluster. This row
     // closes the still-untested nested-attach half without pretending that it
     // is itself the release-baseline red case.
     let harness = TmuxCompatHarness::new("tmux-compat-nested-attach-switch-client")?;

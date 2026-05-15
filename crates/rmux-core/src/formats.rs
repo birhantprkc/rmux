@@ -253,7 +253,7 @@ where
             .unwrap_or_default();
     }
 
-    // --- Dispatch based on classified modifiers ---
+    // --- Dispatch with classified modifiers ---
 
     // Literal.
     if flags & MOD_LITERAL != 0 {

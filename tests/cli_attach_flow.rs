@@ -645,7 +645,7 @@ fn prefix_x_during_display_panes_opens_kill_pane_prompt() -> Result<(), Box<dyn 
     let overlay = read_until_contains(attach.master_mut(), "\x1b[?25l", IO_TIMEOUT)?;
     assert!(
         overlay.contains("\x1b[?25l"),
-        "prefix q should enter display-panes before the prefix x transfer, got: {overlay:?}"
+        "prefix q should enter display-panes before the prefix x transition, got: {overlay:?}"
     );
 
     attach.send_bytes(b"\x02x")?;
@@ -945,7 +945,13 @@ fn prefix_w_prefix_x_confirmed_clears_choose_tree_when_host_pane_dies() -> Resul
     let mut daemon = harness.start_hidden_daemon()?;
 
     assert_success(&harness.run(&["new-session", "-d", "-s", "alpha"])?);
-    assert_success(&harness.run(&["send-keys", "-t", "alpha:0.0", "cd <workspace>", "Enter"])?);
+    assert_success(&harness.run(&[
+        "send-keys",
+        "-t",
+        "alpha:0.0",
+        "cd /tmp/rmux-workspace",
+        "Enter",
+    ])?);
 
     let mut attach = AttachedSession::spawn(&harness, "alpha", TerminalSize::new(100, 30))?;
     attach.wait_for_raw_mode(IO_TIMEOUT)?;

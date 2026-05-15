@@ -174,10 +174,7 @@ fn update_copies_matching_variables_and_clears_misses() {
     let alpha = session_name("alpha");
     let source = HashMap::from([
         ("DISPLAY".to_owned(), ":1".to_owned()),
-        (
-            "SSH_AUTH_SOCK".to_owned(),
-            format!("/tmp/{}{}", "rmux", "client"),
-        ),
+        ("SSH_AUTH_SOCK".to_owned(), "/tmp/rmux-auth-sock".to_owned()),
     ]);
 
     store.update(
@@ -187,10 +184,9 @@ fn update_copies_matching_variables_and_clears_misses() {
     );
 
     assert_eq!(store.resolve(Some(&alpha), "DISPLAY"), Some(":1"));
-    let expected_auth_sock = format!("/tmp/{}{}", "rmux", "client");
     assert_eq!(
         store.resolve(Some(&alpha), "SSH_AUTH_SOCK"),
-        Some(expected_auth_sock.as_str())
+        Some("/tmp/rmux-auth-sock")
     );
     assert!(store.contains_entry(&ScopeSelector::Session(alpha.clone()), "KRB*"));
     assert_eq!(store.resolve(Some(&alpha), "KRB*"), None);

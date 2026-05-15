@@ -26,7 +26,7 @@ impl SessionStore {
     ) -> Result<Target, RmuxError> {
         let mouse_target = context.mouse_target().ok_or_else(|| {
             RmuxError::Server(
-                "target form {mouse} is recognized but gated until mouse event state reaches the command queue".to_owned(),
+                "target form {mouse} is recognized but deferred until mouse event state reaches the command queue".to_owned(),
             )
         })?;
         let parts = self.parts_for_target(mouse_target)?;

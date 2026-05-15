@@ -6,7 +6,7 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-const INVENTORY_PATH: &str = "docs/feature-inventory-v1.yaml";
+const INVENTORY_PATH: &str = "spec/feature-inventory-v1.yaml";
 const SDK_SRC_ROOT: &str = "crates/rmux-sdk/src";
 const MAX_SDK_FILE_LINES: usize = 600;
 

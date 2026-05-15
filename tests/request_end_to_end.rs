@@ -309,10 +309,10 @@ fn rename_listing_and_wait_for_commands_round_trip_end_to_end() -> Result<(), Bo
     assert_success(&harness.run(&["wait-for", "-S", "ready"])?);
     assert_eq!(signal_waiter.wait()?.code(), Some(0));
 
-    assert_success(&harness.run(&["wait-for", "-L", "gate"])?);
-    let mut lock_waiter = spawn_cli_process(&harness, &["wait-for", "-L", "gate"])?;
+    assert_success(&harness.run(&["wait-for", "-L", "check"])?);
+    let mut lock_waiter = spawn_cli_process(&harness, &["wait-for", "-L", "check"])?;
     assert_process_blocks(&mut lock_waiter, "locked wait-for -L")?;
-    assert_success(&harness.run(&["wait-for", "-U", "gate"])?);
+    assert_success(&harness.run(&["wait-for", "-U", "check"])?);
     assert_eq!(lock_waiter.wait()?.code(), Some(0));
 
     Ok(())

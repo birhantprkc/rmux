@@ -253,7 +253,7 @@ impl HookStore {
             .map_or_else(Vec::new, |bindings| bindings.views(hook))
     }
 
-    /// Returns the tmux default_value hook inventory visible at the requested global root.
+    /// Returns the tmux-compatible hook inventory visible at the requested global root.
     #[must_use]
     pub fn shipped_global_hooks(root: HookGlobalRoot, hook: Option<HookName>) -> Vec<HookName> {
         hook_inventory()

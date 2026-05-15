@@ -4,7 +4,7 @@
 //! launcher per endpoint" guarantee the Unix `flock`-based bootstrap gives.
 //! On Windows the documented primitive is a per-user named mutex held over
 //! the `CreateNamedPipeW`/`first_pipe_instance(true)` window. This module
-//! owns that gate, layered on top of the existing `rmux-ipc` Windows pipe
+//! owns that check, layered on top of the existing `rmux-ipc` Windows pipe
 //! contract:
 //!
 //! * Endpoint names stay `\\.\pipe\rmux-{SID}-il-{integrity}-{label}`. This
@@ -104,7 +104,7 @@ pub enum StartupError {
         /// Pipe path that was rejected.
         pipe_name: PathBuf,
     },
-    /// The startup mutex name derived from the pipe path violates the Win32
+    /// The startup mutex name computed from the pipe path violates the Win32
     /// kernel-object name length limit.
     InvalidMutexName {
         /// Visible reason describing why the mutex name was rejected.

@@ -35,7 +35,7 @@
 //! folds it into a [`PaneState`], and renders the state into a ratatui
 //! [`Buffer`] without an async runtime or daemon in scope. It runs in
 //! `cargo test --workspace --doc` so the render path stays compile-tested
-//! at the doctest gate.
+//! at the doctest check.
 //!
 //! ```
 //! use ratatui_core::buffer::Buffer;

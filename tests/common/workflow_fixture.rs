@@ -27,7 +27,7 @@ pub(crate) struct WorkflowStep {
 /// Every step's `argv[0]` is a valid rmux subcommand. Steps with
 /// `runtime_argv == true` require the test to construct the actual
 /// command-line arguments (the stored `argv` shows the command shape
-/// but contains default_value values).
+/// but contains sample values).
 pub(crate) const CANONICAL_SESSION_WORKFLOW: [WorkflowStep; SESSION_WORKFLOW_STEP_COUNT] = [
     WorkflowStep {
         label: "cleanup",

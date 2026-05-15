@@ -1,7 +1,7 @@
 //! Demonstrates picking up an existing session by name.
 //!
 //! Pairs with `Run an app detached`. After leaving an app running in
-//! a daemon-managed session, an client calls `Rmux::session(name)` to
+//! a daemon-managed session, a caller uses `Rmux::session(name)` to
 //! grab a handle and verifies the session is still alive with
 //! `Session::exists()`. Reading the live state via `Pane::snapshot()`
 //! belongs to the dedicated "Snapshot pane" example — keeping it out

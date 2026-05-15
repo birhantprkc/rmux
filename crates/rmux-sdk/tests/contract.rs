@@ -1,7 +1,7 @@
 //! Compile-only contract assertions for SDK vocabulary and the facade error.
 //!
 //! These checks intentionally avoid daemon startup, IPC, filesystem
-//! endpoints, and runtime I/O; they exist purely to gate the static bounds
+//! endpoints, and runtime I/O; they exist purely to check the static bounds
 //! and derive surface required by later async/transport layers. The bounds
 //! are enforced at compile time via [`_assert_bounds`] (a never-called
 //! function that the linker may discard, but which the type-checker still
@@ -40,7 +40,7 @@ fn assert_pane_detach_consumes_handle(pane: Pane) {
     pane.detach();
 }
 
-/// Compile-only gate for the SDK's static bounds and expected derives.
+/// Compile-only check for the SDK's static bounds and expected derives.
 ///
 /// This function is never invoked; its purpose is to fail compilation if
 /// any of the listed type bounds regress while compiling this integration

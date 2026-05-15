@@ -353,7 +353,7 @@ features:
     notes: "quickstart.rs and the Session handle tests cover typed session creation and lookup; examples cover this replacement until a dedicated tag-by-id example is warranted."
     deferral:
       reason: "No standalone tag-session-by-id example exists in the current SDK example set."
-      target_milestone: "v0.0.5-doc-followup"
+      target_milestone: "post-0.1.0"
   - name: "SDK python REPL driver example follow-up"
     api_item: "crates/rmux-sdk/examples/python-repl-driver.rs"
     crate_module: "rmux-sdk::examples"
@@ -369,7 +369,7 @@ features:
     notes: "wait_for_text.rs plus pane_events_stream.rs cover the prompt-wait and stream-consumption shape; examples cover this replacement until a dedicated REPL driver example lands."
     deferral:
       reason: "No standalone python-repl-driver example exists in the current SDK example set."
-      target_milestone: "v0.0.5-doc-followup"
+      target_milestone: "post-0.1.0"
   - name: "Full SDK acceptance smoke"
     api_item: "crates/rmux-sdk/tests/smoke_v1_full.rs"
     crate_module: "rmux-sdk::tests"
@@ -398,7 +398,7 @@ features:
     notes: "Lag DTO and stream contract tests exist. A daemon-backed forced-lag smoke is deferred until a test-only buffer-capacity knob exists without adding public SDK API."
     deferral:
       reason: "No test-only lag forcing knob exists in the current SDK; adding a public builder method only for this smoke is out of scope."
-      target_milestone: "v0.0.5-test-harness-followup"
+      target_milestone: "post-0.1.0"
   - name: "SDK file-size exception: events/streams_contract_tests.rs"
     api_item: "rmux_sdk::events::streams contract tests"
     crate_module: "rmux-sdk::events::streams_contract_tests"

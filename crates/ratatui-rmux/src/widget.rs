@@ -22,7 +22,7 @@ use crate::theme::{cell_style, glyph_symbol};
 
 /// Sync ratatui widget that paints one [`PaneState`].
 ///
-/// Borrowed from a `&PaneState`, so the widget can be created inline in
+/// Uses a `&PaneState`, so the widget can be created inline in
 /// a ratatui draw loop without cloning the captured grid.
 #[derive(Debug, Clone, Copy)]
 pub struct PaneWidget<'a> {

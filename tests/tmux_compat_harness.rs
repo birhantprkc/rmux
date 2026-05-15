@@ -378,27 +378,27 @@ fn tmux_compat_wait_for_lock_and_unlock_round_trip_when_frozen_tmux_is_available
     assert!(!start.tmux.timed_out);
     assert!(!start.rmux.timed_out);
 
-    let lock = harness.run_pair_with(&tmux_binary, &["wait-for", "-L", "gate"], config.clone())?;
+    let lock = harness.run_pair_with(&tmux_binary, &["wait-for", "-L", "check"], config.clone())?;
     assert_eq!(lock.tmux.status_code, lock.rmux.status_code);
     assert_eq!(lock.tmux.timed_out, lock.rmux.timed_out);
     assert_eq!(lock.tmux.stdout, lock.rmux.stdout);
     assert_eq!(lock.tmux.stderr, lock.rmux.stderr);
 
     let unlock =
-        harness.run_pair_with(&tmux_binary, &["wait-for", "-U", "gate"], config.clone())?;
+        harness.run_pair_with(&tmux_binary, &["wait-for", "-U", "check"], config.clone())?;
     assert_eq!(unlock.tmux.status_code, unlock.rmux.status_code);
     assert_eq!(unlock.tmux.timed_out, unlock.rmux.timed_out);
     assert_eq!(unlock.tmux.stdout, unlock.rmux.stdout);
     assert_eq!(unlock.tmux.stderr, unlock.rmux.stderr);
 
     let alias_lock =
-        harness.run_pair_with(&tmux_binary, &["wait", "-L", "gate"], config.clone())?;
+        harness.run_pair_with(&tmux_binary, &["wait", "-L", "check"], config.clone())?;
     assert_eq!(alias_lock.tmux.status_code, alias_lock.rmux.status_code);
     assert_eq!(alias_lock.tmux.timed_out, alias_lock.rmux.timed_out);
     assert_eq!(alias_lock.tmux.stdout, alias_lock.rmux.stdout);
     assert_eq!(alias_lock.tmux.stderr, alias_lock.rmux.stderr);
 
-    let alias_unlock = harness.run_pair_with(&tmux_binary, &["wait", "-U", "gate"], config)?;
+    let alias_unlock = harness.run_pair_with(&tmux_binary, &["wait", "-U", "check"], config)?;
     assert_eq!(alias_unlock.tmux.status_code, alias_unlock.rmux.status_code);
     assert_eq!(alias_unlock.tmux.timed_out, alias_unlock.rmux.timed_out);
     assert_eq!(alias_unlock.tmux.stdout, alias_unlock.rmux.stdout);

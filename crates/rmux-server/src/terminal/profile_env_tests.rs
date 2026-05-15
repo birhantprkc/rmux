@@ -14,7 +14,7 @@ fn terminal_profile_resolves_default_shell_with_command_environment_overrides() 
     let root = unique_directory("shell-env-override");
     let bin = root.join("bin");
     fs::create_dir_all(&bin).expect("test bin directory");
-    fs::write(bin.join("profile-shell.exe"), b"").expect("shell default_value");
+    fs::write(bin.join("profile-shell.exe"), b"").expect("shell fixture");
     let path = std::env::join_paths([bin.as_os_str()]).expect("joined PATH");
     let mut options = OptionStore::new();
     options

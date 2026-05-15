@@ -3,7 +3,7 @@
 //! Bootstrapping a daemon-managed session with a specific name, a
 //! deterministic process spec, and a couple of environment overrides
 //! — the canonical "create a workspace I can come back to" line of
-//! code agents will hit on their first call.
+//! code clients will hit on their first call.
 //!
 //! The captured snapshot just shows the post-create idle prompt;
 //! the snippet itself is what the docs page lifts.

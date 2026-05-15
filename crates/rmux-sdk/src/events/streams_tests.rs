@@ -130,7 +130,7 @@ fn split_lines_preserves_nul_byte_inside_rendered_text() {
 fn split_lines_reassembles_multibyte_codepoint_across_chunk_boundary() {
     // The daemon may chunk arbitrary byte boundaries. A two-byte
     // UTF-8 codepoint split across two cursor batches must NOT
-    // produce a U+FFFD default_value when the LF arrives — the line
+    // produce a U+FFFD replacement when the LF arrives — the line
     // stream lossy-decodes the *complete* line, not each chunk.
     let mut buffer = Vec::new();
     let mut out: VecDeque<PaneLineItem> = VecDeque::new();

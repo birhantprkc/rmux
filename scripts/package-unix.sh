@@ -13,7 +13,7 @@ Options:
   --output-dir <path>             Output directory (default: target/dist)
   --platform-label <label>        Artifact label override (default: inferred)
   --skip-build                    Repackage an existing binary
-  --allow-stale-binary            Allow --skip-build for local-only reference
+  --allow-stale-binary            Allow --skip-build for local-only packaging
   -h, --help                      Show this help
 USAGE
 }
@@ -178,7 +178,7 @@ fi
 if [ "$skip_build" -eq 0 ]; then
   cargo "${cargo_args[@]}"
 elif [ "$allow_stale_binary" -eq 0 ]; then
-  die "--skip-build is local-only reference; pass --allow-stale-binary to acknowledge that"
+  die "--skip-build is local-only packaging; pass --allow-stale-binary to acknowledge that"
 fi
 
 target_dir="${CARGO_TARGET_DIR:-target}"
@@ -194,7 +194,7 @@ checksums_path="$dist_dir/SHA256SUMS.txt"
 
 case "$stage_dir" in "$dist_dir"/*) ;; *) die "stage path escapes output dir" ;; esac
 rm -rf "$stage_dir"
-mkdir -p "$stage_dir/bin" "$stage_dir/docs" "$stage_dir/share/man/man1"
+mkdir -p "$stage_dir/bin" "$stage_dir/share/man/man1" "$stage_dir/share/rmux"
 
 cp "$binary" "$stage_dir/bin/rmux"
 cp rmux.1 "$stage_dir/share/man/man1/rmux.1"
@@ -212,13 +212,13 @@ git_dirty=false
 if [ -n "$(git status --porcelain)" ]; then
   git_dirty=true
 fi
-release_reference=true
+release_artifact=true
 if [ "$skip_build" -eq 1 ] || [ "$git_dirty" = true ]; then
-  release_reference=false
+  release_artifact=false
 fi
 generated_at_utc="$(commit_time_iso)"
 
-cat > "$stage_dir/docs/artifact-metadata.json" <<EOF
+cat > "$stage_dir/share/rmux/artifact-metadata.json" <<EOF
 {
   "schema": 1,
   "artifact_kind": "unix-package-binary",
@@ -239,7 +239,7 @@ cat > "$stage_dir/docs/artifact-metadata.json" <<EOF
   "archive_format": "tar.gz",
   "archive_reproducibility": "normalized-mtime-gzip-no-name",
   "skip_build": $([ "$skip_build" -eq 1 ] && printf true || printf false),
-  "release_reference": $release_reference,
+  "release_artifact": $release_artifact,
   "generated_at_utc": "$generated_at_utc"
 }
 EOF
@@ -264,4 +264,4 @@ printf '%s  %s\n' "$archive_sha256" "$(basename "$archive_path")" > "$checksums_
 printf 'package=%s\n' "$archive_path"
 printf 'sha256=%s\n' "$archive_sha256"
 printf 'binary_sha256=%s\n' "$binary_sha256"
-printf 'release_reference=%s\n' "$release_reference"
+printf 'release_artifact=%s\n' "$release_artifact"

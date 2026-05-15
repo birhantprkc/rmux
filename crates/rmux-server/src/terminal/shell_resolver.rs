@@ -228,8 +228,8 @@ mod tests {
         let regular_bin = root.join("regular-bin");
         fs::create_dir_all(&windows_apps).expect("windowsapps test directory");
         fs::create_dir_all(&regular_bin).expect("regular test directory");
-        fs::write(windows_apps.join("pwsh.exe"), b"").expect("windowsapps pwsh default_value");
-        fs::write(regular_bin.join("pwsh.exe"), b"").expect("regular pwsh default_value");
+        fs::write(windows_apps.join("pwsh.exe"), b"").expect("windowsapps pwsh fixture");
+        fs::write(regular_bin.join("pwsh.exe"), b"").expect("regular pwsh fixture");
         let path = env::join_paths([windows_apps.as_os_str(), regular_bin.as_os_str()])
             .expect("joined PATH");
 
@@ -249,7 +249,7 @@ mod tests {
         let root = unique_test_dir("only-windowsapps");
         let windows_apps = root.join("WindowsApps");
         fs::create_dir_all(&windows_apps).expect("windowsapps test directory");
-        fs::write(windows_apps.join("pwsh.exe"), b"").expect("windowsapps pwsh default_value");
+        fs::write(windows_apps.join("pwsh.exe"), b"").expect("windowsapps pwsh fixture");
         let path = env::join_paths([windows_apps.as_os_str()]).expect("joined PATH");
 
         let resolved = search_path_in(
@@ -267,7 +267,7 @@ mod tests {
         let root = unique_test_dir("effective-path");
         let bin = root.join("bin");
         fs::create_dir_all(&bin).expect("bin test directory");
-        fs::write(bin.join("rmux-probe.exe"), b"").expect("probe default_value");
+        fs::write(bin.join("rmux-probe.exe"), b"").expect("probe fixture");
         let path = env::join_paths([bin.as_os_str()]).expect("joined PATH");
         let environment = HashMap::from([
             ("Path".to_owned(), path.to_string_lossy().into_owned()),
@@ -285,7 +285,7 @@ mod tests {
         let root = unique_test_dir("default-shell-path");
         let bin = root.join("bin");
         fs::create_dir_all(&bin).expect("bin test directory");
-        fs::write(bin.join("custom-shell.exe"), b"").expect("custom shell default_value");
+        fs::write(bin.join("custom-shell.exe"), b"").expect("custom shell fixture");
         let path = env::join_paths([bin.as_os_str()]).expect("joined PATH");
         let environment = HashMap::from([
             ("PATH".to_owned(), path.to_string_lossy().into_owned()),

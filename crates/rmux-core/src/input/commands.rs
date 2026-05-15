@@ -160,7 +160,7 @@ pub enum DcsPayload {
     Decrqss(Vec<u8>),
     /// tmux passthrough (data after `tmux;` prefix).
     Passthrough(Vec<u8>),
-    /// Sixel image data (gated/deferred).
+    /// Sixel image data (deferred/deferred).
     Sixel(Vec<u8>),
 }
 

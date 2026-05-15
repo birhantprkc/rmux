@@ -41,40 +41,6 @@ fn troff_literal_block(contents: &str, heading: &str, next_heading: &str) -> Vec
         .collect()
 }
 
-fn ledger_entry_block<'a>(contents: &'a str, id: &str) -> &'a str {
-    let needle = format!("  - id: \"{id}\"");
-    let start = contents
-        .find(&needle)
-        .unwrap_or_else(|| panic!("missing ledger entry {id}"));
-    let tail = &contents[start..];
-    let end = tail[needle.len()..]
-        .find("\n  - id: \"")
-        .map(|offset| needle.len() + offset)
-        .unwrap_or(tail.len());
-    &tail[..end]
-}
-
-fn ledger_entry_ids(contents: &str) -> Vec<String> {
-    contents
-        .lines()
-        .filter_map(|line| {
-            line.strip_prefix("  - id: \"")
-                .and_then(|rest| rest.strip_suffix('"'))
-                .map(ToOwned::to_owned)
-        })
-        .collect()
-}
-
-fn ledger_metadata_usize(contents: &str, key: &str) -> usize {
-    let prefix = format!("  {key}: ");
-    contents
-        .lines()
-        .find_map(|line| line.strip_prefix(&prefix))
-        .unwrap_or_else(|| panic!("missing ledger metadata field {key}"))
-        .parse()
-        .unwrap_or_else(|error| panic!("invalid numeric ledger metadata field {key}: {error}"))
-}
-
 fn rendered_surface_entry(entry: &rmux_core::command_parser::CommandEntry) -> String {
     match entry.alias {
         Some(alias) => format!("{} ({alias})", entry.name),
@@ -110,9 +76,6 @@ mod overlays_and_prompts;
 
 #[path = "cli_args_tests/surface_docs.rs"]
 mod surface_docs;
-
-#[path = "cli_args_tests/ledger.rs"]
-mod ledger;
 
 #[path = "cli_args_tests/compat_reference.rs"]
 mod compat_reference;

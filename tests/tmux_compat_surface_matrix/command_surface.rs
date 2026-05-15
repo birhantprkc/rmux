@@ -53,7 +53,7 @@ fn tmux_compat_hook_allow_list_show_hooks_and_prefix_binding_surface_on_rmux_rel
     // `hook[index] command`, and `list-keys -T prefix C-b` preserves the
     // global table alignment. Frozen tmux is not the authority for the exact
     // `list-keys -T prefix C-b` invocation because tmux emits no row there; the
-    // release check for this cluster is rmux 0.1.0 vs current HEAD.
+    // release check for this cluster is rmux baseline build vs current HEAD.
     let harness = TmuxCompatHarness::new("tmux-compat-hook-allow-list-release-head")?;
     let (config, expected_overrides) = config_with_clean_homes(&harness)?;
 
@@ -367,7 +367,7 @@ fn tmux_compat_command_alias_surface_when_frozen_tmux_is_available() -> Result<(
 /// `RmuxError` Display shapes documented in
 /// `crates/rmux-proto/src/error.rs`.
 ///
-/// Rows 1a/1b are the baseline-failure check for this pass: on 0.1.0
+/// Rows 1a/1b are the baseline-failure check for this pass: on baseline build
 /// the rmux stderr begins with `"server error: "` because both unlock
 /// branches in `WaitForStore::unlock` constructed `RmuxError::Server(...)`;
 /// on the continuation HEAD both branches use `RmuxError::Message(...)`
@@ -398,7 +398,7 @@ fn tmux_compat_wait_for_unlock_not_locked_channel_when_frozen_tmux_is_available(
     // Cluster I row 1a: channel has never been seen by the wait-for
     // store, so `self.channels.get_mut(channel)` is None. tmux-observed
     // tuple is stdout="", stderr="channel unknownchan not locked\n",
-    // exit=1. This is the designated baseline-failure row: on the 0.1.0
+    // exit=1. This is the designated baseline-failure row: on the baseline build
     // baseline the rmux stderr is prefixed with "server error: ", on
     // the continuation HEAD it matches tmux byte-for-byte.
     let unlock_unknown_args = ["wait-for", "-U", "unknownchan"];

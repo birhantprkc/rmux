@@ -204,9 +204,9 @@ fn tmux_compat_control_mode_guard_tuple_and_exit_framing_when_frozen_tmux_is_ava
     // Cluster H compatibility scenario: check the tmux-observed `%begin`/`%end`/
     // `%error`/`%exit` tuple across the two deterministic control-mode exit
     // triggers (immediate EOF and command-followed-by-EOF). tmux terminates
-    // both transcripts with a bare `%exit\n`. rmux 0.1.0 silently closes the
+    // both transcripts with a bare `%exit\n`. rmux baseline build silently closes the
     // EOF-only stream and omits the trailing `%exit\n` after a command, so
-    // both assertions below fail on the 0.1.0 release HEAD
+    // both assertions below fail on the baseline build release HEAD
     // 0b03537875071738f9a49b01b42b8b6d7f10e5a8 and pass only after the
     // EOF-to-`%exit` promotion in `forward_control` lands.
     let harness = TmuxCompatHarness::new("tmux-compat-control-mode-guard-exit-framing")?;

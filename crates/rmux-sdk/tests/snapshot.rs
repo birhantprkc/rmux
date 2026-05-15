@@ -574,7 +574,7 @@ fn visible_text_helpers_never_leak_padding_sentinel_text() {
     let row = snapshot.visible_row_text(0).expect("row text");
     assert_eq!(row, "🧪Z");
     // The padding cells never reach the rendered text — even though they hold
-    // the sentinel space byte for raw round-tripping, the helpers gate them
+    // the sentinel space byte for raw round-tripping, the helpers check them
     // out via the explicit `is_padding()` filter.
     assert!(!row.contains("  "));
 }

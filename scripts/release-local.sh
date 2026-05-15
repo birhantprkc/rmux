@@ -5,8 +5,7 @@ usage() {
   cat <<'USAGE'
 Usage: scripts/release-local.sh [options]
 
-Run the local-first RMUX packaging + verification + signing/metadata dry-run
-pipeline on Linux or macOS.
+Run the local-first RMUX packaging and verification pipeline on Linux or macOS.
 
 Options:
   --platform linux|macos       Platform override (default: host detection)
@@ -147,21 +146,21 @@ cd "$repo_root"
 git_status_before="$(git status --short --branch)"
 if [ -n "$(git status --porcelain)" ]; then
   printf '%s\n' "$git_status_before" >&2
-  die "release-local requires a clean worktree before generating reference"
+  die "release-local requires a clean worktree before generating release artifacts"
 fi
 
 head_sha="$(git rev-parse HEAD)"
 short_sha="$(git rev-parse --short=12 HEAD)"
 dist_dir="target/dist/release-automation-$platform-$short_sha"
 tmp_root="target/release-automation-logs/$platform-$short_sha"
-reference_root="target/release-reference/artifacts/release-automation-$platform-$short_sha"
-manifest_path="target/release-reference/release_automation_${platform}-$short_sha.txt"
+artifact_root="target/release-artifacts/release-automation-$platform-$short_sha"
+manifest_path="target/release-artifacts/release_automation_${platform}-$short_sha.txt"
 
-rm -rf "$tmp_root" "$reference_root"
+rm -rf "$tmp_root" "$artifact_root"
 mkdir -p "$tmp_root/logs"
 
 {
-  printf 'git_status_before_reference:\n%s\n' "$git_status_before"
+  printf 'git_status_before:\n%s\n' "$git_status_before"
   printf 'git_head=%s\n' "$head_sha"
   printf 'platform=%s\n' "$platform"
   printf 'configuration=%s\n' "$configuration"
@@ -188,38 +187,10 @@ run_logged "$verify_log" \
   --checksums "$dist_dir/SHA256SUMS.txt" \
   --run-binary
 
-signing_log="$tmp_root/logs/signing-metadata.log"
-case "$platform" in
-  macos)
-    run_logged "$signing_log" \
-      "$repo_root/scripts/sign-macos.sh" \
-      --package "$package_path" \
-      --dry-run
-    signing_reference="$(resolve_logged_path "$(kv_value reference "$signing_log")")"
-    signing_manifest="$(resolve_logged_path "$(kv_value manifest "$signing_log")")"
-    signing_verdict="$(kv_value verdict "$signing_log")"
-    ;;
-  linux)
-    signing_reference="target/release-reference/artifacts/signing-metadata-linux-$short_sha"
-    run_logged "$signing_log" \
-      "$repo_root/scripts/metadata-linux.sh" \
-      --package "$package_path" \
-      --output-dir "$signing_reference"
-    signing_manifest=""
-    signing_verdict="$(kv_value verdict "$signing_log")"
-    ;;
-esac
+mkdir -p "$artifact_root/logs"
+cp "$tmp_root/logs/"*.log "$artifact_root/logs/"
 
-signing_reference_display="$(display_path "$signing_reference")"
-signing_manifest_display=""
-if [ -n "$signing_manifest" ]; then
-  signing_manifest_display="$(display_path "$signing_manifest")"
-fi
-
-mkdir -p "$reference_root/logs"
-cp "$tmp_root/logs/"*.log "$reference_root/logs/"
-
-cat > "$reference_root/summary.json" <<EOF
+cat > "$artifact_root/summary.json" <<EOF
 {
   "schema": 1,
   "platform": "$platform",
@@ -228,18 +199,15 @@ cat > "$reference_root/summary.json" <<EOF
   "configuration": "$configuration",
   "package_path": "$(printf '%s' "$(display_path "$package_path")" | json_escape)",
   "package_sha256": "$package_sha",
-  "package_checksums": "$dist_dir/SHA256SUMS.txt",
-  "signing_verdict": "$signing_verdict",
-  "signing_reference": "$(printf '%s' "$signing_reference_display" | json_escape)",
-  "signing_manifest": "$(printf '%s' "$signing_manifest_display" | json_escape)"
+  "package_checksums": "$dist_dir/SHA256SUMS.txt"
 }
 EOF
 
-write_checksums "$reference_root" "$reference_root/SHA256SUMS.txt"
-bundle_sha="$(sha256_file "$reference_root/SHA256SUMS.txt")"
+write_checksums "$artifact_root" "$artifact_root/SHA256SUMS.txt"
+bundle_sha="$(sha256_file "$artifact_root/SHA256SUMS.txt")"
 
 cat > "$manifest_path" <<EOF
-# RMUX P3 Local Release Automation
+# RMUX Local Release Automation
 
 ## Verdict
 
@@ -247,9 +215,8 @@ PASS
 
 ## Scope
 
-This local-first wrapper orchestrates P1 packaging, package verification, and P2
-signing/metadata dry-run for $platform. It does not sign real artifacts,
-publish releases, create tags, or contact CI.
+This local-first wrapper packages RMUX and verifies the package on $platform.
+It does not publish releases, create tags, or contact CI.
 
 ## Inputs
 
@@ -260,30 +227,25 @@ publish releases, create tags, or contact CI.
 | Configuration | \`$configuration\` |
 | Package | \`$(display_path "$package_path")\` |
 | Package SHA256 | \`$package_sha\` |
-| Signing verdict | \`$signing_verdict\` |
 
-## reference
+## Artifacts
 
 | Artifact | Path |
 | --- | --- |
-| Bundle | \`$reference_root\` |
-| SHA256SUMS | \`$reference_root/SHA256SUMS.txt\` |
+| Bundle | \`$artifact_root\` |
+| SHA256SUMS | \`$artifact_root/SHA256SUMS.txt\` |
 | SHA256SUMS SHA256 | \`$bundle_sha\` |
-| Summary | \`$reference_root/summary.json\` |
-| Signing reference | \`$signing_reference_display\` |
-| Signing manifest | \`${signing_manifest_display:-n/a}\` |
+| Summary | \`$artifact_root/summary.json\` |
 
 ## Commands
 
 - \`scripts/package-unix.sh --configuration $configuration --output-dir $dist_dir\`
 - \`scripts/verify-package.sh <package> --checksums $dist_dir/SHA256SUMS.txt --run-binary\`
-- Platform signing/metadata dry-run via the P2B script.
 EOF
 
 printf 'verdict=PASS\n'
 printf 'platform=%s\n' "$platform"
 printf 'package=%s\n' "$(display_path "$package_path")"
 printf 'package_sha256=%s\n' "$package_sha"
-printf 'signing_verdict=%s\n' "$signing_verdict"
-printf 'reference=%s\n' "$reference_root"
+printf 'artifacts=%s\n' "$artifact_root"
 printf 'manifest=%s\n' "$manifest_path"

@@ -51,7 +51,7 @@ enum HostAction {
     /// Send these key events through to the attached pane in order.
     ForwardToPane(Vec<KeyEvent>),
     /// Detach the attached client. This is the *only* host action that
-    /// is gated on the detector returning `DetachRequested`.
+    /// is deferred on the detector returning `DetachRequested`.
     Detach,
     /// Do nothing — typically because the detector is mid-chord.
     Hold,

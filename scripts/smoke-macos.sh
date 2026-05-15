@@ -9,8 +9,8 @@ case "$TARGET_DIR" in
 esac
 
 RMUX="$TARGET_DIR/debug/rmux"
-reference_DIR="${RMUX_reference_DIR:-$ROOT/target/reference}"
-SIGN_OFF="${RMUX_reference_SIGNOFF:-$(whoami)@$(hostname)}"
+SMOKE_DIR="${RMUX_SMOKE_DIR:-$ROOT/target/smoke-reports}"
+SIGN_OFF="${RMUX_SMOKE_SIGNOFF:-$(whoami)@$(hostname)}"
 
 log() {
     printf '[macos-smoke] %s\n' "$*"
@@ -25,12 +25,12 @@ if [[ "$(uname -s)" != "Darwin" ]]; then
     fail "scripts/smoke-macos.sh must run on macOS; got $(uname -s)"
 fi
 
-mkdir -p "$reference_DIR"
+mkdir -p "$SMOKE_DIR"
 timestamp="$(date -u +%Y%m%d-%H%M%S)"
-reference="$reference_DIR/macos-smoke-$timestamp.txt"
+report="$SMOKE_DIR/macos-smoke-$timestamp.txt"
 
 append() {
-    printf '%s\n' "$*" >>"$reference"
+    printf '%s\n' "$*" >>"$report"
 }
 
 append_command_result() {
@@ -63,18 +63,18 @@ run_capture() {
         append_command_result "PASS" "$command_text" "$output"
     else
         append_command_result "FAIL ($status)" "$command_text" "$output"
-        fail "$command_text failed; reference: $reference"
+        fail "$command_text failed; report: $report"
     fi
 }
 
 cd "$ROOT"
 
-append "# RMUX macOS Smoke reference"
+append "# RMUX macOS Smoke Report"
 append
 append "- Timestamp UTC: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
 append "- Sign-off: $SIGN_OFF"
 append "- Git HEAD: $(git rev-parse HEAD)"
-append "- reference file: $reference"
+append "- Report file: $report"
 append
 append "## Host"
 append
@@ -83,7 +83,7 @@ append '```text'
     sw_vers
     uname -a
     sysctl kern.ostype kern.osrelease kern.osversion hw.model hw.machine 2>/dev/null
-} >>"$reference"
+} >>"$report"
 append '```'
 append
 
@@ -98,4 +98,4 @@ append
 append "PASS"
 
 log "macOS smoke passed"
-log "reference=$reference"
+log "report=$report"

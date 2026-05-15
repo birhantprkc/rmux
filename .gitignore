@@ -5,5 +5,5 @@ SDK demo/.astro/
 SDK demo/dist/
 SDK demo/test-results/
 SDK demo/playwright-report/
-# Local tooling worktrees + metadata (676M, never to be tracked)
+# Local tooling worktrees + record (676M, never to be tracked)
 .automation/

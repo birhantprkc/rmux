@@ -81,7 +81,7 @@ where
                     i += 1;
                 }
                 if i < bytes.len() {
-                    // Found matching `)`. Job expansion is a runtime test_double — empty.
+                    // Found matching `)`. Job expansion is not run in this path.
                     let _ = &fmt[start..i]; // command text (unused for now)
                     i += 1; // skip `)`
                 } else {

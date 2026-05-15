@@ -139,7 +139,7 @@ fn emit_output(
     let len = output.len().min(buffer.len());
     buffer[..len].copy_from_slice(&output[..len]);
     deferred.clear();
-    // In production `output` is derived from one ConPTY read plus at most a
+    // In production `output` is computed from one ConPTY read plus at most a
     // partial DSR prefix. Truncating here corrupts the pane stream, so the
     // deferred tail must remain lossless and drain on subsequent reads.
     deferred.extend_from_slice(&output[len..]);

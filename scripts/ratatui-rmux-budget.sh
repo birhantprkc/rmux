@@ -91,7 +91,7 @@ if [ "$ratatui_count" -ne 1 ]; then
 fi
 
 # 5) Reject any `[target.'cfg(...)'.dependencies]` block — the budget covers
-# total direct deps and platform-gated deps would silently grow it.
+# total direct deps and platform-deferred deps would silently grow it.
 if grep -qE '^\[target\.[^]]+\.dependencies\]' "$manifest"; then
   fail "ratatui-rmux must not declare [target.'cfg(...)'.dependencies]"
 fi

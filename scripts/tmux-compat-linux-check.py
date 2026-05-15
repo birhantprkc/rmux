@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Run a tmux/RMUX compatibility check on a local Unix host.
 
-The default smoke scope is intentionally release-gate friendly: it checks
+The default smoke scope is intentionally release-check friendly: it checks
 behaviours that should be identical after normalizing socket paths and branding.
 The extended scope adds broad discovery probes and may report actionable gaps on
 systems whose tmux version differs from RMUX's tracked compatibility surface.
@@ -94,7 +94,7 @@ class Runner:
         self.run(["kill-server"], timeout=2)
 
 
-class check:
+class Check:
     def __init__(self, root: Path, tmux: str, rmux: str) -> None:
         self.root = root
         self.tmp = root / "tmp"
@@ -289,7 +289,7 @@ class check:
             )
 
     def write_report(self) -> Path:
-        report = self.root / "check.txt"
+        report = self.root / "CHECK.txt"
         data = self.root / "check.json"
         data.write_text(json.dumps({"passed": self.passed, "findings": [asdict(f) for f in self.findings]}, indent=2))
         lines = [
@@ -413,7 +413,7 @@ def main() -> int:
 
     root = args.root or Path(tempfile.mkdtemp(prefix="rmux_tmux_compat_"))
     root.mkdir(parents=True, exist_ok=True)
-    check = check(root, args.tmux, args.rmux)
+    check = Check(root, args.tmux, args.rmux)
     try:
         if args.scope == "smoke":
             check.run_smoke()

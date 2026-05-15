@@ -253,7 +253,7 @@ fn peer_identity_from_handle(handle: HANDLE) -> io::Result<PeerIdentity> {
     Ok(PeerIdentity {
         pid,
         // Windows has no Unix uid. Authorization and display use `user`
-        // (the peer SID); this default_value only satisfies shared protocol
+        // (the peer SID); this synthetic value only satisfies shared protocol
         // fields that remain Unix-shaped.
         uid: WINDOWS_SYNTHETIC_UID,
         user,

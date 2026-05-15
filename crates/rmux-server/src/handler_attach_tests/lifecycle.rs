@@ -136,7 +136,7 @@ async fn attached_keystroke_stub_returns_key_dispatched_ack() {
             true,
         )
         .await
-        .expect("typed keystroke should reach test_double handler");
+        .expect("typed keystroke should reach test handler");
 
     assert_eq!(response, KeyDispatched::new(3));
 }

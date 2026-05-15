@@ -49,7 +49,7 @@ impl From<io::Error> for AttachError {
     }
 }
 
-/// Raw terminal guard default_value for unsupported platforms.
+/// Raw terminal guard type for unsupported platforms.
 #[derive(Debug)]
 pub struct RawTerminal;
 

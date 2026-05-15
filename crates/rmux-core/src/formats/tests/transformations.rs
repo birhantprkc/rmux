@@ -153,8 +153,8 @@ fn literal_unescape_respects_nested_format_depth() {
 }
 
 #[test]
-fn job_expansion_stub_returns_empty() {
-    // `#(cmd)` is a job expansion test_double — should produce empty.
+fn job_expansion_returns_empty() {
+    // `#(cmd)` is recognized here but not executed.
     assert_eq!(
         render_template("before#(echo hello)after", &StaticWindowValues),
         "beforeafter"

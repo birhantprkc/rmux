@@ -418,12 +418,12 @@ fn session_targets_treat_dot_names_as_session_names() {
 fn recognizes_gated_mouse_and_marked_whole_target_forms() {
     let store = populated_store();
 
-    let mouse = resolve(&store, "=", TargetFindType::Pane).expect_err("mouse is gated");
+    let mouse = resolve(&store, "=", TargetFindType::Pane).expect_err("mouse is deferred");
     assert!(mouse
         .to_string()
         .contains("target form {mouse} is recognized"));
 
-    let marked = resolve(&store, "~", TargetFindType::Pane).expect_err("marked is gated");
+    let marked = resolve(&store, "~", TargetFindType::Pane).expect_err("marked is deferred");
     assert!(marked
         .to_string()
         .contains("target form {marked} is recognized"));
