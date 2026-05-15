@@ -1,6 +1,9 @@
 <div align="center">
 
-<img src="https://rmux.io/rmux-header.svg" alt="RMUX" width="600" />
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="https://rmux.io/rmux-logo-dark.svg">
+  <img src="https://rmux.io/rmux-header.svg" alt="RMUX" width="600">
+</picture>
 
 **A local terminal multiplexer for Rust applications, TUIs, automation, and shell workflows.**
 
