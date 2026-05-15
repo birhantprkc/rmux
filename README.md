@@ -16,14 +16,13 @@
 
 RMUX is a local client/server terminal multiplexer written in Rust. It provides a command-line multiplexer, a daemon-backed Rust SDK, and a ratatui widget for rendering live pane snapshots inside terminal user interfaces.
 
-The workspace is currently versioned as `0.1.0`. The `0.1.0` Git tag has not been cut yet.
 
 ## What RMUX Provides
 
 - **A tmux-style CLI** for sessions, windows, panes, buffers, hooks, formats, copy mode, control mode, and common terminal workflows.
 - **A Rust SDK** for creating sessions, splitting panes, sending typed input, reading snapshots, subscribing to pane output, waiting for text or bytes, and shutting down cleanly.
 - **A ratatui widget** that renders pane snapshots into a `ratatui::buffer::Buffer` without requiring async work in the draw path.
-- **Native local runtime support**: Unix PTYs and Unix sockets on Linux/macOS; ConPTY and named pipes on Windows.
+- **Native local runtime support**: Unix PTYs and Unix sockets on Linux/macOS; ConPTY and named pipes on Windows — no WSL required.
 - **A small published crate set** with internal implementation crates kept out of the public package surface.
 
 ## Install
