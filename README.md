@@ -13,7 +13,7 @@
 [![Unsafe policy](https://img.shields.io/badge/unsafe-restricted-success.svg)](#verification)
 
 <br />
-<img src="https://rmux.io/rmux-terminal-demo.gif" width="800" alt="RMUX terminal session demo" />
+<img src="https://rmux.io/rmux-terminal-demo.gif" width="500" alt="RMUX terminal session demo" />
 
 </div>
 
