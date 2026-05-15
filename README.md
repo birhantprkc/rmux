@@ -1,7 +1,7 @@
 <div align="center">
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="https://rmux.io/rmux-logo-dark.svg">
+  <source media="(prefers-color-scheme: dark)" srcset="https://rmux.io/rmux-header-dark.svg">
   <img src="https://rmux.io/rmux-header.svg" alt="RMUX" width="600">
 </picture>
 
