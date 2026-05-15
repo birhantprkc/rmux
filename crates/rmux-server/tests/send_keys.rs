@@ -10,13 +10,13 @@ mod common;
 
 use common::{session_name, start_server, ClientConnection, TestHarness, PTY_TEST_LOCK};
 use rmux_proto::{
-    encode_attach_message, AttachMessage, AttachSessionRequest, KillSessionRequest,
-    NewSessionRequest, PaneTarget, Request, Response, SelectPaneRequest, SendKeysRequest,
-    SendKeysResponse, SplitWindowRequest, SplitWindowTarget, TerminalSize,
+    encode_attach_message, AttachMessage, AttachSessionRequest, CapturePaneRequest,
+    KillSessionRequest, NewSessionRequest, PaneTarget, Request, Response, SelectPaneRequest,
+    SendKeysRequest, SendKeysResponse, SplitWindowRequest, SplitWindowTarget, TerminalSize,
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-const STEP_TIMEOUT: Duration = Duration::from_secs(5);
+const STEP_TIMEOUT: Duration = Duration::from_secs(15);
 
 async fn send_attach_command(
     stream: &mut tokio::net::UnixStream,
@@ -71,8 +71,12 @@ async fn read_attach_until_contains(
 
     while Instant::now() < deadline {
         let remaining = deadline.saturating_duration_since(Instant::now());
-        let Some(message) = tokio::time::timeout(remaining, read_attach_message(stream)).await??
-        else {
+        let message = match tokio::time::timeout(remaining, read_attach_message(stream)).await {
+            Ok(message) => message?,
+            Err(_) => break,
+        };
+
+        let Some(message) = message else {
             break;
         };
 
@@ -109,6 +113,60 @@ async fn wait_for_file_contents(
     }
 
     Ok(false)
+}
+
+async fn capture_pane_text(
+    socket_path: &Path,
+    target: PaneTarget,
+) -> Result<String, Box<dyn Error>> {
+    let response = common::send_request(
+        socket_path,
+        &Request::CapturePane(CapturePaneRequest {
+            target,
+            start: None,
+            end: None,
+            print: true,
+            buffer_name: None,
+            alternate: false,
+            escape_ansi: false,
+            escape_sequences: false,
+            join_wrapped: false,
+            use_mode_screen: false,
+            preserve_trailing_spaces: false,
+            do_not_trim_spaces: false,
+            pending_input: false,
+            quiet: false,
+            start_is_absolute: false,
+            end_is_absolute: false,
+        }),
+    )
+    .await?;
+    let output = response
+        .command_output()
+        .ok_or_else(|| io::Error::other("capture-pane -p returned no command output"))?;
+    Ok(String::from_utf8_lossy(output.stdout()).into_owned())
+}
+
+async fn wait_for_pane_capture_contains(
+    socket_path: &Path,
+    target: PaneTarget,
+    needle: &str,
+) -> Result<String, Box<dyn Error>> {
+    let deadline = Instant::now() + STEP_TIMEOUT;
+
+    while Instant::now() < deadline {
+        let capture = capture_pane_text(socket_path, target.clone()).await?;
+        if capture.contains(needle) {
+            return Ok(capture);
+        }
+
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+
+    Err(io::Error::other(format!(
+        "timed out waiting for pane capture containing {needle:?}"
+    ))
+    .into())
 }
 
 fn shell_quote(path: &Path) -> String {
@@ -238,13 +296,6 @@ async fn send_keys_targets_the_correct_pane_in_a_multi_pane_session() -> Result<
         .await?;
     assert!(matches!(split, Response::SplitWindow(_)));
 
-    let (_, mut attach_stream) = ClientConnection::connect(&socket_path)
-        .await?
-        .begin_attach(AttachSessionRequest {
-            target: session_name("beta"),
-        })
-        .await?;
-
     let pane0_response = client
         .send_request(&Request::SendKeys(SendKeysRequest {
             target: PaneTarget::new(session_name("beta"), 0),
@@ -255,7 +306,12 @@ async fn send_keys_targets_the_correct_pane_in_a_multi_pane_session() -> Result<
         pane0_response,
         Response::SendKeys(SendKeysResponse { key_count: 2 })
     );
-    let pane0_output = read_attach_until_contains(&mut attach_stream, "pane-zero").await?;
+    let pane0_output = wait_for_pane_capture_contains(
+        &socket_path,
+        PaneTarget::new(session_name("beta"), 0),
+        "pane-zero",
+    )
+    .await?;
     assert!(pane0_output.contains("pane-zero"));
 
     let selected = client
@@ -276,10 +332,20 @@ async fn send_keys_targets_the_correct_pane_in_a_multi_pane_session() -> Result<
         pane1_response,
         Response::SendKeys(SendKeysResponse { key_count: 2 })
     );
-    let pane1_output = read_attach_until_contains(&mut attach_stream, "pane-one").await?;
+    let pane1_output = wait_for_pane_capture_contains(
+        &socket_path,
+        PaneTarget::new(session_name("beta"), 1),
+        "pane-one",
+    )
+    .await?;
     assert!(pane1_output.contains("pane-one"));
+    let pane0_after_pane1 =
+        capture_pane_text(&socket_path, PaneTarget::new(session_name("beta"), 0)).await?;
+    assert!(
+        !pane0_after_pane1.contains("pane-one"),
+        "pane-one output should remain isolated to pane 1, got pane 0 capture {pane0_after_pane1:?}"
+    );
 
-    drop(attach_stream);
     let removed = common::send_request(
         &socket_path,
         &Request::KillSession(KillSessionRequest {

@@ -469,7 +469,6 @@ fn windows_default_config_paths() -> Vec<PathBuf> {
     }
     if let Some(userprofile) = nonempty_env_os("USERPROFILE") {
         let userprofile = PathBuf::from(userprofile);
-        push_unique_path(&mut paths, userprofile.join(".tmux.conf"));
         push_unique_path(&mut paths, userprofile.join(".rmux.conf"));
     }
     if let Some(appdata) = nonempty_env_os("APPDATA") {

@@ -604,7 +604,6 @@ mod tests {
             paths,
             vec![
                 path_string(r"C:\Users\tester\.config\rmux\rmux.conf"),
-                path_string(r"C:\Users\tester\.tmux.conf"),
                 path_string(r"C:\Users\tester\.rmux.conf"),
                 path_string(r"C:\Users\tester\AppData\Roaming\rmux\rmux.conf"),
                 path_string(r"C:\rmux\custom.conf"),
@@ -617,6 +616,10 @@ mod tests {
                 .count(),
             3,
             "Windows search path must not add undocumented rmux.conf locations: {paths:?}"
+        );
+        assert!(
+            paths.iter().all(|path| !path.contains("tmux")),
+            "Windows default config search path must not include tmux locations: {paths:?}"
         );
     }
 

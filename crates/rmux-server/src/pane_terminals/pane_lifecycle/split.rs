@@ -28,6 +28,7 @@ impl HandlerState {
     ///
     /// `before` controls whether the new pane is inserted before (tmux `-b`)
     /// or after the target on the chosen axis.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn split_window(
         &mut self,
         target: SplitWindowTarget,
