@@ -5,6 +5,8 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "Ratatui integration crate for the RMUX terminal multiplexer that paints daemon-backed pane state into a ratatui Buffer."
+keywords = ["terminal", "multiplexer", "ratatui"]
+categories = ["command-line-interface"]
 publish = true
 
 # Direct dependencies are intentionally minimal: `rmux-sdk` is the only

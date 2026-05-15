@@ -5,6 +5,8 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "Public, daemon-backed Rust SDK for the RMUX terminal multiplexer (facade, ensure-session, snapshots, events, detach helpers)."
+keywords = ["terminal", "multiplexer", "sdk"]
+categories = ["command-line-interface", "asynchronous"]
 publish = true
 
 [dependencies]

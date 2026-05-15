@@ -5,6 +5,8 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "RMUX detached IPC protocol DTOs, framing, and wire-safe error types."
+keywords = ["terminal", "multiplexer", "protocol"]
+categories = ["command-line-interface", "asynchronous"]
 publish = true
 
 [dependencies]
