@@ -2,12 +2,15 @@
 name = "rmux-pty"
 version.workspace = true
 edition.workspace = true
-publish.workspace = true
+publish = true
 license.workspace = true
 repository.workspace = true
+description = "PTY allocation, resize, and child-process control for the RMUX terminal multiplexer."
+keywords = ["terminal", "multiplexer", "pty"]
+categories = ["command-line-interface", "os"]
 
 [dependencies]
-rmux-types = { path = "../rmux-types" }
+rmux-types = { path = "../rmux-types", version = "0.1.0" }
 tracing = "0.1.44"
 
 [target.'cfg(unix)'.dependencies]
