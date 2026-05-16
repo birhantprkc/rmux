@@ -11,7 +11,7 @@
 **Universal Rust multiplexer for the agentic era: detachable, scriptable, and inspectable, with a tmux-compatible CLI, daemon-backed SDK, and native [Ratatui](https://ratatui.rs) integration.**
 
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](LICENSE-MIT)
-[![Workspace version 0.1.0](https://img.shields.io/badge/workspace-0.1.0-informational.svg)](#workspace)
+[![rmux 0.1.1](https://img.shields.io/badge/rmux-0.1.1-informational.svg)](#install)
 [![Platform: Linux | macOS | Windows](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-lightgrey.svg)](#platform-support)
 [![Unsafe policy](https://img.shields.io/badge/unsafe-restricted-success.svg)](#verification)
 
@@ -44,10 +44,10 @@ cargo install rmux --locked
 From a local checkout:
 
 ```sh
-cargo install --path .
+cargo install --path . --locked
 ```
 
-For Rust applications, after the public crates are published:
+For Rust applications:
 
 ```sh
 cargo add rmux-sdk

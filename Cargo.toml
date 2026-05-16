@@ -31,6 +31,7 @@ publish = true
 license.workspace = true
 repository.workspace = true
 description = "A local terminal multiplexer with a tmux-style CLI, daemon runtime, Rust SDK, and ratatui integration."
+readme = "README.md"
 keywords = ["terminal", "multiplexer", "cli", "tui"]
 categories = ["command-line-interface"]
 include = [
@@ -38,6 +39,7 @@ include = [
     "Cargo.toml",
     "LICENSE-APACHE",
     "LICENSE-MIT",
+    "README.md",
     "build.rs",
     "resources/windows/rmux.exe.manifest",
     "rmux.1",
