@@ -7,3 +7,6 @@ SDK demo/test-results/
 SDK demo/playwright-report/
 # Local tooling worktrees + record (676M, never to be tracked)
 .automation/
+
+# Local release orchestrator. Kept in the repo working directory, not tracked.
+/rmux-release.sh
