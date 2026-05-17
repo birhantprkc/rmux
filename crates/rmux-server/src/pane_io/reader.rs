@@ -65,6 +65,7 @@ pub(crate) fn spawn_pane_exit_watcher(
         .name(thread_name.clone())
         .spawn(move || {
             let _ = child.wait();
+            child.close_pseudoconsole();
             pane_exit_callback(PaneExitEvent {
                 session_name,
                 pane_id,

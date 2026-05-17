@@ -382,7 +382,7 @@ features:
     windows: "pass"
     result: "VERIFIED"
     owner: ""
-    notes: "Daemon-backed Unix and Windows smokes compose autostart, split, waits, streams, collect, interrupt/recovery, snapshot revision gating, diagnostics, warm reconnect, shutdown, and cleanup with platform-owned fixtures."
+    notes: "Daemon-backed Unix and Windows smokes compose autostart, split, waits, streams, collect, prompt recovery, snapshot revision gating, diagnostics, warm reconnect, shutdown, and cleanup with platform-owned fixtures. Unix covers real interrupt recovery; Windows covers native prompt recovery without claiming POSIX-style SIGINT semantics."
   - name: "SDK lag reconcile acceptance smoke follow-up"
     api_item: "PaneEvent::Lag"
     crate_module: "rmux-sdk::events::streams"

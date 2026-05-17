@@ -1,6 +1,7 @@
 use std::os::fd::{BorrowedFd, OwnedFd, RawFd};
 
 use std::io;
+use std::mem::MaybeUninit;
 
 use rustix::fs::{fcntl_getfl, fcntl_setfl, open, Mode, OFlags};
 use rustix::process::{
@@ -76,6 +77,42 @@ pub(crate) fn kill_process(pid: ProcessId, signal: Signal) -> Result<()> {
     Ok(())
 }
 
+pub(crate) fn stopped_signal(pid: ProcessId) -> Result<Option<i32>> {
+    let mut info = MaybeUninit::<libc::siginfo_t>::zeroed();
+    // SAFETY: `info` points to writable storage for one siginfo_t. WNOWAIT
+    // observes the stopped status without consuming the child's eventual exit
+    // status, which remains owned by `std::process::Child`.
+    let result = unsafe {
+        libc::waitid(
+            libc::P_PID,
+            pid.as_u32() as libc::id_t,
+            info.as_mut_ptr(),
+            libc::WSTOPPED | libc::WNOHANG | libc::WNOWAIT,
+        )
+    };
+    if result == -1 {
+        let errno = last_errno();
+        if errno == rustix::io::Errno::CHILD {
+            return Ok(None);
+        }
+        return Err(errno.into());
+    }
+
+    // SAFETY: `info` was zero-initialized before the call and `waitid`
+    // returned success, so reading the initialized siginfo_t is valid.
+    let info = unsafe { info.assume_init() };
+    // SAFETY: `waitid` with WSTOPPED populates `si_pid` when a stopped child
+    // is available. A zero pid means WNOHANG had no event.
+    let si_pid = unsafe { info.si_pid() };
+    if si_pid == 0 {
+        Ok(None)
+    } else {
+        // SAFETY: a non-zero `si_pid` means this siginfo_t carries a real
+        // child status for the requested child.
+        Ok(Some(unsafe { info.si_status() }))
+    }
+}
+
 pub(crate) fn read(fd: BorrowedFd<'_>, buffer: &mut [u8]) -> io::Result<usize> {
     unix_io::read(fd, buffer)
 }
@@ -88,4 +125,11 @@ pub(crate) fn set_nonblocking(fd: BorrowedFd<'_>) -> io::Result<()> {
     let flags = fcntl_getfl(fd).map_err(io::Error::other)?;
     fcntl_setfl(fd, flags | OFlags::NONBLOCK).map_err(io::Error::other)?;
     Ok(())
+}
+
+fn last_errno() -> rustix::io::Errno {
+    let raw = std::io::Error::last_os_error()
+        .raw_os_error()
+        .unwrap_or(libc::EIO);
+    rustix::io::Errno::from_raw_os_error(raw)
 }

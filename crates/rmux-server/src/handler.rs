@@ -30,6 +30,8 @@ mod control_support;
 mod copy_mode_support;
 #[path = "handler_dispatch.rs"]
 mod dispatch_support;
+#[path = "handler_exited_outputs.rs"]
+mod exited_output_support;
 #[path = "handler_lifecycle.rs"]
 mod lifecycle_support;
 #[path = "handler_lock.rs"]
@@ -77,6 +79,7 @@ pub(in crate::handler) use client_runtime_support::{
 };
 use control_support::ActiveControlState;
 pub(crate) use control_support::ControlRegistration;
+use exited_output_support::RetainedExitedPaneOutputs;
 #[cfg(test)]
 pub(in crate::handler) use lifecycle_support::after_hook_format_values;
 pub(in crate::handler) use lifecycle_support::prepare_lifecycle_event;
@@ -115,6 +118,7 @@ pub(crate) struct RequestHandler {
     config_loading_depth: Arc<AtomicUsize>,
     next_connection_id: Arc<AtomicU64>,
     subscriptions: Arc<StdMutex<OutputSubscriptionState>>,
+    retained_exited_outputs: Arc<StdMutex<RetainedExitedPaneOutputs>>,
     sdk_waits: Arc<StdMutex<SdkWaitState>>,
     pane_snapshot_coalescers: Arc<StdMutex<PaneSnapshotCoalescerRegistry>>,
     pane_snapshot_revisions: Arc<StdMutex<PaneSnapshotRevisionRegistry>>,
@@ -142,6 +146,7 @@ impl Clone for RequestHandler {
             config_loading_depth: self.config_loading_depth.clone(),
             next_connection_id: self.next_connection_id.clone(),
             subscriptions: self.subscriptions.clone(),
+            retained_exited_outputs: self.retained_exited_outputs.clone(),
             sdk_waits: self.sdk_waits.clone(),
             pane_snapshot_coalescers: self.pane_snapshot_coalescers.clone(),
             pane_snapshot_revisions: self.pane_snapshot_revisions.clone(),
@@ -170,6 +175,7 @@ pub(crate) struct WeakRequestHandler {
     config_loading_depth: Weak<AtomicUsize>,
     next_connection_id: Weak<AtomicU64>,
     subscriptions: Weak<StdMutex<OutputSubscriptionState>>,
+    retained_exited_outputs: Weak<StdMutex<RetainedExitedPaneOutputs>>,
     sdk_waits: Weak<StdMutex<SdkWaitState>>,
     pane_snapshot_coalescers: Weak<StdMutex<PaneSnapshotCoalescerRegistry>>,
     pane_snapshot_revisions: Weak<StdMutex<PaneSnapshotRevisionRegistry>>,
@@ -195,6 +201,7 @@ impl WeakRequestHandler {
             config_loading_depth: self.config_loading_depth.upgrade()?,
             next_connection_id: self.next_connection_id.upgrade()?,
             subscriptions: self.subscriptions.upgrade()?,
+            retained_exited_outputs: self.retained_exited_outputs.upgrade()?,
             sdk_waits: self.sdk_waits.upgrade()?,
             pane_snapshot_coalescers: self.pane_snapshot_coalescers.upgrade()?,
             pane_snapshot_revisions: self.pane_snapshot_revisions.upgrade()?,
@@ -288,6 +295,7 @@ impl RequestHandler {
             subscriptions: Arc::new(StdMutex::new(OutputSubscriptionState::new(
                 subscription_limits,
             ))),
+            retained_exited_outputs: Arc::new(StdMutex::new(RetainedExitedPaneOutputs::default())),
             sdk_waits: Arc::new(StdMutex::new(SdkWaitState::default())),
             pane_snapshot_coalescers: Arc::new(StdMutex::new(
                 PaneSnapshotCoalescerRegistry::with_default_rate(),
@@ -319,6 +327,7 @@ impl RequestHandler {
             config_loading_depth: Arc::downgrade(&self.config_loading_depth),
             next_connection_id: Arc::downgrade(&self.next_connection_id),
             subscriptions: Arc::downgrade(&self.subscriptions),
+            retained_exited_outputs: Arc::downgrade(&self.retained_exited_outputs),
             sdk_waits: Arc::downgrade(&self.sdk_waits),
             pane_snapshot_coalescers: Arc::downgrade(&self.pane_snapshot_coalescers),
             pane_snapshot_revisions: Arc::downgrade(&self.pane_snapshot_revisions),
@@ -350,6 +359,13 @@ impl RequestHandler {
         self.config_loading_depth.load(Ordering::Relaxed) != 0
     }
 
+    pub(crate) async fn continue_stopped_panes(&self) {
+        #[cfg(unix)]
+        {
+            self.state.lock().await.continue_stopped_panes();
+        }
+    }
+
     pub(crate) fn install_shutdown_handle(&self, shutdown_handle: ShutdownHandle) {
         *self
             .shutdown_handle
@@ -365,6 +381,25 @@ impl RequestHandler {
     }
 
     pub(crate) fn request_shutdown_if_pending(&self) -> bool {
+        if !self.shutdown_requested.load(Ordering::SeqCst) {
+            return false;
+        }
+        if !self
+            .subscriptions
+            .lock()
+            .expect("subscription registry mutex must not be poisoned")
+            .is_empty()
+        {
+            return false;
+        }
+        if !self
+            .retained_exited_outputs
+            .lock()
+            .expect("retained exited output mutex must not be poisoned")
+            .is_empty(std::time::Instant::now())
+        {
+            return false;
+        }
         if !self.shutdown_requested.swap(false, Ordering::SeqCst) {
             return false;
         }
@@ -429,6 +464,10 @@ impl RequestHandler {
 
 impl RequestHandler {
     async fn handle_kill_server(&self) -> Response {
+        self.retained_exited_outputs
+            .lock()
+            .expect("retained exited output mutex must not be poisoned")
+            .clear();
         self.shutdown_requested.store(true, Ordering::SeqCst);
         Response::KillServer(KillServerResponse)
     }

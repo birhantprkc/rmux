@@ -1,12 +1,8 @@
-#[cfg(unix)]
+#[cfg(all(test, unix))]
 use std::fs;
 use std::io;
 #[cfg(windows)]
 use std::io::{Read, Write};
-#[cfg(unix)]
-use std::os::unix::fs::{DirBuilderExt, FileTypeExt, MetadataExt, PermissionsExt};
-#[cfg(unix)]
-use std::os::unix::net::UnixStream as StdUnixStream;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex as StdMutex};
 #[cfg(windows)]
@@ -14,30 +10,33 @@ use std::time::Duration;
 
 use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
-#[cfg(unix)]
-use tracing::debug;
 
 use rmux_core::events::SubscriptionLimits;
 #[cfg(windows)]
 use rmux_ipc::connect_blocking;
-use rmux_ipc::{LocalEndpoint, LocalListener};
+use rmux_ipc::LocalEndpoint;
+#[cfg(windows)]
+use rmux_ipc::LocalListener;
 #[cfg(windows)]
 use rmux_proto::{
     encode_frame, FrameDecoder, HasSessionRequest, Request, Response, RmuxError, SessionName,
 };
 
 use crate::listener;
+use crate::listener_options::ServeOptions;
 #[cfg(windows)]
 use crate::server_access::current_owner_uid;
+#[cfg(unix)]
+use crate::unix_socket::bind_unix_listener_at;
+#[cfg(unix)]
+use crate::unix_socket::real_user_id;
+#[cfg(all(test, unix))]
+use crate::unix_socket::{
+    ensure_parent_directory, indicates_stale_socket, remove_stale_socket_if_needed,
+};
 
 #[cfg(all(test, unix))]
 const FALLBACK_SOCKET_ROOT: &str = "/tmp";
-#[cfg(unix)]
-const BOUND_SOCKET_MODE: u32 = 0o600;
-#[cfg(unix)]
-const UNSAFE_PERMISSION_MASK: u32 = 0o077;
-#[cfg(unix)]
-const SOCKET_DIR_PREFIX: &str = "rmux";
 
 /// Computes the default RMUX daemon socket path.
 ///
@@ -233,28 +232,34 @@ impl ServerDaemon {
     pub async fn bind(self) -> io::Result<ServerHandle> {
         #[cfg(unix)]
         {
-            prepare_socket_path(self.config.socket_path())?;
-            let endpoint = LocalEndpoint::from_path(self.config.socket_path().to_path_buf());
-            let listener = LocalListener::bind(&endpoint)?;
-            enforce_bound_socket_permissions(self.config.socket_path())?;
+            let bound_listener = bind_unix_listener_at(self.config.socket_path())?;
             let (shutdown_handle, shutdown_receiver) = ShutdownHandle::new();
+            let (server_signal_tx, server_signal_rx) = tokio::sync::mpsc::unbounded_channel();
+            let signal_watcher =
+                crate::signals::SignalWatcher::install(shutdown_handle.clone(), server_signal_tx)?;
             let socket_path = self.config.socket_path().to_path_buf();
             let owner_uid = real_user_id()?;
-
-            let task = tokio::spawn(listener::serve(
-                listener,
-                socket_path.clone(),
-                shutdown_handle.clone(),
-                shutdown_receiver,
+            let serve_options = ServeOptions::new(
                 self.config.config_load().clone(),
                 self.config.subscription_limits(),
                 owner_uid,
+            )
+            .with_socket_identity(bound_listener.identity)
+            .with_server_signals(server_signal_rx);
+
+            let task = tokio::spawn(listener::serve(
+                bound_listener.listener,
+                socket_path.clone(),
+                shutdown_handle.clone(),
+                shutdown_receiver,
+                serve_options,
             ));
 
             Ok(ServerHandle {
                 socket_path,
                 shutdown_handle,
                 task: Some(task),
+                signal_watcher: Some(signal_watcher),
             })
         }
 
@@ -265,15 +270,18 @@ impl ServerDaemon {
             let (shutdown_handle, shutdown_receiver) = ShutdownHandle::new();
             let socket_path = self.config.socket_path().to_path_buf();
             let owner_uid = current_owner_uid();
+            let serve_options = ServeOptions::new(
+                self.config.config_load().clone(),
+                self.config.subscription_limits(),
+                owner_uid,
+            );
 
             let task = tokio::spawn(listener::serve(
                 listener,
                 socket_path.clone(),
                 shutdown_handle.clone(),
                 shutdown_receiver,
-                self.config.config_load().clone(),
-                self.config.subscription_limits(),
-                owner_uid,
+                serve_options,
             ));
 
             Ok(ServerHandle {
@@ -361,6 +369,8 @@ pub struct ServerHandle {
     socket_path: PathBuf,
     shutdown_handle: ShutdownHandle,
     task: Option<JoinHandle<io::Result<()>>>,
+    #[cfg(unix)]
+    signal_watcher: Option<crate::signals::SignalWatcher>,
 }
 
 impl ServerHandle {
@@ -391,6 +401,10 @@ impl ServerHandle {
     }
 
     fn request_shutdown(&mut self) {
+        #[cfg(unix)]
+        {
+            let _ = self.signal_watcher.take();
+        }
         self.shutdown_handle.request_shutdown();
     }
 }
@@ -399,183 +413,6 @@ impl Drop for ServerHandle {
     fn drop(&mut self) {
         self.request_shutdown();
     }
-}
-
-#[cfg(unix)]
-fn prepare_socket_path(socket_path: &Path) -> io::Result<()> {
-    let parent = socket_path.parent().ok_or_else(|| {
-        io::Error::new(
-            io::ErrorKind::InvalidInput,
-            format!(
-                "socket path '{}' has no parent directory",
-                socket_path.display()
-            ),
-        )
-    })?;
-
-    ensure_parent_directory(parent)?;
-    remove_stale_socket_if_needed(socket_path)
-}
-
-#[cfg(unix)]
-fn ensure_parent_directory(parent: &Path) -> io::Result<()> {
-    let mut builder = fs::DirBuilder::new();
-    builder.recursive(true);
-    builder.mode(0o700);
-    match builder.create(parent) {
-        Ok(()) => {}
-        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
-            if !fs::metadata(parent)?.is_dir() {
-                return Err(io::Error::new(
-                    io::ErrorKind::AlreadyExists,
-                    format!("'{}' exists and is not a directory", parent.display()),
-                ));
-            }
-        }
-        Err(error) => return Err(error),
-    }
-
-    ensure_directory(parent)?;
-    if let Some(managed_parent) = managed_rmux_socket_directory(parent)? {
-        ensure_safe_rmux_socket_directory(&managed_parent)?;
-    }
-
-    Ok(())
-}
-
-#[cfg(unix)]
-fn ensure_directory(path: &Path) -> io::Result<()> {
-    let metadata = fs::symlink_metadata(path)?;
-    if metadata.is_dir() {
-        return Ok(());
-    }
-
-    Err(io::Error::new(
-        io::ErrorKind::AlreadyExists,
-        format!("'{}' exists and is not a directory", path.display()),
-    ))
-}
-
-#[cfg(unix)]
-fn managed_rmux_socket_directory(path: &Path) -> io::Result<Option<PathBuf>> {
-    let expected = format!("{SOCKET_DIR_PREFIX}-{}", real_user_id()?);
-    Ok(path.ancestors().find_map(|ancestor| {
-        ancestor
-            .file_name()
-            .and_then(|name| name.to_str())
-            .filter(|name| *name == expected)
-            .map(|_| ancestor.to_path_buf())
-    }))
-}
-
-#[cfg(unix)]
-fn ensure_safe_rmux_socket_directory(path: &Path) -> io::Result<()> {
-    let metadata = fs::symlink_metadata(path)?;
-    if !metadata.is_dir() {
-        return Err(io::Error::new(
-            io::ErrorKind::AlreadyExists,
-            format!("{} is not a directory", path.display()),
-        ));
-    }
-
-    let user_id = real_user_id()?;
-    if metadata.uid() != user_id || (metadata.mode() & UNSAFE_PERMISSION_MASK) != 0 {
-        return Err(io::Error::new(
-            io::ErrorKind::PermissionDenied,
-            format!("directory {} has unsafe permissions", path.display()),
-        ));
-    }
-
-    Ok(())
-}
-
-#[cfg(unix)]
-fn enforce_bound_socket_permissions(socket_path: &Path) -> io::Result<()> {
-    validate_bound_socket(socket_path, false)?;
-    fs::set_permissions(socket_path, fs::Permissions::from_mode(BOUND_SOCKET_MODE))?;
-    validate_bound_socket(socket_path, true)
-}
-
-#[cfg(unix)]
-fn validate_bound_socket(socket_path: &Path, require_owner_only: bool) -> io::Result<()> {
-    let metadata = fs::symlink_metadata(socket_path)?;
-    if metadata.file_type().is_symlink() || !metadata.file_type().is_socket() {
-        return Err(io::Error::new(
-            io::ErrorKind::AlreadyExists,
-            format!(
-                "socket path '{}' is not a Unix socket",
-                socket_path.display()
-            ),
-        ));
-    }
-
-    let user_id = real_user_id()?;
-    if metadata.uid() != user_id {
-        return Err(io::Error::new(
-            io::ErrorKind::PermissionDenied,
-            format!("socket {} has unsafe ownership", socket_path.display()),
-        ));
-    }
-
-    if require_owner_only && (metadata.mode() & UNSAFE_PERMISSION_MASK) != 0 {
-        return Err(io::Error::new(
-            io::ErrorKind::PermissionDenied,
-            format!("socket {} has unsafe permissions", socket_path.display()),
-        ));
-    }
-
-    Ok(())
-}
-
-#[cfg(unix)]
-fn remove_stale_socket_if_needed(socket_path: &Path) -> io::Result<()> {
-    let metadata = match fs::symlink_metadata(socket_path) {
-        Ok(metadata) => metadata,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(()),
-        Err(error) => return Err(error),
-    };
-
-    if !metadata.file_type().is_socket() {
-        return Err(io::Error::new(
-            io::ErrorKind::AlreadyExists,
-            format!(
-                "socket path '{}' exists but is not a Unix socket",
-                socket_path.display()
-            ),
-        ));
-    }
-
-    match StdUnixStream::connect(socket_path) {
-        Ok(_stream) => Err(io::Error::new(
-            io::ErrorKind::AddrInUse,
-            format!("socket '{}' is already in use", socket_path.display()),
-        )),
-        Err(error) if indicates_stale_socket(&error) => {
-            debug!(
-                "removing stale socket '{}' after failed connect probe: {error}",
-                socket_path.display()
-            );
-            match fs::remove_file(socket_path) {
-                Ok(()) => Ok(()),
-                Err(remove_error) if remove_error.kind() == io::ErrorKind::NotFound => Ok(()),
-                Err(remove_error) => Err(remove_error),
-            }
-        }
-        Err(error) => Err(error),
-    }
-}
-
-#[cfg(unix)]
-fn indicates_stale_socket(error: &io::Error) -> bool {
-    matches!(
-        error.kind(),
-        io::ErrorKind::ConnectionRefused | io::ErrorKind::NotFound
-    )
-}
-
-#[cfg(unix)]
-pub(crate) fn real_user_id() -> io::Result<u32> {
-    Ok(rmux_os::identity::real_user_id())
 }
 
 #[cfg(all(test, unix))]

@@ -251,6 +251,23 @@ impl HandlerState {
             .map(PaneOutputSender::subscribe)
     }
 
+    pub(crate) fn runtime_pane_output_drain_handles(
+        &self,
+        runtime_session_name: &SessionName,
+        pane_id: PaneId,
+    ) -> (
+        Option<crate::pane_io::PaneOutputReceiver>,
+        Option<PaneOutputSender>,
+    ) {
+        let sender = self
+            .pane_outputs
+            .get(runtime_session_name)
+            .and_then(|panes| panes.get(&pane_id))
+            .cloned();
+        let receiver = sender.as_ref().map(PaneOutputSender::subscribe);
+        (receiver, sender)
+    }
+
     pub(crate) fn session_pane_outputs(
         &self,
         session_name: &SessionName,

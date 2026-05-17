@@ -8,7 +8,7 @@ use super::super::{
     prepare_lifecycle_event, scripting_support::format_context_for_target, RequestHandler,
 };
 use crate::format_runtime::render_runtime_template;
-use crate::pane_io::{PaneExitCallback, PaneExitEvent, PaneOutputReceiver};
+use crate::pane_io::{PaneExitCallback, PaneExitEvent, PaneOutputReceiver, PaneOutputSender};
 use crate::pane_terminal_lookup::missing_pane_terminal;
 use crate::pane_terminals::{session_not_found, HandlerState, PaneExitMetadata};
 use tracing::warn;
@@ -22,6 +22,7 @@ enum PaneExitPlan {
     KeepDead {
         target: PaneTarget,
         prepare_dead: bool,
+        output: ExitedPaneOutput,
     },
     RemovePane {
         session_name: rmux_proto::SessionName,
@@ -29,13 +30,42 @@ enum PaneExitPlan {
         window_destroyed: bool,
         removed_pane_ids: Vec<rmux_core::PaneId>,
         pane_event: super::super::QueuedLifecycleEvent,
+        output: ExitedPaneOutput,
     },
     RemoveSession {
         session_name: rmux_proto::SessionName,
+        target: PaneTarget,
         removed_pane_ids: Vec<rmux_core::PaneId>,
         pane_event: super::super::QueuedLifecycleEvent,
         session_event: super::super::QueuedLifecycleEvent,
+        output: ExitedPaneOutput,
     },
+}
+
+struct ExitedPaneOutput {
+    receiver: Option<PaneOutputReceiver>,
+    sender: Option<PaneOutputSender>,
+}
+
+impl ExitedPaneOutput {
+    fn capture(state: &HandlerState, event: &PaneExitEvent) -> Self {
+        let (receiver, sender) =
+            state.runtime_pane_output_drain_handles(&event.session_name, event.pane_id);
+        Self { receiver, sender }
+    }
+
+    async fn ensure_eof(self, generation: Option<u64>) {
+        if wait_for_pane_output_eof(self.receiver).await {
+            return;
+        }
+        if let Some(sender) = self.sender {
+            let _ = sender.send_for_generation(generation, Vec::new());
+        }
+    }
+
+    fn sender(&self) -> Option<PaneOutputSender> {
+        self.sender.clone()
+    }
 }
 
 impl RequestHandler {
@@ -70,6 +100,7 @@ impl RequestHandler {
                     return;
                 };
                 let was_dead = state.pane_is_dead(target.session_name(), event.pane_id);
+                let output = ExitedPaneOutput::capture(&state, &event);
                 let metadata =
                     match state.observe_runtime_pane_exit(&event.session_name, event.pane_id) {
                         Ok(Some(metadata)) => Some(metadata),
@@ -89,6 +120,7 @@ impl RequestHandler {
                         Some(PaneExitPlan::KeepDead {
                             target,
                             prepare_dead: !was_dead,
+                            output,
                         })
                     } else {
                         let Some(session) = state.sessions.session(target.session_name()) else {
@@ -157,9 +189,11 @@ impl RequestHandler {
                             }
                             Some(PaneExitPlan::RemoveSession {
                                 session_name: target.session_name().clone(),
+                                target,
                                 removed_pane_ids: vec![event.pane_id],
                                 pane_event,
                                 session_event,
+                                output,
                             })
                         } else {
                             match state.kill_pane(target.clone()) {
@@ -179,6 +213,7 @@ impl RequestHandler {
                                         window_destroyed: result.response.window_destroyed,
                                         removed_pane_ids: result.removed_pane_ids,
                                         pane_event,
+                                        output,
                                     })
                                 }
                                 Err(error) => {
@@ -212,7 +247,9 @@ impl RequestHandler {
             PaneExitPlan::KeepDead {
                 target,
                 prepare_dead,
+                output,
             } => {
+                output.ensure_eof(event.generation).await;
                 if prepare_dead {
                     self.prepare_kept_dead_pane_transcript(&event, &target)
                         .await;
@@ -244,7 +281,10 @@ impl RequestHandler {
                 window_destroyed,
                 removed_pane_ids,
                 pane_event,
+                output,
             } => {
+                self.retain_removed_pane_output(&event, &target, &output);
+                output.ensure_eof(event.generation).await;
                 self.forget_pane_snapshot_coalescers(&removed_pane_ids);
                 self.cleanup_exited_pane_output_subscription(&event).await;
                 self.emit_prepared(pane_event);
@@ -263,10 +303,14 @@ impl RequestHandler {
             }
             PaneExitPlan::RemoveSession {
                 session_name,
+                target,
                 removed_pane_ids,
                 pane_event,
                 session_event,
+                output,
             } => {
+                self.retain_removed_pane_output(&event, &target, &output);
+                output.ensure_eof(event.generation).await;
                 self.forget_pane_snapshot_coalescers(&removed_pane_ids);
                 self.cleanup_exited_pane_output_subscription(&event).await;
                 self.exit_attached_session(&session_name).await;
@@ -279,10 +323,24 @@ impl RequestHandler {
         }
     }
 
+    fn retain_removed_pane_output(
+        &self,
+        event: &PaneExitEvent,
+        target: &PaneTarget,
+        output: &ExitedPaneOutput,
+    ) {
+        if let Some(sender) = output.sender() {
+            self.retain_exited_pane_output(
+                target.clone(),
+                PaneOutputSubscriptionKey::new(event.session_name.clone(), event.pane_id),
+                sender,
+            );
+        }
+    }
+
     async fn cleanup_exited_pane_output_subscription(&self, event: &PaneExitEvent) {
         let key = PaneOutputSubscriptionKey::new(event.session_name.clone(), event.pane_id);
-        self.cleanup_pane_output_subscriptions(std::slice::from_ref(&key))
-            .await;
+        self.drain_exited_pane_output_subscriptions(key).await;
     }
 
     async fn prepare_kept_dead_pane_transcript(&self, event: &PaneExitEvent, target: &PaneTarget) {
@@ -353,11 +411,11 @@ impl RequestHandler {
     }
 }
 
-async fn wait_for_pane_output_eof(output_rx: Option<PaneOutputReceiver>) {
+async fn wait_for_pane_output_eof(output_rx: Option<PaneOutputReceiver>) -> bool {
     let Some(mut output_rx) = output_rx else {
-        return;
+        return false;
     };
-    let _ = tokio::time::timeout(DEAD_PANE_OUTPUT_DRAIN_TIMEOUT, async move {
+    tokio::time::timeout(DEAD_PANE_OUTPUT_DRAIN_TIMEOUT, async move {
         loop {
             match output_rx.recv().await {
                 OutputCursorItem::Event(event) if event.bytes().is_empty() => break,
@@ -365,7 +423,8 @@ async fn wait_for_pane_output_eof(output_rx: Option<PaneOutputReceiver>) {
             }
         }
     })
-    .await;
+    .await
+    .is_ok()
 }
 
 fn should_keep_dead_pane(

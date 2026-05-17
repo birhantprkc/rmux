@@ -90,6 +90,11 @@ impl PaneTerminal {
         Ok(self.exit_status)
     }
 
+    #[cfg(unix)]
+    pub(crate) fn continue_if_stopped(&self) -> rmux_pty::Result<bool> {
+        self.child.continue_if_stopped()
+    }
+
     pub(crate) fn profile(&self) -> &TerminalProfile {
         &self.profile
     }

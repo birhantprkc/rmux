@@ -5,11 +5,8 @@ use std::collections::HashMap;
 use std::ffi::CStr;
 use std::io;
 #[cfg(unix)]
-use std::os::fd::BorrowedFd;
+use std::os::fd::{AsRawFd, BorrowedFd};
 use std::path::{Path, PathBuf};
-
-#[cfg(unix)]
-use rustix::termios::tcgetpgrp;
 
 #[cfg(windows)]
 #[path = "process_windows.rs"]
@@ -91,8 +88,15 @@ pub mod unix {
     /// Returns the foreground process id for a terminal file descriptor.
     #[must_use]
     pub fn foreground_pid(fd: BorrowedFd<'_>) -> Option<u32> {
-        let pgrp = tcgetpgrp(fd).ok()?;
-        u32::try_from(pgrp.as_raw_nonzero().get()).ok()
+        let pgrp = unsafe {
+            // SAFETY: `fd` is a borrowed file descriptor supplied by the
+            // caller. `tcgetpgrp` does not take ownership of it.
+            libc::tcgetpgrp(fd.as_raw_fd())
+        };
+        if pgrp <= 0 {
+            return None;
+        }
+        u32::try_from(pgrp).ok()
     }
 }
 

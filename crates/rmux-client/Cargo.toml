@@ -12,6 +12,7 @@ categories = ["command-line-interface"]
 [dependencies]
 rmux-core = { path = "../rmux-core", version = "0.1.1" }
 rmux-ipc = { path = "../rmux-ipc", version = "0.1.0" }
+rmux-os = { path = "../rmux-os", version = "0.1.0" }
 rmux-proto = { path = "../rmux-proto", version = "0.1.0" }
 
 [target.'cfg(unix)'.dependencies]

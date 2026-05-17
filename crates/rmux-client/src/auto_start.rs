@@ -11,9 +11,6 @@ use std::time::Duration;
 #[cfg(any(all(test, unix), not(any(unix, windows))))]
 use std::time::Instant;
 
-#[cfg(windows)]
-use std::os::windows::process::CommandExt;
-
 #[cfg(not(windows))]
 use rmux_proto::{ListSessionsRequest, Response};
 #[cfg(unix)]
@@ -32,14 +29,6 @@ use crate::connect_or_absent;
 #[cfg(any(all(test, unix), not(any(unix, windows))))]
 use crate::ConnectResult;
 use crate::{ClientError, Connection};
-
-#[cfg(windows)]
-use windows_sys::Win32::Foundation::{ERROR_ACCESS_DENIED, ERROR_INVALID_PARAMETER};
-#[cfg(windows)]
-use windows_sys::Win32::System::Threading::{
-    CREATE_BREAKAWAY_FROM_JOB, CREATE_NEW_PROCESS_GROUP, CREATE_NO_WINDOW,
-    CREATE_UNICODE_ENVIRONMENT, DETACHED_PROCESS,
-};
 
 #[cfg(not(any(unix, windows)))]
 const AUTO_START_TIMEOUT: Duration = Duration::from_secs(5);
@@ -573,7 +562,7 @@ fn spawn_hidden_daemon_for(
     let command = hidden_daemon_command(binary_path, socket_path, config, true);
     match spawn_hidden_daemon(command) {
         Ok(()) => Ok(()),
-        Err(error) if should_retry_hidden_daemon_without_breakaway(&error) => {
+        Err(error) if rmux_os::daemon::should_retry_hidden_daemon_without_breakaway(&error) => {
             let command = hidden_daemon_command(binary_path, socket_path, config, false);
             spawn_hidden_daemon(command)
         }
@@ -595,7 +584,7 @@ fn hidden_daemon_command(
         .stdout(Stdio::null())
         .stderr(Stdio::null());
     config.append_hidden_daemon_args(&mut command);
-    configure_hidden_daemon_command(&mut command, allow_job_breakaway);
+    rmux_os::daemon::configure_hidden_daemon_command(&mut command, allow_job_breakaway);
     command
 }
 
@@ -605,39 +594,6 @@ fn spawn_hidden_daemon(mut command: Command) -> io::Result<()> {
     // short-lived client process that launched it.
     drop(child);
     Ok(())
-}
-
-#[cfg(windows)]
-fn configure_hidden_daemon_command(command: &mut Command, allow_job_breakaway: bool) {
-    command.creation_flags(hidden_daemon_creation_flags(allow_job_breakaway));
-}
-
-#[cfg(not(windows))]
-fn configure_hidden_daemon_command(_command: &mut Command, _allow_job_breakaway: bool) {}
-
-#[cfg(windows)]
-fn hidden_daemon_creation_flags(allow_job_breakaway: bool) -> u32 {
-    let base =
-        DETACHED_PROCESS | CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP | CREATE_UNICODE_ENVIRONMENT;
-    if allow_job_breakaway {
-        base | CREATE_BREAKAWAY_FROM_JOB
-    } else {
-        base
-    }
-}
-
-#[cfg(windows)]
-fn should_retry_hidden_daemon_without_breakaway(error: &io::Error) -> bool {
-    matches!(
-        error.raw_os_error(),
-        Some(code)
-            if code == ERROR_ACCESS_DENIED as i32 || code == ERROR_INVALID_PARAMETER as i32
-    )
-}
-
-#[cfg(not(windows))]
-fn should_retry_hidden_daemon_without_breakaway(_error: &io::Error) -> bool {
-    false
 }
 
 fn rmux_binary_path() -> io::Result<PathBuf> {
@@ -656,39 +612,3 @@ fn binary_override_enabled_for_tests() -> bool {
 #[cfg(all(test, unix))]
 #[path = "auto_start/tests.rs"]
 mod tests;
-
-#[cfg(all(test, windows))]
-mod windows_tests {
-    use std::io;
-
-    use super::*;
-
-    #[test]
-    fn hidden_daemon_flags_detach_console_and_preserve_unicode_env() {
-        let flags = hidden_daemon_creation_flags(true);
-
-        assert_ne!(flags & DETACHED_PROCESS, 0);
-        assert_ne!(flags & CREATE_NO_WINDOW, 0);
-        assert_ne!(flags & CREATE_NEW_PROCESS_GROUP, 0);
-        assert_ne!(flags & CREATE_UNICODE_ENVIRONMENT, 0);
-        assert_ne!(flags & CREATE_BREAKAWAY_FROM_JOB, 0);
-
-        let fallback_flags = hidden_daemon_creation_flags(false);
-        assert_ne!(fallback_flags & DETACHED_PROCESS, 0);
-        assert_ne!(fallback_flags & CREATE_NO_WINDOW, 0);
-        assert_eq!(fallback_flags & CREATE_BREAKAWAY_FROM_JOB, 0);
-    }
-
-    #[test]
-    fn hidden_daemon_retry_is_limited_to_breakaway_failures() {
-        assert!(should_retry_hidden_daemon_without_breakaway(
-            &io::Error::from_raw_os_error(ERROR_ACCESS_DENIED as i32)
-        ));
-        assert!(should_retry_hidden_daemon_without_breakaway(
-            &io::Error::from_raw_os_error(ERROR_INVALID_PARAMETER as i32)
-        ));
-        assert!(!should_retry_hidden_daemon_without_breakaway(
-            &io::Error::from_raw_os_error(2)
-        ));
-    }
-}

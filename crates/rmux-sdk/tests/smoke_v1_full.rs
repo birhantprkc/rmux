@@ -4,6 +4,7 @@ use std::error::Error;
 use std::ffi::OsString;
 use std::fs;
 use std::os::unix::fs::FileTypeExt;
+use std::os::unix::net::UnixStream;
 use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -106,6 +107,156 @@ async fn ci_runner_collects_command_output_and_exit() -> TestResult {
 }
 
 #[tokio::test]
+async fn ci_runner_collects_immediate_burst_output_oldest_without_keepalive() -> TestResult {
+    let _lock = LIVE_DAEMON_LOCK.lock().await;
+    let harness = Harness::start("ci-burst-collect").await?;
+    let rmux = harness.rmux();
+    let session = rmux
+        .ensure_session(
+            EnsureSession::named(session_name("sdkfullburstcollect"))
+                .create_only()
+                .detached(true),
+        )
+        .await?;
+    let pane = session.pane(0, 0);
+
+    pane.send_text(
+        "printf 'RMUX_COLLECT_BURST_START\\n'; \
+         i=1; while [ \"$i\" -le 1000 ]; do printf 'line-%04d\\n' \"$i\"; i=$((i + 1)); done; \
+         printf 'RMUX_COLLECT_BURST_END\\n'; \
+         exit 7\n",
+    )
+    .await?;
+    let collected = pane
+        .collect_output_until_exit_starting_at(PaneOutputStart::Oldest, OUTPUT_BUDGET)
+        .await?;
+    let output = String::from_utf8_lossy(&collected.bytes);
+
+    assert!(
+        output.contains("RMUX_COLLECT_BURST_START"),
+        "missing burst start: {output:?}"
+    );
+    assert!(
+        output.contains("line-1000"),
+        "missing burst tail: {output:?}"
+    );
+    assert!(
+        output.contains("RMUX_COLLECT_BURST_END"),
+        "missing burst end: {output:?}"
+    );
+    match exit_code(collected.exit_state.as_ref()) {
+        Some(7) => {}
+        Some(code) => return Err(format!("expected exit code 7, got {code}").into()),
+        None => wait_for_pane_absent(&pane).await?,
+    }
+    assert!(!collected.truncated);
+    assert!(!collected.lagged);
+
+    harness.finish().await
+}
+
+#[tokio::test]
+async fn ci_runner_collects_initial_process_burst_oldest_without_keepalive() -> TestResult {
+    let _lock = LIVE_DAEMON_LOCK.lock().await;
+    let harness = Harness::start("ci-process-burst").await?;
+    let rmux = harness.rmux();
+    let session = rmux
+        .ensure_session(
+            EnsureSession::named(session_name("sdkfullprocessburst"))
+                .create_only()
+                .detached(true)
+                .process(ProcessSpec {
+                    command: Some(vec![
+                        "sh".to_owned(),
+                        "-c".to_owned(),
+                        concat!(
+                            "printf 'RMUX_PROCESS_BURST_START\\n'; ",
+                            "i=1; while [ \"$i\" -le 1000 ]; do printf 'line-%04d\\n' \"$i\"; i=$((i + 1)); done; ",
+                            "printf 'RMUX_PROCESS_BURST_END\\n'; ",
+                            "exit 7"
+                        )
+                        .to_owned(),
+                    ]),
+                    environment: None,
+                }),
+        )
+        .await?;
+    let pane = session.pane(0, 0);
+
+    let collected = pane
+        .collect_output_until_exit_starting_at(PaneOutputStart::Oldest, OUTPUT_BUDGET)
+        .await?;
+    let output = String::from_utf8_lossy(&collected.bytes);
+
+    assert!(
+        output.contains("RMUX_PROCESS_BURST_START"),
+        "missing process burst start: {output:?}"
+    );
+    assert!(
+        output.contains("line-1000"),
+        "missing process burst tail: {output:?}"
+    );
+    assert!(
+        output.contains("RMUX_PROCESS_BURST_END"),
+        "missing process burst end: {output:?}"
+    );
+    match exit_code(collected.exit_state.as_ref()) {
+        Some(7) => {}
+        Some(code) => return Err(format!("expected exit code 7, got {code}").into()),
+        None => wait_for_pane_absent(&pane).await?,
+    }
+    assert!(!collected.truncated);
+    assert!(!collected.lagged);
+
+    harness.finish().await
+}
+
+#[tokio::test]
+async fn ci_runner_streams_immediate_burst_output_without_keepalive() -> TestResult {
+    let _lock = LIVE_DAEMON_LOCK.lock().await;
+    let harness = Harness::start("ci-burst").await?;
+    let rmux = harness.rmux();
+    let session = rmux
+        .ensure_session(
+            EnsureSession::named(session_name("sdkfullburst"))
+                .create_only()
+                .detached(true),
+        )
+        .await?;
+    let pane = session.pane(0, 0);
+    let mut stream = pane.output_stream_starting_at(PaneOutputStart::Now).await?;
+
+    pane.send_text(
+        "printf 'RMUX_BURST_START\\n'; \
+         i=1; while [ \"$i\" -le 1000 ]; do printf 'line-%04d\\n' \"$i\"; i=$((i + 1)); done; \
+         printf 'RMUX_BURST_END\\n'; \
+         exit 7\n",
+    )
+    .await?;
+    let output_bytes = collect_stream_until_eof(&mut stream, OUTPUT_BUDGET).await?;
+    let output = String::from_utf8_lossy(&output_bytes);
+
+    assert!(
+        output.contains("RMUX_BURST_START"),
+        "missing burst start: {output:?}"
+    );
+    assert!(
+        output.contains("line-1000"),
+        "missing burst tail: {output:?}"
+    );
+    assert!(
+        output.contains("RMUX_BURST_END"),
+        "missing burst end: {output:?}"
+    );
+    match pane.wait_exit().await? {
+        Some(exit) => assert_eq!(exit.code, Some(7), "expected exit code 7"),
+        None => wait_for_pane_absent(&pane).await?,
+    }
+
+    harness.finish().await
+}
+
+#[tokio::test]
 async fn interactive_repl_waits_for_prompt_and_interrupts() -> TestResult {
     let _lock = LIVE_DAEMON_LOCK.lock().await;
     let python =
@@ -162,18 +313,25 @@ async fn dashboard_snapshot_updates_are_revision_gated() -> TestResult {
     let _lock = LIVE_DAEMON_LOCK.lock().await;
     let harness = Harness::start("dashboard").await?;
     let rmux = harness.rmux();
+    let marker = "RMUX_FULL_DASHBOARD_REDRAW";
     let session = rmux
         .ensure_session(
             EnsureSession::named(session_name("sdkfulldash"))
                 .create_only()
-                .detached(true),
+                .detached(true)
+                .process(ProcessSpec {
+                    command: Some(vec![
+                        "sh".to_owned(),
+                        "-c".to_owned(),
+                        format!("sleep 1; printf '{marker}\\n'; sleep 2"),
+                    ]),
+                    environment: None,
+                }),
         )
         .await?;
     let pane = session.pane(0, 0);
     let baseline = pane.snapshot().await?;
-    let marker = "RMUX_FULL_DASHBOARD_REDRAW";
 
-    pane.send_text(format!("printf '{marker}\\n'\n")).await?;
     let changed = wait_for_snapshot_text_after_revision(&pane, baseline.revision, marker).await?;
     assert!(changed.revision > baseline.revision);
     assert_ne!(changed.visible_text(), baseline.visible_text());
@@ -264,6 +422,119 @@ async fn warm_reconnect_keeps_existing_runtime() -> TestResult {
     harness.finish().await
 }
 
+#[tokio::test]
+async fn sdk_autostarted_daemon_detaches_and_survives_terminal_signals() -> TestResult {
+    let _lock = LIVE_DAEMON_LOCK.lock().await;
+    let harness = Harness::start("daemon-signals").await?;
+    let rmux = harness.rmux();
+    let session_name = session_name("sdkfullsignals");
+    rmux.ensure_session(
+        EnsureSession::named(session_name.clone())
+            .create_only()
+            .detached(true),
+    )
+    .await?;
+
+    let daemon_pid = wait_for_daemon_pid(harness.socket_path()).await?;
+    let daemon_pgid = process_group_id(daemon_pid)?;
+    let current_pgid = process_group_id(std::process::id())?;
+    assert_ne!(
+        daemon_pgid, current_pgid,
+        "SDK auto-started daemon must not share the caller process group"
+    );
+
+    for signal in ["HUP", "QUIT", "USR1", "USR2"] {
+        send_signal(daemon_pid, signal)?;
+        sleep(Duration::from_millis(100)).await;
+        assert_eq!(
+            wait_for_daemon_pid(harness.socket_path()).await?,
+            daemon_pid,
+            "daemon exited after SIG{signal}"
+        );
+        assert!(
+            rmux.list_sessions().await?.contains(&session_name),
+            "daemon stopped serving sessions after SIG{signal}"
+        );
+    }
+
+    harness.finish().await
+}
+
+#[tokio::test]
+async fn sdk_daemon_recreates_removed_socket_on_sigusr1() -> TestResult {
+    let _lock = LIVE_DAEMON_LOCK.lock().await;
+    let harness = Harness::start("daemon-sigusr1-socket").await?;
+    let rmux = harness.rmux();
+    let session_name = session_name("sdkfullsigusr1socket");
+    rmux.ensure_session(
+        EnsureSession::named(session_name.clone())
+            .create_only()
+            .detached(true),
+    )
+    .await?;
+
+    let daemon_pid = wait_for_daemon_pid(harness.socket_path()).await?;
+    fs::remove_file(harness.socket_path())?;
+    wait_for_path_absent(harness.socket_path()).await?;
+    assert!(
+        RmuxBuilder::new()
+            .unix_socket(harness.socket_path())
+            .default_timeout(Duration::from_millis(200))
+            .connect()
+            .await
+            .is_err(),
+        "a fresh SDK client unexpectedly connected after the daemon socket was removed"
+    );
+
+    send_signal(daemon_pid, "USR1")?;
+    wait_for_socket_present(harness.socket_path()).await?;
+
+    let reconnected = RmuxBuilder::new()
+        .unix_socket(harness.socket_path())
+        .default_timeout(DEFAULT_TIMEOUT)
+        .connect()
+        .await?;
+    assert_eq!(
+        wait_for_daemon_pid(harness.socket_path()).await?,
+        daemon_pid,
+        "SIGUSR1 must recreate the socket without replacing the daemon"
+    );
+    assert!(
+        reconnected.list_sessions().await?.contains(&session_name),
+        "session disappeared after SIGUSR1 socket recreation"
+    );
+    drop(reconnected);
+
+    harness.finish().await
+}
+
+#[tokio::test]
+async fn sdk_daemon_continues_stopped_initial_pane_process() -> TestResult {
+    let _lock = LIVE_DAEMON_LOCK.lock().await;
+    let harness = Harness::start("daemon-sigcont-pane").await?;
+    let rmux = harness.rmux();
+    let marker = "RMUX_STOPPED_PROCESS_CONTINUED";
+    let session = rmux
+        .ensure_session(
+            EnsureSession::named(session_name("sdkfullsigcontpane"))
+                .create_only()
+                .detached(true)
+                .process(ProcessSpec {
+                    command: Some(vec![
+                        "sh".to_owned(),
+                        "-c".to_owned(),
+                        format!("kill -STOP $$; printf '{marker}\\n'; sleep 1"),
+                    ]),
+                    environment: None,
+                }),
+        )
+        .await?;
+
+    session.pane(0, 0).wait_for_text(marker).await?;
+
+    harness.finish().await
+}
+
 fn session_name(value: &str) -> SessionName {
     SessionName::new(value).expect("valid smoke session name")
 }
@@ -307,6 +578,39 @@ async fn wait_for_output_marker(stream: &mut PaneOutputStream, marker: &[u8]) ->
             }
             Some(_) => {}
             None => return Err("pane output stream closed before expected marker".into()),
+        }
+    }
+}
+
+async fn collect_stream_until_eof(
+    stream: &mut PaneOutputStream,
+    max_bytes: usize,
+) -> TestResult<Vec<u8>> {
+    let deadline = Instant::now() + DEFAULT_TIMEOUT;
+    let mut collected = Vec::new();
+    loop {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return Err("pane output stream did not emit EOF".into());
+        }
+        match timeout(remaining, stream.next()).await?? {
+            Some(PaneOutputChunk::Bytes { bytes, .. }) if bytes.is_empty() => {
+                return Ok(collected);
+            }
+            Some(PaneOutputChunk::Bytes { bytes, .. }) => {
+                let remaining_capacity = max_bytes.saturating_sub(collected.len());
+                if remaining_capacity < bytes.len() {
+                    return Err(
+                        format!("stream output exceeded test budget of {max_bytes} bytes").into(),
+                    );
+                }
+                collected.extend_from_slice(&bytes);
+            }
+            Some(PaneOutputChunk::Lag(notice)) => {
+                return Err(format!("stream lagged during burst smoke: {notice:?}").into());
+            }
+            Some(other) => return Err(format!("unexpected stream chunk: {other:?}").into()),
+            None => return Err("pane output stream closed before EOF".into()),
         }
     }
 }
@@ -371,6 +675,22 @@ async fn wait_for_path_absent(path: &Path) -> TestResult {
     }
 }
 
+async fn wait_for_socket_present(path: &Path) -> TestResult {
+    let deadline = Instant::now() + DEFAULT_TIMEOUT;
+    loop {
+        if path.exists() {
+            assert_socket(path)?;
+            if UnixStream::connect(path).is_ok() {
+                return Ok(());
+            }
+        }
+        if Instant::now() >= deadline {
+            return Err(format!("socket was not recreated: {}", path.display()).into());
+        }
+        sleep(Duration::from_millis(25)).await;
+    }
+}
+
 async fn wait_for_pane_absent(pane: &rmux_sdk::Pane) -> TestResult {
     let deadline = Instant::now() + DEFAULT_TIMEOUT;
     loop {
@@ -417,6 +737,42 @@ fn daemon_pid_for_socket(socket_needle: &str) -> TestResult<Option<u32>> {
         }
     }
     Ok(None)
+}
+
+fn process_group_id(pid: u32) -> TestResult<i32> {
+    let output = Command::new("ps")
+        .args(["-o", "pgid=", "-p", &pid.to_string()])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .output()?;
+    if !output.status.success() {
+        return Err(format!("ps could not inspect process group for pid {pid}").into());
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    stdout
+        .split_whitespace()
+        .next()
+        .ok_or_else(|| format!("ps did not print process group for pid {pid}").into())
+        .and_then(|value| {
+            value
+                .parse::<i32>()
+                .map_err(|error| format!("invalid process group {value:?}: {error}").into())
+        })
+}
+
+fn send_signal(pid: u32, signal: &str) -> TestResult {
+    let status = Command::new("kill")
+        .arg(format!("-{signal}"))
+        .arg(pid.to_string())
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!("kill -{signal} {pid} failed with {status}").into())
+    }
 }
 
 struct Harness {
@@ -559,9 +915,6 @@ fn resolve_rmux_binary() -> TestResult<PathBuf> {
 
     let target_dir = target_dir()?;
     let candidate = target_dir.join("debug").join("rmux");
-    if candidate.is_file() {
-        return Ok(candidate);
-    }
 
     let status = Command::new(std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into()))
         .arg("build")

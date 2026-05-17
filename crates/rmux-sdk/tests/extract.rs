@@ -274,27 +274,18 @@ async fn collect_output_until_exit_observes_exit_with_empty_live_subscription() 
         peer.write_response(Response::PaneOutputCursor(PaneOutputCursorResponse {
             subscription_id,
             cursor: PaneOutputCursor {
-                next_sequence: 1,
+                next_sequence: 2,
                 missed_events: 0,
             },
-            events: Vec::new(),
+            events: vec![PaneOutputEvent {
+                sequence: 1,
+                bytes: Vec::new(),
+            }],
             limited: false,
         }))
         .await?;
 
         expect_info_probe(&mut peer, exited_details_line(4)).await?;
-
-        expect_cursor(&mut peer, subscription_id).await?;
-        peer.write_response(Response::PaneOutputCursor(PaneOutputCursorResponse {
-            subscription_id,
-            cursor: PaneOutputCursor {
-                next_sequence: 1,
-                missed_events: 0,
-            },
-            events: Vec::new(),
-            limited: false,
-        }))
-        .await?;
 
         TestResult::Ok(())
     });
@@ -338,10 +329,13 @@ async fn collect_output_until_exit_returns_after_post_subscribe_exit_observation
         peer.write_response(Response::PaneOutputCursor(PaneOutputCursorResponse {
             subscription_id,
             cursor: PaneOutputCursor {
-                next_sequence: 1,
+                next_sequence: 2,
                 missed_events: 0,
             },
-            events: Vec::new(),
+            events: vec![PaneOutputEvent {
+                sequence: 1,
+                bytes: Vec::new(),
+            }],
             limited: false,
         }))
         .await?;
@@ -352,6 +346,79 @@ async fn collect_output_until_exit_returns_after_post_subscribe_exit_observation
     let collected = pane.collect_output_until_exit(5).await?;
     assert!(collected.bytes.is_empty());
     assert_eq!(collected.exit_state.and_then(|exit| exit.code), Some(9));
+    drop(pane);
+    server.await??;
+    Ok(())
+}
+
+#[tokio::test]
+async fn collect_output_until_exit_drains_final_output_after_exit_observation() -> TestResult {
+    let socket = TestSocket::new("collect-exit-then-tail")?;
+    let listener = UnixListener::bind(socket.path())?;
+    let server = tokio::spawn(async move {
+        let mut peer = accept_peer(&listener).await?;
+
+        let request = peer.expect_request().await?;
+        let Request::SubscribePaneOutput(request) = request else {
+            panic!("collection must subscribe to raw pane output, got {request:?}");
+        };
+        assert_eq!(request.target, target().to_proto());
+        let subscription_id = PaneOutputSubscriptionId::new(14);
+        peer.write_response(Response::SubscribePaneOutput(SubscribePaneOutputResponse {
+            subscription_id,
+            target: target().to_proto(),
+            pane_id: rmux_proto::PaneId::new(1),
+            cursor: PaneOutputCursor {
+                next_sequence: 1,
+                missed_events: 0,
+            },
+        }))
+        .await?;
+
+        expect_info_probe(&mut peer, running_details_line()).await?;
+        expect_cursor(&mut peer, subscription_id).await?;
+        peer.write_response(Response::PaneOutputCursor(PaneOutputCursorResponse {
+            subscription_id,
+            cursor: PaneOutputCursor {
+                next_sequence: 1,
+                missed_events: 0,
+            },
+            events: Vec::new(),
+            limited: false,
+        }))
+        .await?;
+
+        expect_info_probe(&mut peer, exited_details_line(7)).await?;
+        expect_cursor(&mut peer, subscription_id).await?;
+        peer.write_response(Response::PaneOutputCursor(PaneOutputCursorResponse {
+            subscription_id,
+            cursor: PaneOutputCursor {
+                next_sequence: 3,
+                missed_events: 0,
+            },
+            events: vec![
+                PaneOutputEvent {
+                    sequence: 1,
+                    bytes: b"RMUX_BURST_START\nline-0300\nRMUX_BURST_END\n".to_vec(),
+                },
+                PaneOutputEvent {
+                    sequence: 2,
+                    bytes: Vec::new(),
+                },
+            ],
+            limited: false,
+        }))
+        .await?;
+        TestResult::Ok(())
+    });
+
+    let pane = pane_for(socket.path(), Duration::from_secs(1)).await?;
+    let collected = pane.collect_output_until_exit(256).await?;
+    let output = String::from_utf8_lossy(&collected.bytes);
+    assert!(output.contains("RMUX_BURST_START"));
+    assert!(output.contains("line-0300"));
+    assert!(output.contains("RMUX_BURST_END"));
+    assert_eq!(collected.exit_state.and_then(|exit| exit.code), Some(7));
     drop(pane);
     server.await??;
     Ok(())

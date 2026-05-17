@@ -148,13 +148,28 @@ pub(super) fn startup_operation_timeout(default_timeout: Option<Duration>) -> Op
 }
 
 fn spawn_hidden_daemon(endpoint: &OsStr) -> io::Result<()> {
-    let child = Command::new(daemon_binary())
+    match spawn_hidden_daemon_with_breakaway(endpoint, true) {
+        Ok(()) => Ok(()),
+        Err(error) if rmux_os::daemon::should_retry_hidden_daemon_without_breakaway(&error) => {
+            spawn_hidden_daemon_with_breakaway(endpoint, false)
+        }
+        Err(error) => Err(error),
+    }
+}
+
+fn spawn_hidden_daemon_with_breakaway(
+    endpoint: &OsStr,
+    allow_job_breakaway: bool,
+) -> io::Result<()> {
+    let mut command = Command::new(daemon_binary());
+    command
         .arg(INTERNAL_DAEMON_FLAG)
         .arg(endpoint)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()?;
+        .stderr(Stdio::null());
+    rmux_os::daemon::configure_hidden_daemon_command(&mut command, allow_job_breakaway);
+    let child = command.spawn()?;
     drop(child);
     Ok(())
 }

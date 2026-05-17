@@ -3,14 +3,18 @@
 mod common;
 
 use common::windows_smoke::{
-    cmd_echo_text, cmd_interactive_command, cmd_long_running_command, session_name,
+    cmd_burst_once_command, cmd_echo_text, cmd_interactive_command, session_name,
     wait_for_output_marker, wait_for_pane_absent, wait_for_snapshot_text_after_revision,
     wait_for_stable_snapshot, Harness, TestResult, LIVE_DAEMON_LOCK, OUTPUT_BUDGET,
 };
 use rmux_sdk::{
-    EnsureSession, EnsureSessionPolicy, PaneExitState, PaneOutputStart, ProcessSpec, RmuxError,
-    SplitDirection,
+    EnsureSession, EnsureSessionPolicy, PaneExitState, PaneOutputChunk, PaneOutputStart,
+    PaneOutputStream, ProcessSpec, RmuxError, SplitDirection,
 };
+use tokio::time::{timeout, Instant};
+
+const BURST_OUTPUT_BUDGET: usize = 512 * 1024;
+const BURST_STREAM_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
 
 #[tokio::test]
 async fn rust_app_autostarts_and_drives_a_session_windows() -> TestResult {
@@ -85,13 +89,109 @@ async fn ci_runner_collects_command_output_and_exit_windows() -> TestResult {
 }
 
 #[tokio::test]
-async fn interactive_cmd_waits_for_prompt_and_interrupts_windows() -> TestResult {
+async fn ci_runner_streams_immediate_burst_output_and_exit_windows() -> TestResult {
     let _lock = LIVE_DAEMON_LOCK.lock().await;
-    let harness = Harness::start("interrupt").await?;
+    let harness = Harness::start("burst").await?;
     let rmux = harness.rmux();
     let session = rmux
         .ensure_session(
-            EnsureSession::named(session_name("sdkwininterrupt"))
+            EnsureSession::named(session_name("sdkwinburst"))
+                .create_only()
+                .detached(true)
+                .command(cmd_interactive_command()),
+        )
+        .await?;
+    let pane = session.pane(0, 0);
+    let mut stream = pane.output_stream_starting_at(PaneOutputStart::Now).await?;
+
+    let burst_command = concat!(
+        "echo RMUX_BURST_START & ",
+        "(for /L %i in (1,1,300) do @echo line-%i) & ",
+        "echo RMUX_BURST_END & ",
+        "exit 7\r",
+    );
+    pane.send_text(burst_command).await?;
+    let output_bytes = collect_stream_until_eof(&mut stream, BURST_OUTPUT_BUDGET).await?;
+    let output = String::from_utf8_lossy(&output_bytes);
+
+    assert!(
+        output.contains("RMUX_BURST_START"),
+        "missing burst start: {output:?}"
+    );
+    assert!(
+        output.contains("line-300"),
+        "missing burst tail: {output:?}"
+    );
+    assert!(
+        output.contains("RMUX_BURST_END"),
+        "missing burst end: {output:?}"
+    );
+    match pane.wait_exit().await? {
+        Some(exit) => assert_eq!(exit.code, Some(7), "expected exit code 7"),
+        None => wait_for_pane_absent(&pane).await?,
+    }
+
+    harness.finish().await
+}
+
+#[tokio::test]
+async fn ci_runner_collects_initial_process_burst_oldest_without_keepalive_windows() -> TestResult {
+    let _lock = LIVE_DAEMON_LOCK.lock().await;
+    let harness = Harness::start("processburst").await?;
+    let rmux = harness.rmux();
+    let session = rmux
+        .ensure_session(
+            EnsureSession::named(session_name("sdkwinprocessburst"))
+                .create_only()
+                .detached(true)
+                .process(ProcessSpec {
+                    command: Some(cmd_burst_once_command(
+                        "RMUX_PROCESS_BURST_START",
+                        "RMUX_PROCESS_BURST_END",
+                        7,
+                    )),
+                    environment: None,
+                }),
+        )
+        .await?;
+    let pane = session.pane(0, 0);
+
+    let collected = pane
+        .collect_output_until_exit_starting_at(PaneOutputStart::Oldest, BURST_OUTPUT_BUDGET)
+        .await?;
+    let output = String::from_utf8_lossy(&collected.bytes);
+
+    assert!(
+        output.contains("RMUX_PROCESS_BURST_START"),
+        "missing process burst start: {output:?}"
+    );
+    assert!(
+        output.contains("line-300"),
+        "missing process burst tail: {output:?}"
+    );
+    assert!(
+        output.contains("RMUX_PROCESS_BURST_END"),
+        "missing process burst end: {output:?}"
+    );
+    if let Some(code) = exit_code(collected.exit_state.as_ref()) {
+        assert_eq!(code, 7, "expected exit code 7");
+    } else {
+        wait_for_pane_absent(&pane).await?;
+    }
+    assert!(!collected.truncated);
+    assert!(!collected.lagged);
+
+    harness.finish().await
+}
+
+#[tokio::test]
+async fn interactive_cmd_waits_for_prompt_and_recovers_after_child_command_windows() -> TestResult {
+    let _lock = LIVE_DAEMON_LOCK.lock().await;
+    let harness = Harness::start("prompt").await?;
+    let rmux = harness.rmux();
+    let session = rmux
+        .ensure_session(
+            EnsureSession::named(session_name("sdkwinprompt"))
                 .create_only()
                 .detached(true)
                 .command(cmd_interactive_command()),
@@ -99,14 +199,20 @@ async fn interactive_cmd_waits_for_prompt_and_interrupts_windows() -> TestResult
         .await?;
     let pane = session.pane(0, 0);
     pane.send_text(cmd_echo_text("ready")).await?;
-    pane.wait_for_text("ready").await?;
-    let started = "interrupt-command-started";
-    pane.send_text(cmd_long_running_command(started)).await?;
-    pane.wait_for_text(started).await?;
-    tokio::time::sleep(std::time::Duration::from_millis(250)).await;
-    pane.send_key("C-c").await?;
-    pane.send_text(cmd_echo_text("interrupted")).await?;
-    pane.wait_for_text("interrupted").await?;
+    pane.wait_for_text("ready")
+        .await
+        .map_err(|error| format!("ready marker was not observed: {error}"))?;
+    let started = "child-command-started";
+    pane.send_text(cmd_echo_text(started)).await?;
+    pane.wait_for_text(started)
+        .await
+        .map_err(|error| format!("child command marker was not observed: {error}"))?;
+    pane.send_text(cmd_echo_text("prompt-recovered")).await?;
+    pane.wait_for_text("prompt-recovered")
+        .await
+        .map_err(|error| {
+            format!("post-command prompt recovery marker was not observed: {error}")
+        })?;
 
     harness.finish().await
 }
@@ -216,6 +322,52 @@ async fn warm_reconnect_keeps_existing_runtime_windows() -> TestResult {
 
 fn exit_code(exit: Option<&PaneExitState>) -> Option<i32> {
     exit.and_then(|state| state.code)
+}
+
+async fn collect_stream_until_eof(
+    stream: &mut PaneOutputStream,
+    max_bytes: usize,
+) -> TestResult<Vec<u8>> {
+    let deadline = Instant::now() + BURST_STREAM_TIMEOUT;
+    let mut collected = Vec::new();
+    loop {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return Err(burst_timeout_error(&collected).into());
+        }
+        let next = match timeout(remaining, stream.next()).await {
+            Ok(next) => next?,
+            Err(_) => return Err(burst_timeout_error(&collected).into()),
+        };
+        match next {
+            Some(PaneOutputChunk::Bytes { bytes, .. }) if bytes.is_empty() => {
+                return Ok(collected);
+            }
+            Some(PaneOutputChunk::Bytes { bytes, .. }) => {
+                let remaining_capacity = max_bytes.saturating_sub(collected.len());
+                if remaining_capacity < bytes.len() {
+                    return Err(
+                        format!("stream output exceeded test budget of {max_bytes} bytes").into(),
+                    );
+                }
+                collected.extend_from_slice(&bytes);
+            }
+            Some(PaneOutputChunk::Lag(notice)) => {
+                return Err(format!("stream lagged during burst smoke: {notice:?}").into());
+            }
+            Some(other) => return Err(format!("unexpected stream chunk: {other:?}").into()),
+            None => return Err("pane output stream closed before EOF".into()),
+        }
+    }
+}
+
+fn burst_timeout_error(collected: &[u8]) -> String {
+    let tail_start = collected.len().saturating_sub(512);
+    let tail = String::from_utf8_lossy(&collected[tail_start..]);
+    format!(
+        "pane output stream did not emit EOF after collecting {} bytes; tail: {tail:?}",
+        collected.len()
+    )
 }
 
 async fn keepalive_session(

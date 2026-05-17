@@ -1,5 +1,5 @@
-use std::collections::HashMap;
-use std::time::Instant;
+use std::collections::{HashMap, HashSet};
+use std::time::{Duration, Instant};
 
 use rmux_core::events::{
     OutputCursor, OutputCursorItem, OutputGap, PaneOutputSubscriptionKey, SubscriptionLimitError,
@@ -13,17 +13,20 @@ use rmux_proto::{
     DEFAULT_MAX_FRAME_LENGTH,
 };
 
-use crate::pane_io::PaneOutputReceiver;
+use crate::pane_io::{PaneOutputReceiver, PaneOutputSender};
 
 use super::RequestHandler;
 
 // Keep lag diagnostics well below the detached RPC frame cap after bincode
 // overhead and the rest of the response envelope are added.
 const MAX_LAG_RECENT_BYTES: usize = DEFAULT_MAX_FRAME_LENGTH / 16;
+const EXITED_PANE_DRAIN_POLL_INTERVAL: Duration = Duration::from_millis(25);
+const EXITED_PANE_DRAIN_IDLE_TIMEOUT: Duration = Duration::from_secs(2);
 
 pub(crate) struct OutputSubscriptionState {
     registry: SubscriptionRegistry,
     receivers: HashMap<PaneOutputSubscriptionId, PaneOutputReceiver>,
+    draining_panes: HashSet<PaneOutputSubscriptionKey>,
 }
 
 impl std::fmt::Debug for OutputSubscriptionState {
@@ -32,6 +35,7 @@ impl std::fmt::Debug for OutputSubscriptionState {
             .debug_struct("OutputSubscriptionState")
             .field("registry", &self.registry)
             .field("receiver_count", &self.receivers.len())
+            .field("draining_pane_count", &self.draining_panes.len())
             .finish()
     }
 }
@@ -41,6 +45,7 @@ impl OutputSubscriptionState {
         Self {
             registry: SubscriptionRegistry::new(limits),
             receivers: HashMap::new(),
+            draining_panes: HashSet::new(),
         }
     }
 
@@ -51,18 +56,64 @@ impl OutputSubscriptionState {
     fn cleanup_stale(&mut self, now: Instant) {
         for record in self.registry.cleanup_stale(now) {
             self.receivers.remove(&record.id());
+            self.discard_drain_if_unused(record.pane());
         }
     }
 
     fn remove_connection(&mut self, connection_id: u64) {
         for record in self.registry.remove_connection(connection_id) {
             self.receivers.remove(&record.id());
+            self.discard_drain_if_unused(record.pane());
         }
     }
 
     fn remove_pane(&mut self, pane: &PaneOutputSubscriptionKey) {
         for record in self.registry.remove_pane(pane) {
             self.receivers.remove(&record.id());
+        }
+        self.draining_panes.remove(pane);
+    }
+
+    fn begin_pane_drain(&mut self, pane: PaneOutputSubscriptionKey) -> bool {
+        if !self.registry.contains_pane(&pane) {
+            return false;
+        }
+        self.draining_panes.insert(pane);
+        true
+    }
+
+    fn pane_is_draining(&self, pane: &PaneOutputSubscriptionKey) -> bool {
+        self.draining_panes.contains(pane)
+    }
+
+    fn pane_drain_idle_for(
+        &self,
+        pane: &PaneOutputSubscriptionKey,
+        now: Instant,
+    ) -> Option<Duration> {
+        let last_seen = self
+            .registry
+            .ids_for_pane(pane)
+            .into_iter()
+            .filter_map(|id| self.registry.get(id).map(|record| record.last_seen()))
+            .max()?;
+        Some(now.saturating_duration_since(last_seen))
+    }
+
+    pub(in crate::handler) fn is_empty(&self) -> bool {
+        self.registry.is_empty()
+    }
+
+    fn remove_subscription(&mut self, subscription_id: PaneOutputSubscriptionId) {
+        if let Some(record) = self.registry.unsubscribe(subscription_id) {
+            self.receivers.remove(&subscription_id);
+            self.discard_drain_if_unused(record.pane());
+        }
+    }
+
+    fn discard_drain_if_unused(&mut self, pane: &PaneOutputSubscriptionKey) {
+        if !self.registry.contains_pane(pane) {
+            self.draining_panes.remove(pane);
         }
     }
 }
@@ -75,17 +126,9 @@ impl RequestHandler {
     ) -> Response {
         let now = Instant::now();
         let (subscription_id, pane_id, cursor) = {
-            let state = self.state.lock().await;
-            let pane_key = match state.pane_output_subscription_key_for_target(&request.target) {
-                Ok(key) => key,
-                Err(error) => return Response::Error(ErrorResponse { error }),
-            };
-            let output = match state.pane_output_for_target(
-                request.target.session_name(),
-                request.target.window_index(),
-                request.target.pane_index(),
-            ) {
-                Ok(output) => output,
+            let (pane_key, output) = match self.pane_output_subscription_source(&request, now).await
+            {
+                Ok(source) => source,
                 Err(error) => return Response::Error(ErrorResponse { error }),
             };
             let receiver = match request.start {
@@ -124,6 +167,38 @@ impl RequestHandler {
         })
     }
 
+    async fn pane_output_subscription_source(
+        &self,
+        request: &SubscribePaneOutputRequest,
+        now: Instant,
+    ) -> Result<(PaneOutputSubscriptionKey, PaneOutputSender), RmuxError> {
+        let live_result = {
+            let state = self.state.lock().await;
+            let pane_key = state.pane_output_subscription_key_for_target(&request.target);
+            let output = state.pane_output_for_target(
+                request.target.session_name(),
+                request.target.window_index(),
+                request.target.pane_index(),
+            );
+            match (pane_key, output) {
+                (Ok(pane_key), Ok(output)) => Ok((pane_key, output)),
+                (Err(error), _) | (_, Err(error)) => Err(error),
+            }
+        };
+
+        match live_result {
+            Ok(source) => Ok(source),
+            Err(live_error) => {
+                if request.start == PaneOutputSubscriptionStart::Oldest {
+                    if let Some(retained) = self.retained_exited_pane_output(&request.target, now) {
+                        return Ok((retained.pane().clone(), retained.output().clone()));
+                    }
+                }
+                Err(live_error)
+            }
+        }
+    }
+
     pub(in crate::handler) async fn handle_unsubscribe_pane_output(
         &self,
         connection_id: u64,
@@ -150,9 +225,9 @@ impl RequestHandler {
 
         let removed = subscriptions
             .registry
-            .unsubscribe(request.subscription_id)
+            .get(request.subscription_id)
             .is_some();
-        subscriptions.receivers.remove(&request.subscription_id);
+        subscriptions.remove_subscription(request.subscription_id);
         Response::UnsubscribePaneOutput(UnsubscribePaneOutputResponse {
             subscription_id: request.subscription_id,
             removed,
@@ -165,37 +240,45 @@ impl RequestHandler {
         request: PaneOutputCursorRequest,
     ) -> Response {
         let now = Instant::now();
-        let mut subscriptions = self
-            .subscriptions
-            .lock()
-            .expect("subscription registry mutex must not be poisoned");
-        subscriptions.cleanup_stale(now);
-        let limit =
-            match cursor_event_limit(request.max_events, subscriptions.limits().batch_events()) {
-                Ok(limit) => limit,
-                Err(error) => return Response::Error(ErrorResponse { error }),
+        let (items, cursor, limit) = {
+            let mut subscriptions = self
+                .subscriptions
+                .lock()
+                .expect("subscription registry mutex must not be poisoned");
+            subscriptions.cleanup_stale(now);
+            let limit =
+                match cursor_event_limit(request.max_events, subscriptions.limits().batch_events())
+                {
+                    Ok(limit) => limit,
+                    Err(error) => return Response::Error(ErrorResponse { error }),
+                };
+
+            let Some(record) = subscriptions.registry.get(request.subscription_id).cloned() else {
+                return Response::Error(ErrorResponse {
+                    error: RmuxError::Server("subscription not found".to_owned()),
+                });
+            };
+            if record.connection_id() != connection_id {
+                return Response::Error(ErrorResponse {
+                    error: RmuxError::Server(
+                        "subscription is not owned by this connection".to_owned(),
+                    ),
+                });
+            }
+            let _ = subscriptions.registry.touch(request.subscription_id, now);
+
+            let Some(receiver) = subscriptions.receivers.get_mut(&request.subscription_id) else {
+                subscriptions.remove_subscription(request.subscription_id);
+                return Response::Error(ErrorResponse {
+                    error: RmuxError::Server("subscription receiver not found".to_owned()),
+                });
             };
 
-        let Some(record) = subscriptions.registry.get(request.subscription_id).cloned() else {
-            return Response::Error(ErrorResponse {
-                error: RmuxError::Server("subscription not found".to_owned()),
-            });
-        };
-        if record.connection_id() != connection_id {
-            return Response::Error(ErrorResponse {
-                error: RmuxError::Server("subscription is not owned by this connection".to_owned()),
-            });
-        }
-        let _ = subscriptions.registry.touch(request.subscription_id, now);
-
-        let Some(receiver) = subscriptions.receivers.get_mut(&request.subscription_id) else {
-            let _ = subscriptions.registry.unsubscribe(request.subscription_id);
-            return Response::Error(ErrorResponse {
-                error: RmuxError::Server("subscription receiver not found".to_owned()),
-            });
+            let items = receiver.try_recv_batch(limit);
+            let cursor = cursor_dto(receiver.cursor());
+            (items, cursor, limit)
         };
 
-        let items = receiver.try_recv_batch(limit);
         let mut events = Vec::new();
         for item in items {
             match item {
@@ -206,7 +289,6 @@ impl RequestHandler {
                     });
                 }
                 OutputCursorItem::Gap(gap) => {
-                    let cursor = cursor_dto(receiver.cursor());
                     return Response::PaneOutputLag(PaneOutputLagResponse {
                         subscription_id: request.subscription_id,
                         cursor,
@@ -215,34 +297,96 @@ impl RequestHandler {
                 }
             }
         }
-
         Response::PaneOutputCursor(PaneOutputCursorResponse {
             subscription_id: request.subscription_id,
-            cursor: cursor_dto(receiver.cursor()),
+            cursor,
             limited: events.len() == limit,
             events,
         })
     }
 
     pub(crate) async fn cleanup_connection_subscriptions(&self, connection_id: u64) {
-        let mut subscriptions = self
-            .subscriptions
-            .lock()
-            .expect("subscription registry mutex must not be poisoned");
-        subscriptions.remove_connection(connection_id);
+        {
+            let mut subscriptions = self
+                .subscriptions
+                .lock()
+                .expect("subscription registry mutex must not be poisoned");
+            subscriptions.remove_connection(connection_id);
+        }
+        let _ = self.request_shutdown_if_pending();
     }
 
     pub(crate) async fn cleanup_pane_output_subscriptions(
         &self,
         panes: &[PaneOutputSubscriptionKey],
     ) {
-        let mut subscriptions = self
+        {
+            let mut subscriptions = self
+                .subscriptions
+                .lock()
+                .expect("subscription registry mutex must not be poisoned");
+            for pane in panes {
+                subscriptions.remove_pane(pane);
+            }
+        }
+        let _ = self.request_shutdown_if_pending();
+    }
+
+    pub(crate) async fn drain_exited_pane_output_subscriptions(
+        &self,
+        pane: PaneOutputSubscriptionKey,
+    ) {
+        let should_watch = {
+            let mut subscriptions = self
+                .subscriptions
+                .lock()
+                .expect("subscription registry mutex must not be poisoned");
+            subscriptions.begin_pane_drain(pane.clone())
+        };
+        if should_watch {
+            self.watch_exited_pane_drain(pane);
+        }
+    }
+
+    fn watch_exited_pane_drain(&self, pane: PaneOutputSubscriptionKey) {
+        let handler = self.downgrade();
+        tokio::spawn(async move {
+            loop {
+                let Some(handler) = handler.upgrade() else {
+                    return;
+                };
+                if handler.pane_drain_finished(&pane).await {
+                    return;
+                }
+                if handler
+                    .pane_drain_idle_for(&pane)
+                    .await
+                    .is_some_and(|idle_for| idle_for >= EXITED_PANE_DRAIN_IDLE_TIMEOUT)
+                {
+                    handler
+                        .cleanup_pane_output_subscriptions(std::slice::from_ref(&pane))
+                        .await;
+                    return;
+                }
+                tokio::time::sleep(EXITED_PANE_DRAIN_POLL_INTERVAL).await;
+            }
+        });
+    }
+
+    async fn pane_drain_finished(&self, pane: &PaneOutputSubscriptionKey) -> bool {
+        let subscriptions = self
             .subscriptions
             .lock()
             .expect("subscription registry mutex must not be poisoned");
-        for pane in panes {
-            subscriptions.remove_pane(pane);
-        }
+        !subscriptions.pane_is_draining(pane)
+    }
+
+    async fn pane_drain_idle_for(&self, pane: &PaneOutputSubscriptionKey) -> Option<Duration> {
+        let subscriptions = self
+            .subscriptions
+            .lock()
+            .expect("subscription registry mutex must not be poisoned");
+        subscriptions.pane_drain_idle_for(pane, Instant::now())
     }
 }
 
@@ -299,117 +443,5 @@ fn subscription_limit_error(error: SubscriptionLimitError) -> RmuxError {
 }
 
 #[cfg(test)]
-mod tests {
-    use std::time::Instant;
-
-    use rmux_core::events::{
-        OutputCursor, OutputCursorItem, OutputRing, PaneOutputSubscriptionKey,
-    };
-    use rmux_proto::{PaneId, PaneOutputCursorRequest, Response, SessionName};
-
-    use crate::pane_io::pane_output_channel_with_limits;
-
-    use super::{lag_dto, RequestHandler, MAX_LAG_RECENT_BYTES};
-
-    #[test]
-    fn lag_dto_carries_recent_output_without_replaying_missed_bytes() {
-        let mut ring = OutputRing::new(1, 8);
-        let mut cursor = OutputCursor::new(0);
-        ring.push(b"abcdef".to_vec());
-        ring.push(b"ghijk".to_vec());
-
-        let Some(OutputCursorItem::Gap(gap)) = ring.poll_cursor(&mut cursor) else {
-            panic!("cursor should lag after output ring rotation");
-        };
-        let notice = lag_dto(&gap);
-
-        assert_eq!(notice.expected_sequence, 0);
-        assert_eq!(notice.resume_sequence, 1);
-        assert_eq!(notice.missed_events, 1);
-        assert_eq!(notice.newest_sequence, 1);
-        assert_eq!(notice.recent.bytes, b"defghijk");
-        assert_eq!(notice.recent.oldest_sequence, Some(0));
-        assert_eq!(notice.recent.newest_sequence, Some(1));
-
-        let Some(OutputCursorItem::Event(event)) = ring.poll_cursor(&mut cursor) else {
-            panic!("cursor should resume at the oldest retained output event");
-        };
-        assert_eq!(event.sequence(), notice.resume_sequence);
-        assert_eq!(event.bytes(), b"ghijk");
-        assert_ne!(event.bytes(), notice.recent.bytes.as_slice());
-    }
-
-    #[test]
-    fn lag_dto_trims_recent_hint_under_detached_frame_limit() {
-        let mut ring = OutputRing::new(1, MAX_LAG_RECENT_BYTES + 16);
-        let mut cursor = OutputCursor::new(0);
-        ring.push(vec![b'a'; 16]);
-        ring.push(vec![b'b'; MAX_LAG_RECENT_BYTES + 16]);
-
-        let Some(OutputCursorItem::Gap(gap)) = ring.poll_cursor(&mut cursor) else {
-            panic!("cursor should lag after output ring rotation");
-        };
-        let notice = lag_dto(&gap);
-
-        assert_eq!(notice.recent.bytes.len(), MAX_LAG_RECENT_BYTES);
-        assert!(notice.recent.bytes.iter().all(|byte| *byte == b'b'));
-        assert_eq!(notice.recent.oldest_sequence, None);
-        assert_eq!(notice.recent.newest_sequence, Some(1));
-        assert_eq!(notice.resume_sequence, 1);
-    }
-
-    #[tokio::test]
-    async fn cursor_handler_trims_lag_recent_hint_for_subscription_response() {
-        let handler = RequestHandler::new();
-        let connection_id = 77;
-        let sender = pane_output_channel_with_limits(1, MAX_LAG_RECENT_BYTES + 32);
-        let receiver = sender.subscribe();
-        sender.send(vec![b'a'; 32]);
-        sender.send(vec![b'b'; MAX_LAG_RECENT_BYTES + 32]);
-
-        let subscription_id = {
-            let mut subscriptions = handler
-                .subscriptions
-                .lock()
-                .expect("subscription registry mutex must not be poisoned");
-            let record = subscriptions
-                .registry
-                .subscribe(
-                    connection_id,
-                    PaneOutputSubscriptionKey::new(
-                        SessionName::new("runtime").expect("valid session name"),
-                        PaneId::new(1),
-                    ),
-                    Instant::now(),
-                )
-                .expect("subscription is within limits");
-            let subscription_id = record.id();
-            subscriptions.receivers.insert(subscription_id, receiver);
-            subscription_id
-        };
-
-        let response = handler
-            .handle_pane_output_cursor(
-                connection_id,
-                PaneOutputCursorRequest {
-                    subscription_id,
-                    max_events: Some(8),
-                },
-            )
-            .await;
-        let Response::PaneOutputLag(lag) = response else {
-            panic!("lagged subscription should produce a lag response");
-        };
-
-        assert_eq!(lag.subscription_id, subscription_id);
-        assert_eq!(lag.cursor.next_sequence, 1);
-        assert_eq!(lag.cursor.missed_events, 1);
-        assert_eq!(lag.lag.expected_sequence, 0);
-        assert_eq!(lag.lag.resume_sequence, 1);
-        assert_eq!(lag.lag.missed_events, 1);
-        assert_eq!(lag.lag.recent.bytes.len(), MAX_LAG_RECENT_BYTES);
-        assert!(lag.lag.recent.bytes.iter().all(|byte| *byte == b'b'));
-        assert_eq!(lag.lag.recent.oldest_sequence, None);
-        assert_eq!(lag.lag.recent.newest_sequence, Some(1));
-    }
-}
+#[path = "handler_subscriptions_tests.rs"]
+mod tests;

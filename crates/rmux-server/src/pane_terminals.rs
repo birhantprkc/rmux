@@ -185,6 +185,11 @@ impl HandlerState {
         }
     }
 
+    #[cfg(unix)]
+    pub(crate) fn continue_stopped_panes(&mut self) {
+        self.terminals.continue_stopped_panes();
+    }
+
     fn message_limit(&self) -> usize {
         self.options
             .resolve(None, OptionName::MessageLimit)

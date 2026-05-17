@@ -8,6 +8,8 @@ use std::process::ExitStatus;
 use rmux_core::PaneId;
 use rmux_proto::{PaneTarget, RmuxError, SessionName};
 use rmux_pty::PtyMaster;
+#[cfg(unix)]
+use tracing::{debug, warn};
 
 use crate::pane_terminal_lookup::{missing_pane_terminal, SessionPane};
 use crate::pane_terminal_process::{pty_size_from_geometry, PaneTerminal};
@@ -506,6 +508,33 @@ impl PaneTerminalStore {
             .ok_or_else(|| missing_pane_terminal(session_name, window_index, pane_index))?;
 
         Ok(pane.runtime_window_name())
+    }
+
+    #[cfg(unix)]
+    pub(super) fn continue_stopped_panes(&mut self) {
+        for (session_name, panes) in &self.sessions {
+            for (pane_id, terminal) in panes {
+                match terminal.continue_if_stopped() {
+                    Ok(true) => {
+                        debug!(
+                            session = %session_name,
+                            pane_id = pane_id.as_u32(),
+                            pid = terminal.pid(),
+                            "continued stopped pane process group"
+                        );
+                    }
+                    Ok(false) => {}
+                    Err(error) => {
+                        warn!(
+                            session = %session_name,
+                            pane_id = pane_id.as_u32(),
+                            pid = terminal.pid(),
+                            "failed to inspect stopped pane process: {error}"
+                        );
+                    }
+                }
+            }
+        }
     }
 
     #[cfg(test)]

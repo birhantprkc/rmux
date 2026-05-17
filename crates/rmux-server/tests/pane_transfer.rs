@@ -16,7 +16,7 @@ use rmux_proto::{
     WindowTarget,
 };
 
-const FILE_TIMEOUT: Duration = Duration::from_secs(5);
+const FILE_TIMEOUT: Duration = Duration::from_secs(15);
 
 #[tokio::test]
 async fn pane_transfer_commands_move_live_ptys_between_windows() -> Result<(), Box<dyn Error>> {

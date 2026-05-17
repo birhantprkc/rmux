@@ -291,9 +291,6 @@ fn resolve_rmux_binary() -> TestResult<PathBuf> {
 
     let target_dir = target_dir()?;
     let candidate = target_dir.join("debug").join("rmux");
-    if candidate.is_file() {
-        return Ok(candidate);
-    }
 
     let status = Command::new(std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into()))
         .arg("build")

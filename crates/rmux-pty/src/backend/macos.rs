@@ -78,6 +78,40 @@ pub(crate) fn kill_process(pid: ProcessId, signal: Signal) -> Result<()> {
     Ok(())
 }
 
+pub(crate) fn stopped_signal(pid: ProcessId) -> Result<Option<i32>> {
+    let mut info = MaybeUninit::<libc::siginfo_t>::zeroed();
+    // SAFETY: `info` points to writable storage for one siginfo_t. WNOWAIT
+    // observes the stopped status without consuming the child's eventual exit
+    // status, which remains owned by `std::process::Child`.
+    let result = unsafe {
+        libc::waitid(
+            libc::P_PID,
+            pid.as_u32() as libc::id_t,
+            info.as_mut_ptr(),
+            libc::WSTOPPED | libc::WNOHANG | libc::WNOWAIT,
+        )
+    };
+    if result == -1 {
+        let errno = last_errno();
+        if errno == rustix::io::Errno::CHILD {
+            return Ok(None);
+        }
+        return Err(errno.into());
+    }
+
+    // SAFETY: `info` was zero-initialized before the call and `waitid`
+    // returned success, so reading the initialized siginfo_t is valid.
+    let info = unsafe { info.assume_init() };
+    // SAFETY: `waitid` with WSTOPPED populates the SIGCHLD status field when
+    // a stopped child is available. A zero status means WNOHANG had no event.
+    let status = unsafe { info.si_status() };
+    if status == 0 {
+        Ok(None)
+    } else {
+        Ok(Some(status))
+    }
+}
+
 pub(crate) fn read(fd: BorrowedFd<'_>, buffer: &mut [u8]) -> io::Result<usize> {
     unix_io::read(fd, buffer)
 }

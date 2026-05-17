@@ -143,7 +143,7 @@ async fn collect_output_until_exit_without_timeout(
     if let crate::wait::PaneExitObservation::Exited(exit_state) =
         crate::wait::pane_exit_observation(pane).await?
     {
-        drain_ready_output(&mut stream, &mut collection, max_bytes).await?;
+        drain_until_output_eof_or_close(&mut stream, &mut collection, max_bytes).await?;
         collection.exit_state = exit_state;
         return Ok(collection);
     }
@@ -151,54 +151,82 @@ async fn collect_output_until_exit_without_timeout(
     loop {
         let saw_ready_output =
             poll_ready_output_once(&mut stream, &mut collection, max_bytes).await?;
+        if saw_ready_output.saw_eof {
+            collection.exit_state = exit_state_after_stream_close(pane).await?;
+            return Ok(collection);
+        }
         if let crate::wait::PaneExitObservation::Exited(exit_state) =
             crate::wait::pane_exit_observation(pane).await?
         {
-            drain_ready_output(&mut stream, &mut collection, max_bytes).await?;
+            drain_until_output_eof_or_close(&mut stream, &mut collection, max_bytes).await?;
             collection.exit_state = exit_state;
             return Ok(collection);
         }
-        if !saw_ready_output {
+        if !saw_ready_output.saw_output {
             tokio::time::sleep(crate::wait::TEXT_POLL_INTERVAL).await;
         }
     }
 }
 
-async fn drain_ready_output(
+async fn drain_until_output_eof_or_close(
     stream: &mut crate::PaneOutputStream,
     collection: &mut CollectedPaneOutput,
     max_bytes: usize,
 ) -> Result<()> {
     loop {
-        if !poll_ready_output_once(stream, collection, max_bytes).await? {
-            return Ok(());
+        match stream.next().await? {
+            Some(chunk) => {
+                if ingest_chunk(collection, chunk, max_bytes) {
+                    return Ok(());
+                }
+            }
+            None => return Ok(()),
         }
     }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ReadyOutputPoll {
+    saw_output: bool,
+    saw_eof: bool,
 }
 
 async fn poll_ready_output_once(
     stream: &mut crate::PaneOutputStream,
     collection: &mut CollectedPaneOutput,
     max_bytes: usize,
-) -> Result<bool> {
+) -> Result<ReadyOutputPoll> {
     let chunks = stream.poll_once().await?;
     let saw_ready_output = !chunks.is_empty();
+    let mut saw_eof = false;
     for chunk in chunks {
-        ingest_chunk(collection, chunk, max_bytes);
+        saw_eof |= ingest_chunk(collection, chunk, max_bytes);
     }
-    Ok(saw_ready_output)
+    Ok(ReadyOutputPoll {
+        saw_output: saw_ready_output,
+        saw_eof,
+    })
 }
 
-fn ingest_chunk(collection: &mut CollectedPaneOutput, chunk: PaneOutputChunk, max_bytes: usize) {
+fn ingest_chunk(
+    collection: &mut CollectedPaneOutput,
+    chunk: PaneOutputChunk,
+    max_bytes: usize,
+) -> bool {
     match chunk {
         PaneOutputChunk::Bytes { bytes, .. } => {
+            if bytes.is_empty() {
+                return true;
+            }
             collection.truncated |= extend_capped(&mut collection.bytes, &bytes, max_bytes);
+            false
         }
         PaneOutputChunk::Lag(notice) => {
             collection.lagged = true;
             collection.missed_events = collection
                 .missed_events
                 .saturating_add(notice.missed_events);
+            false
         }
     }
 }

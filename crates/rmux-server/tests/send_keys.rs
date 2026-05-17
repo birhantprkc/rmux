@@ -10,24 +10,13 @@ mod common;
 
 use common::{session_name, start_server, ClientConnection, TestHarness, PTY_TEST_LOCK};
 use rmux_proto::{
-    encode_attach_message, AttachMessage, AttachSessionRequest, CapturePaneRequest,
+    AttachMessage, AttachSessionRequest, CapturePaneRequest, DisplayMessageRequest,
     KillSessionRequest, NewSessionRequest, PaneTarget, Request, Response, SelectPaneRequest,
-    SendKeysRequest, SendKeysResponse, SplitWindowRequest, SplitWindowTarget, TerminalSize,
+    SendKeysRequest, SendKeysResponse, SplitWindowRequest, SplitWindowTarget, Target, TerminalSize,
 };
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::AsyncReadExt;
 
 const STEP_TIMEOUT: Duration = Duration::from_secs(15);
-
-async fn send_attach_command(
-    stream: &mut tokio::net::UnixStream,
-    command: &str,
-) -> Result<(), Box<dyn Error>> {
-    let mut bytes = command.as_bytes().to_vec();
-    bytes.push(b'\r');
-    let frame = encode_attach_message(&AttachMessage::Data(bytes))?;
-    stream.write_all(&frame).await?;
-    Ok(())
-}
 
 async fn read_attach_message(
     stream: &mut tokio::net::UnixStream,
@@ -113,6 +102,42 @@ async fn wait_for_file_contents(
     }
 
     Ok(false)
+}
+
+async fn wait_for_pane_current_command(
+    client: &mut ClientConnection,
+    target: PaneTarget,
+    expected: &str,
+) -> Result<(), Box<dyn Error>> {
+    let deadline = Instant::now() + STEP_TIMEOUT;
+    let mut last = String::new();
+
+    while Instant::now() < deadline {
+        let response = client
+            .send_request(&Request::DisplayMessage(DisplayMessageRequest {
+                target: Some(Target::Pane(target.clone())),
+                print: true,
+                message: Some("#{pane_current_command}".to_owned()),
+            }))
+            .await?;
+        let Response::DisplayMessage(response) = response else {
+            return Err(io::Error::other("display-message returned the wrong response").into());
+        };
+        let output = response
+            .command_output()
+            .expect("display-message -p returns command output");
+        last = String::from_utf8_lossy(output.stdout()).trim().to_owned();
+        if last == expected {
+            return Ok(());
+        }
+
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+
+    Err(io::Error::other(format!(
+        "timed out waiting for foreground command {expected:?}; last={last:?}"
+    ))
+    .into())
 }
 
 async fn capture_pane_text(
@@ -404,7 +429,12 @@ async fn send_keys_ctrl_c_interrupts_a_real_pane_process() -> Result<(), Box<dyn
     );
     let sleep_output = read_attach_until_contains(&mut attach_stream, "sleep 5").await?;
     assert!(sleep_output.contains("sleep 5"));
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    wait_for_pane_current_command(
+        &mut client,
+        PaneTarget::new(session_name("gamma"), 0),
+        "sleep",
+    )
+    .await?;
 
     let interrupt = client
         .send_request(&Request::SendKeys(SendKeysRequest {
@@ -424,21 +454,30 @@ async fn send_keys_ctrl_c_interrupts_a_real_pane_process() -> Result<(), Box<dyn
     tokio::time::sleep(Duration::from_millis(50)).await;
 
     let recovery_command = format!("printf ctrl-c-recovered > {}", shell_quote(&recovery_path));
-    let mut recovered = false;
-    for _ in 0..4 {
-        send_attach_command(&mut attach_stream, &recovery_command).await?;
+    let recovery_deadline = Instant::now() + STEP_TIMEOUT;
+    while Instant::now() < recovery_deadline {
+        let recovery_response = client
+            .send_request(&Request::SendKeys(SendKeysRequest {
+                target: PaneTarget::new(session_name("gamma"), 0),
+                keys: vec![recovery_command.clone(), "Enter".to_owned()],
+            }))
+            .await?;
+        assert!(matches!(recovery_response, Response::SendKeys(_)));
         if wait_for_file_contents(
             &recovery_path,
             "ctrl-c-recovered",
-            Duration::from_millis(250),
+            Duration::from_millis(500),
         )
         .await?
         {
-            recovered = true;
             break;
         }
     }
-    assert!(recovered, "shell should accept input again after ctrl-c");
+    assert_eq!(
+        fs::read_to_string(&recovery_path).ok().as_deref(),
+        Some("ctrl-c-recovered"),
+        "shell should accept input again after ctrl-c"
+    );
 
     drop(attach_stream);
     let removed = common::send_request(

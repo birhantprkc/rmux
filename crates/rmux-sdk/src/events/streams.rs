@@ -279,7 +279,7 @@ impl PaneOutputStream {
     /// removed the subscription record. The drop-time best-effort
     /// unsubscribe still runs in that case.
     pub async fn next(&mut self) -> Result<Option<PaneOutputChunk>> {
-        if let Some(chunk) = self.pending.pop_front() {
+        if let Some(chunk) = self.pop_pending_chunk() {
             return Ok(Some(chunk));
         }
         if self.inner.closed {
@@ -293,7 +293,7 @@ impl PaneOutputStream {
                     return Ok(None);
                 }
                 RefillOutcome::Filled => {
-                    if let Some(chunk) = self.pending.pop_front() {
+                    if let Some(chunk) = self.pop_pending_chunk() {
                         self.poll_delay = POLL_INITIAL_DELAY;
                         return Ok(Some(chunk));
                     }
@@ -324,6 +324,9 @@ impl PaneOutputStream {
             }
             RefillOutcome::Filled => {
                 buffered.extend(self.pending.drain(..));
+                if buffered.iter().any(output_chunk_is_eof) {
+                    self.inner.closed = true;
+                }
             }
         }
         Ok(buffered)
@@ -353,6 +356,14 @@ impl PaneOutputStream {
             Err(error) if is_subscription_gone(&error) => Ok(RefillOutcome::Closed),
             Err(error) => Err(error),
         }
+    }
+
+    fn pop_pending_chunk(&mut self) -> Option<PaneOutputChunk> {
+        let chunk = self.pending.pop_front()?;
+        if output_chunk_is_eof(&chunk) {
+            self.inner.closed = true;
+        }
+        Some(chunk)
     }
 }
 
@@ -393,6 +404,10 @@ fn ingest_cursor(target: &mut VecDeque<PaneOutputChunk>, events: Vec<PaneOutputE
             bytes: event.bytes,
         });
     }
+}
+
+fn output_chunk_is_eof(chunk: &PaneOutputChunk) -> bool {
+    matches!(chunk, PaneOutputChunk::Bytes { bytes, .. } if bytes.is_empty())
 }
 
 enum RefillOutcome {

@@ -51,6 +51,12 @@ mod keys;
 #[cfg_attr(windows, allow(dead_code))]
 mod listener;
 #[cfg(any(unix, windows))]
+#[cfg_attr(windows, allow(dead_code))]
+mod listener_options;
+#[cfg(any(unix, windows))]
+#[cfg_attr(windows, allow(dead_code))]
+mod listener_signals;
+#[cfg(any(unix, windows))]
 mod mouse;
 #[cfg(any(unix, windows))]
 #[cfg_attr(windows, allow(dead_code))]
@@ -79,6 +85,10 @@ mod renderer;
 #[cfg(any(unix, windows))]
 #[cfg_attr(windows, allow(dead_code))]
 mod server_access;
+mod signals;
+#[cfg(any(unix, windows))]
+#[cfg_attr(windows, allow(dead_code))]
+mod socket_cleanup;
 #[cfg(any(unix, windows))]
 #[cfg_attr(windows, allow(dead_code))]
 mod status_ranges;
@@ -87,6 +97,8 @@ mod status_ranges;
 mod terminal;
 #[cfg(test)]
 mod test_shell;
+#[cfg(unix)]
+mod unix_socket;
 #[cfg(any(unix, windows))]
 #[cfg_attr(windows, allow(dead_code))]
 mod wait_for;

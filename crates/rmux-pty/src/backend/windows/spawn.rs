@@ -249,6 +249,10 @@ pub(crate) fn try_clone_child_for_wait(child: &WindowsChild) -> Result<WindowsCh
     })
 }
 
+pub(crate) fn close_child_pseudoconsole(child: &WindowsChild) {
+    child.pty.close_pseudoconsole();
+}
+
 pub(crate) fn interrupt_child(child: &WindowsChild) -> Result<()> {
     child.pty.write_all(b"\x03")?;
     Ok(())
@@ -257,6 +261,7 @@ pub(crate) fn interrupt_child(child: &WindowsChild) -> Result<()> {
 pub(crate) fn kill_child(child: &WindowsChild, signal: Signal) -> Result<()> {
     match signal {
         Signal::INT => interrupt_child(child),
+        Signal::CONT => Ok(()),
         Signal::TERM | Signal::KILL | Signal::HUP => {
             if let Some(job) = &child.job {
                 job.terminate(1)?;

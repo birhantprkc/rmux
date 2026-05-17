@@ -31,6 +31,14 @@ impl WindowsPty {
             .raw()
     }
 
+    pub(crate) fn close_pseudoconsole(&self) {
+        let Ok(mut state) = self.state.write() else {
+            tracing::warn!(target: "rmux::conpty", "failed to close ConPTY after child exit: state lock poisoned");
+            return;
+        };
+        state.hpc.close();
+    }
+
     pub(crate) fn read(&self, buffer: &mut [u8]) -> io::Result<usize> {
         loop {
             if let Some(len) = self.drain_deferred_dsr_bytes(buffer)? {
@@ -310,16 +318,21 @@ impl OwnedHpcon {
     fn raw(&self) -> HPCON {
         self.0
     }
+
+    fn close(&mut self) {
+        if self.0 != 0 {
+            tracing::trace!(target: "rmux::conpty", "closing ConPTY");
+            // SAFETY: `OwnedHpcon` owns a non-null ConPTY handle and closes it
+            // exactly once here or from `Drop`.
+            unsafe { ClosePseudoConsole(self.0) };
+            self.0 = 0;
+        }
+    }
 }
 
 impl Drop for OwnedHpcon {
     fn drop(&mut self) {
-        if self.0 != 0 {
-            tracing::trace!(target: "rmux::conpty", "closing ConPTY");
-            // SAFETY: `OwnedHpcon` owns a non-null ConPTY handle and closes it
-            // exactly once from `Drop`.
-            unsafe { ClosePseudoConsole(self.0) };
-        }
+        self.close();
     }
 }
 

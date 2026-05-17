@@ -119,6 +119,18 @@ pub fn cmd_echo_once_command(text: &str) -> Vec<String> {
     ]
 }
 
+pub fn cmd_burst_once_command(start: &str, end: &str, exit_code: i32) -> Vec<String> {
+    vec![
+        cmd_exe(),
+        "/d".to_owned(),
+        "/q".to_owned(),
+        "/c".to_owned(),
+        format!(
+            "echo {start} & (for /L %i in (1,1,300) do @echo line-%i) & echo {end} & exit /b {exit_code}"
+        ),
+    ]
+}
+
 pub fn cmd_delayed_echo_once_command(text: &str) -> Vec<String> {
     vec![
         cmd_exe(),
@@ -267,9 +279,6 @@ fn resolve_rmux_binary() -> TestResult<PathBuf> {
 
     let target_dir = target_dir()?;
     let candidate = target_dir.join("debug").join("rmux.exe");
-    if candidate.is_file() {
-        return Ok(candidate);
-    }
 
     let status = Command::new(std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into()))
         .arg("build")

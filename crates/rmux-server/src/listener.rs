@@ -1,13 +1,8 @@
 use std::io;
-#[cfg(unix)]
-use std::os::unix::fs::FileTypeExt;
-#[cfg(unix)]
-use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use rmux_core::events::SubscriptionLimits;
 use rmux_ipc::{wait_for_peer_close, LocalListener, LocalStream, PeerIdentity};
 use rmux_proto::{encode_frame, ErrorResponse, FrameDecoder, Request, Response, WaitForMode};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -18,28 +13,32 @@ use tracing::{debug, warn};
 use crate::control::{self, ControlLifecycle, ControlServerEvent};
 use crate::daemon::ShutdownHandle;
 use crate::handler::{attach_support::AttachRegistration, ControlRegistration, RequestHandler};
+use crate::listener_options::ServeOptions;
+use crate::listener_signals::{handle_server_signal, receive_server_signal};
 use crate::pane_io;
 use crate::server_access::apply_access_policy;
-use crate::ConfigLoadOptions;
+use crate::socket_cleanup::SocketCleanup;
 
 /// Accept loop: spawns a per-connection task for each incoming client.
 pub(crate) async fn serve(
-    listener: LocalListener,
+    mut listener: LocalListener,
     socket_path: PathBuf,
     shutdown_handle: ShutdownHandle,
     mut shutdown: oneshot::Receiver<()>,
-    config_load: ConfigLoadOptions,
-    subscription_limits: SubscriptionLimits,
-    owner_uid: u32,
+    options: ServeOptions,
 ) -> io::Result<()> {
-    let _cleanup_on_drop = SocketCleanup::new(socket_path.clone());
+    #[cfg(unix)]
+    let mut cleanup_on_drop = SocketCleanup::new(socket_path.clone(), options.socket_identity);
+    #[cfg(windows)]
+    let mut cleanup_on_drop = SocketCleanup::new(socket_path.clone());
+    let mut server_signals = options.server_signals;
     let handler = Arc::new(RequestHandler::with_owner_uid_and_subscription_limits(
-        owner_uid,
-        subscription_limits,
+        options.owner_uid,
+        options.subscription_limits,
     ));
     handler.install_shutdown_handle(shutdown_handle.clone());
     handler.set_socket_path(&socket_path);
-    handler.load_startup_config(config_load).await;
+    handler.load_startup_config(options.config_load).await;
     let (connection_shutdown, connection_shutdown_rx) = watch::channel(());
     let mut connection_tasks = JoinSet::new();
     let hook_handler = Arc::clone(&handler);
@@ -79,6 +78,16 @@ pub(crate) async fn serve(
             _ = &mut shutdown => {
                 debug!("shutdown requested");
                 break;
+            }
+            signal = receive_server_signal(&mut server_signals), if server_signals.is_some() => {
+                handle_server_signal(
+                    signal,
+                    &mut server_signals,
+                    &handler,
+                    &socket_path,
+                    &mut listener,
+                    &mut cleanup_on_drop,
+                ).await;
             }
         }
     }
@@ -309,78 +318,6 @@ impl Connection {
     fn into_raw_parts(self) -> (LocalStream, Vec<u8>) {
         let buffered_bytes = self.decoder.remaining_bytes().to_vec();
         (self.stream, buffered_bytes)
-    }
-}
-
-#[cfg(unix)]
-struct SocketCleanup {
-    socket_path: PathBuf,
-}
-
-#[cfg(unix)]
-impl SocketCleanup {
-    fn new(socket_path: PathBuf) -> Self {
-        Self { socket_path }
-    }
-}
-
-#[cfg(unix)]
-impl Drop for SocketCleanup {
-    fn drop(&mut self) {
-        let _ = remove_socket_file_if_present(&self.socket_path);
-        for lock_path in startup_lock_paths(&self.socket_path) {
-            let _ = remove_regular_file_if_present(&lock_path);
-        }
-    }
-}
-
-#[cfg(windows)]
-struct SocketCleanup;
-
-#[cfg(windows)]
-impl SocketCleanup {
-    fn new(_socket_path: PathBuf) -> Self {
-        Self
-    }
-}
-
-#[cfg(unix)]
-fn remove_socket_file_if_present(path: &Path) -> io::Result<()> {
-    match std::fs::symlink_metadata(path) {
-        Ok(metadata) if metadata.file_type().is_socket() => std::fs::remove_file(path),
-        Ok(_) => Ok(()),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
-        Err(error) => Err(error),
-    }
-}
-
-#[cfg(unix)]
-fn startup_lock_paths(socket_path: &Path) -> Vec<PathBuf> {
-    let Some(parent) = socket_path.parent() else {
-        return Vec::new();
-    };
-    let Some(file_name) = socket_path.file_name() else {
-        return Vec::new();
-    };
-
-    let mut startup_lock_name = file_name.to_os_string();
-    startup_lock_name.push(".startup-lock");
-    let mut legacy_lock_name = file_name.to_os_string();
-    legacy_lock_name.push(".lock");
-
-    vec![
-        parent.join(startup_lock_name),
-        parent.join(legacy_lock_name),
-    ]
-}
-
-#[cfg(unix)]
-fn remove_regular_file_if_present(path: &Path) -> io::Result<()> {
-    match std::fs::symlink_metadata(path) {
-        Ok(metadata) if metadata.file_type().is_file() => std::fs::remove_file(path),
-        Ok(_) => Ok(()),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
-        Err(error) => Err(error),
     }
 }
 

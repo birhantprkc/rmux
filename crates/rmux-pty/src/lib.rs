@@ -96,6 +96,8 @@ pub enum PtySignal {
     Kill,
     /// Hang up the terminal session.
     Hangup,
+    /// Continue a stopped foreground process group.
+    Continue,
 }
 
 /// Compatibility signal names used by existing RMUX call sites.
@@ -111,6 +113,8 @@ impl Signal {
     pub const KILL: Self = Self(PtySignal::Kill);
     /// Hangup request.
     pub const HUP: Self = Self(PtySignal::Hangup);
+    /// Continue request.
+    pub const CONT: Self = Self(PtySignal::Continue);
 
     #[cfg(unix)]
     pub(crate) const fn as_rustix_signal(self) -> rustix::process::Signal {
@@ -119,6 +123,7 @@ impl Signal {
             PtySignal::Terminate => rustix::process::Signal::TERM,
             PtySignal::Kill => rustix::process::Signal::KILL,
             PtySignal::Hangup => rustix::process::Signal::HUP,
+            PtySignal::Continue => rustix::process::Signal::CONT,
         }
     }
 }

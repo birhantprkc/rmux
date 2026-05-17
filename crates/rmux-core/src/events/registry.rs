@@ -286,6 +286,21 @@ impl SubscriptionRegistry {
         self.remove_ids(ids)
     }
 
+    /// Returns whether at least one live subscription targets `pane`.
+    #[must_use]
+    pub fn contains_pane(&self, pane: &PaneOutputSubscriptionKey) -> bool {
+        self.by_pane.get(pane).is_some_and(|ids| !ids.is_empty())
+    }
+
+    /// Returns live subscription ids targeting `pane`.
+    #[must_use]
+    pub fn ids_for_pane(&self, pane: &PaneOutputSubscriptionKey) -> Vec<PaneOutputSubscriptionId> {
+        self.by_pane
+            .get(pane)
+            .map(|ids| ids.iter().copied().collect())
+            .unwrap_or_default()
+    }
+
     /// Removes subscriptions that have not been touched within the stale TTL.
     pub fn cleanup_stale(&mut self, now: Instant) -> Vec<OutputSubscriptionRecord> {
         let ttl = self.limits.stale_ttl;

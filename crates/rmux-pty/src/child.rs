@@ -210,6 +210,17 @@ impl PtyChild {
         })
     }
 
+    /// Closes the backing ConPTY after the child has exited.
+    ///
+    /// Windows keeps the ConPTY output pipe alive while the pseudo console is
+    /// open. The server's exit watcher calls this after `wait()` so the output
+    /// reader observes EOF instead of blocking indefinitely on an already-dead
+    /// child process.
+    #[cfg(windows)]
+    pub fn close_pseudoconsole(&self) {
+        backend::close_child_pseudoconsole(&self.child);
+    }
+
     /// Sends an interrupt request to the PTY foreground process group.
     pub fn interrupt(&self) -> Result<()> {
         self.kill(Signal::INT)
@@ -275,6 +286,26 @@ impl PtyChild {
             }
         }
     }
+
+    /// Continues the PTY foreground process group if the session leader is
+    /// currently stopped.
+    ///
+    /// This mirrors tmux's SIGCHLD policy for stopped panes while leaving
+    /// SIGTTIN/SIGTTOU alone so background terminal I/O remains governed by
+    /// normal Unix job-control rules.
+    #[cfg(unix)]
+    pub fn continue_if_stopped(&self) -> Result<bool> {
+        let Some(stop_signal) = backend::stopped_signal(self.pid)? else {
+            return Ok(false);
+        };
+        if stop_signal == libc::SIGTTIN || stop_signal == libc::SIGTTOU {
+            return Ok(false);
+        }
+
+        backend::kill_foreground_process_group(self.pid, Signal::CONT)
+            .or_else(|_| backend::kill_process(self.pid, Signal::CONT))?;
+        Ok(true)
+    }
 }
 
 #[cfg(unix)]
@@ -309,7 +340,10 @@ fn spawn_child(command: ChildCommand) -> Result<SpawnedPty> {
         std_command.env(key, value);
     }
 
-    let pre_exec = move || backend::setup_child_controlling_terminal(raw_master_fd);
+    let pre_exec = move || {
+        rmux_os::signals::reset_child_signal_dispositions()?;
+        backend::setup_child_controlling_terminal(raw_master_fd)
+    };
 
     // SAFETY: The closure only performs post-fork child setup that is required
     // for PTY correctness: it closes the child's inherited master fd copy,

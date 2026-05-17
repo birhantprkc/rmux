@@ -15,6 +15,7 @@ tracing = "0.1.44"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2.185"
+rmux-os = { path = "../rmux-os", version = "0.1.0" }
 rustix = { version = "1.1.4", features = ["process", "termios", "pty", "fs"] }
 
 [target.'cfg(windows)'.dependencies]

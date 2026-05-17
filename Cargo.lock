@@ -678,6 +678,7 @@ dependencies = [
  "libc",
  "rmux-core",
  "rmux-ipc",
+ "rmux-os",
  "rmux-proto",
  "rmux-pty",
  "rmux-sdk",
@@ -735,6 +736,7 @@ name = "rmux-pty"
 version = "0.1.0"
 dependencies = [
  "libc",
+ "rmux-os",
  "rmux-types",
  "rustix",
  "tokio",
@@ -781,6 +783,7 @@ dependencies = [
  "rmux-proto",
  "rmux-pty",
  "rustix",
+ "signal-hook",
  "tokio",
  "tracing",
 ]

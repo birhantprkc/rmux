@@ -24,6 +24,7 @@ tracing = "0.1"
 
 [target.'cfg(unix)'.dependencies]
 rustix = { version = "1.1.4", features = ["event", "fs", "net"] }
+signal-hook = "0.3.18"
 
 [dev-dependencies]
 rustix = { version = "1.1.4", features = ["event", "fs", "termios"] }
