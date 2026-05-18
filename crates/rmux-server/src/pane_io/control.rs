@@ -91,7 +91,7 @@ pub(super) async fn switch_attach_target(
 
 pub(super) enum PendingAttachAction {
     Exit,
-    Continue,
+    Continue { target_changed: bool },
     Write,
 }
 
@@ -113,6 +113,7 @@ pub(super) async fn apply_pending_attach_controls(
     };
 
     let mut should_drop_output = false;
+    let mut target_changed = false;
     loop {
         let control = deferred_controls
             .pop_front()
@@ -184,6 +185,7 @@ pub(super) async fn apply_pending_attach_controls(
                     replacement_frame.as_deref(),
                 )
                 .await?;
+                target_changed = true;
                 if let Some(overlay) = pending_overlay {
                     update_persistent_overlay_cache(
                         persistent_overlay,
@@ -272,7 +274,7 @@ pub(super) async fn apply_pending_attach_controls(
     }
 
     if should_drop_output {
-        Ok(PendingAttachAction::Continue)
+        Ok(PendingAttachAction::Continue { target_changed })
     } else {
         Ok(PendingAttachAction::Write)
     }

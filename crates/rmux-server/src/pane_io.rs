@@ -45,7 +45,9 @@ use persistent_overlay::{
 pub(crate) use reader::spawn_pane_exit_watcher;
 pub(crate) use reader::spawn_pane_output_reader;
 #[cfg(any(unix, windows))]
-use refresh_scheduler::{wait_for_refresh_deadline, AttachRefreshScheduler};
+use refresh_scheduler::{
+    wait_for_refresh_deadline, AttachRefreshScheduler, AttachStatusRefreshScheduler,
+};
 #[cfg(test)]
 pub(crate) use types::pane_output_channel_with_limits;
 #[cfg(any(unix, windows))]
@@ -89,6 +91,12 @@ pub(crate) async fn forward_attach(
     let mut persistent_overlay_visible = false;
     let mut persistent_overlay_state_id = current_target.persistent_overlay_state_id;
     let mut pane_refresh = AttachRefreshScheduler::default();
+    let mut status_refresh = AttachStatusRefreshScheduler::new(
+        live_input
+            .handler
+            .attached_status_interval(&current_target.session_name)
+            .await,
+    );
     let mut locked = false;
     decoder.push_bytes(&initial_socket_bytes);
     emit_attach_bytes(
@@ -153,7 +161,16 @@ pub(crate) async fn forward_attach(
                 PendingAttachAction::Exit => {
                     return Ok(());
                 }
-                PendingAttachAction::Continue => continue,
+                PendingAttachAction::Continue { target_changed } => {
+                    reschedule_status_refresh_if_target_changed(
+                        target_changed,
+                        &mut status_refresh,
+                        &live_input,
+                        &current_target,
+                    )
+                    .await;
+                    continue;
+                }
                 PendingAttachAction::Write => {}
             }
             // A pending pane refresh is an ordering barrier: emit the frame
@@ -201,7 +218,16 @@ pub(crate) async fn forward_attach(
                 PendingAttachAction::Exit => {
                     return Ok(());
                 }
-                PendingAttachAction::Continue => continue,
+                PendingAttachAction::Continue { target_changed } => {
+                    reschedule_status_refresh_if_target_changed(
+                        target_changed,
+                        &mut status_refresh,
+                        &live_input,
+                        &current_target,
+                    )
+                    .await;
+                    continue;
+                }
                 PendingAttachAction::Write => {}
             }
             if live_input.handler.request_shutdown_if_pending() {
@@ -239,7 +265,16 @@ pub(crate) async fn forward_attach(
                         PendingAttachAction::Exit => {
                             return Ok(());
                         }
-                        PendingAttachAction::Continue => continue,
+                        PendingAttachAction::Continue { target_changed } => {
+                            reschedule_status_refresh_if_target_changed(
+                                target_changed,
+                                &mut status_refresh,
+                                &live_input,
+                                &current_target,
+                            )
+                            .await;
+                            continue;
+                        }
                         PendingAttachAction::Write => {
                             if locked {
                                 continue;
@@ -255,6 +290,60 @@ pub(crate) async fn forward_attach(
                                 .await;
                         }
                     }
+                }
+                _ = wait_for_refresh_deadline(status_refresh.deadline()) => {
+                    if closing.load(Ordering::SeqCst) {
+                        let _ = emit_attach_stop(&stream, &current_target).await;
+                        return Ok(());
+                    }
+                    match apply_pending_attach_controls(
+                        &mut deferred_controls,
+                        attach_controls.as_mut(),
+                        &mut current_target,
+                        &stream,
+                        &mut render_generation,
+                        &mut overlay_generation,
+                        &mut persistent_overlay,
+                        &mut persistent_overlay_visible,
+                        &mut persistent_overlay_state_id,
+                        &mut locked,
+                    )
+                    .await?
+                    {
+                        PendingAttachAction::Exit => {
+                            return Ok(());
+                        }
+                        PendingAttachAction::Continue { target_changed: _ } => {
+                            reschedule_status_refresh_for_target(
+                                &mut status_refresh,
+                                &live_input,
+                                &current_target,
+                            )
+                            .await;
+                            continue;
+                        }
+                        PendingAttachAction::Write => {}
+                    }
+                    let session_name = current_target.session_name.clone();
+                    if locked {
+                        reschedule_status_refresh_for_session(
+                            &mut status_refresh,
+                            &live_input,
+                            &session_name,
+                        )
+                        .await;
+                        continue;
+                    }
+                    let _ = live_input
+                        .handler
+                        .refresh_attached_client_status(live_input.attach_pid, &session_name)
+                        .await;
+                    reschedule_status_refresh_for_session(
+                        &mut status_refresh,
+                        &live_input,
+                        &session_name,
+                    )
+                    .await;
                 }
                 result = read_socket_bytes(&stream, &mut decoder, &mut socket_read_buffer) => {
                     if !result? {
@@ -336,6 +425,12 @@ pub(crate) async fn forward_attach(
                                 replacement_frame.as_deref(),
                             )
                             .await?;
+                            status_refresh.reschedule(
+                                live_input
+                                    .handler
+                                    .attached_status_interval(&current_target.session_name)
+                                    .await,
+                            );
                             if let Some(overlay) = pending_overlay {
                                 update_persistent_overlay_cache(
                                     &mut persistent_overlay,
@@ -463,7 +558,16 @@ pub(crate) async fn forward_attach(
                         PendingAttachAction::Exit => {
                             return Ok(());
                         }
-                        PendingAttachAction::Continue => continue,
+                        PendingAttachAction::Continue { target_changed } => {
+                            reschedule_status_refresh_if_target_changed(
+                                target_changed,
+                                &mut status_refresh,
+                                &live_input,
+                                &current_target,
+                            )
+                            .await;
+                            continue;
+                        }
                         PendingAttachAction::Write => {
                             if locked {
                                 continue;
@@ -519,6 +623,42 @@ pub(crate) async fn forward_attach(
     }
 
     result
+}
+
+#[cfg(any(unix, windows))]
+async fn reschedule_status_refresh_if_target_changed(
+    target_changed: bool,
+    status_refresh: &mut AttachStatusRefreshScheduler,
+    live_input: &LiveAttachInputContext,
+    current_target: &types::OpenAttachTarget,
+) {
+    if target_changed {
+        reschedule_status_refresh_for_target(status_refresh, live_input, current_target).await;
+    }
+}
+
+#[cfg(any(unix, windows))]
+async fn reschedule_status_refresh_for_target(
+    status_refresh: &mut AttachStatusRefreshScheduler,
+    live_input: &LiveAttachInputContext,
+    current_target: &types::OpenAttachTarget,
+) {
+    reschedule_status_refresh_for_session(status_refresh, live_input, &current_target.session_name)
+        .await;
+}
+
+#[cfg(any(unix, windows))]
+async fn reschedule_status_refresh_for_session(
+    status_refresh: &mut AttachStatusRefreshScheduler,
+    live_input: &LiveAttachInputContext,
+    session_name: &rmux_proto::SessionName,
+) {
+    status_refresh.reschedule(
+        live_input
+            .handler
+            .attached_status_interval(session_name)
+            .await,
+    );
 }
 
 #[cfg(any(unix, windows))]

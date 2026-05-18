@@ -1,4 +1,7 @@
+use std::collections::HashMap;
+
 use super::RequestHandler;
+use rmux_core::events::SubscriptionLimits;
 use rmux_proto::{
     ErrorResponse, NewSessionRequest, OptionName, PaneTarget, Request, Response, RmuxError,
     ScopeSelector, SetEnvironmentMode, SetEnvironmentRequest, SetOptionMode, SetOptionRequest,
@@ -228,7 +231,9 @@ async fn show_environment_returns_empty_output_when_no_variables_are_set() {
 #[tokio::test]
 async fn default_handler_seeds_global_show_environment_from_process_environment() {
     let handler = RequestHandler::default();
-    let expected = std::env::vars()
+    let expected_environment = std::env::vars().collect::<HashMap<_, _>>();
+    let expected = expected_environment
+        .iter()
         .next()
         .expect("test process should expose at least one environment variable");
 
@@ -249,6 +254,42 @@ async fn default_handler_seeds_global_show_environment_from_process_environment(
         stdout.contains(&format!("{}={}\n", expected.0, expected.1)),
         "seeded global environment should contain the current process snapshot"
     );
+}
+
+#[tokio::test]
+async fn seeded_global_environment_preserves_color_controls() {
+    let handler = RequestHandler::with_owner_uid_and_environment(
+        501,
+        Some(HashMap::from([
+            ("NO_COLOR".to_owned(), "1".to_owned()),
+            ("NO_COLORS".to_owned(), "1".to_owned()),
+            ("NODE_DISABLE_COLORS".to_owned(), "1".to_owned()),
+            ("CLICOLOR".to_owned(), "0".to_owned()),
+            ("CLICOLOR_FORCE".to_owned(), "1".to_owned()),
+            ("RMUX_KEEP_ME".to_owned(), "yes".to_owned()),
+        ])),
+        SubscriptionLimits::default(),
+    );
+
+    let response = handler
+        .handle(Request::ShowEnvironment(ShowEnvironmentRequest {
+            scope: ScopeSelector::Global,
+            name: None,
+            hidden: false,
+            shell_format: false,
+        }))
+        .await;
+    let output = response
+        .command_output()
+        .expect("show-environment should return command output");
+    let stdout = std::str::from_utf8(output.stdout()).expect("utf8 output");
+
+    assert!(stdout.contains("RMUX_KEEP_ME=yes\n"));
+    assert!(stdout.contains("CLICOLOR_FORCE=1\n"));
+    assert!(stdout.contains("NO_COLOR=1\n"));
+    assert!(stdout.contains("NO_COLORS=1\n"));
+    assert!(stdout.contains("NODE_DISABLE_COLORS=1\n"));
+    assert!(stdout.contains("CLICOLOR=0\n"));
 }
 
 #[tokio::test]

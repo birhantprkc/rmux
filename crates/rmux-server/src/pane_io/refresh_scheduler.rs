@@ -18,6 +18,11 @@ pub(super) struct AttachRefreshScheduler {
     interval: Duration,
 }
 
+#[derive(Debug, Clone)]
+pub(super) struct AttachStatusRefreshScheduler {
+    deadline: Option<Instant>,
+}
+
 impl Default for AttachRefreshScheduler {
     fn default() -> Self {
         Self {
@@ -48,6 +53,22 @@ impl AttachRefreshScheduler {
 
     pub(super) fn clear(&mut self) {
         self.deadline = None;
+    }
+}
+
+impl AttachStatusRefreshScheduler {
+    pub(super) fn new(interval: Option<Duration>) -> Self {
+        let mut scheduler = Self { deadline: None };
+        scheduler.reschedule(interval);
+        scheduler
+    }
+
+    pub(super) fn deadline(&self) -> Option<Instant> {
+        self.deadline
+    }
+
+    pub(super) fn reschedule(&mut self, interval: Option<Duration>) {
+        self.deadline = interval.map(|interval| Instant::now() + interval);
     }
 }
 

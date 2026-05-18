@@ -37,7 +37,7 @@ impl TerminalProfile {
         pane_id: Option<PaneId>,
         requested_cwd: Option<&Path>,
     ) -> Result<Self, RmuxError> {
-        let mut resolved = std::env::vars().collect::<HashMap<_, _>>();
+        let mut resolved = base_process_environment();
         environment.apply_to_process_environment(Some(session_name), &mut resolved);
 
         if include_terminal_defaults {
@@ -51,11 +51,9 @@ impl TerminalProfile {
                 "TERM_PROGRAM_VERSION".to_owned(),
                 env!("CARGO_PKG_VERSION").to_owned(),
             );
-            resolved.insert("COLORTERM".to_owned(), "truecolor".to_owned());
         } else {
             resolved.remove("TERM_PROGRAM");
             resolved.remove("TERM_PROGRAM_VERSION");
-            resolved.remove("COLORTERM");
         }
 
         resolved.insert(
@@ -109,7 +107,7 @@ impl TerminalProfile {
         include_terminal_defaults: bool,
         requested_cwd: Option<&Path>,
     ) -> Result<Self, RmuxError> {
-        let mut resolved = std::env::vars().collect::<HashMap<_, _>>();
+        let mut resolved = base_process_environment();
         environment.apply_to_process_environment(session_name, &mut resolved);
 
         if include_terminal_defaults {
@@ -126,7 +124,6 @@ impl TerminalProfile {
                 "TERM_PROGRAM_VERSION".to_owned(),
                 env!("CARGO_PKG_VERSION").to_owned(),
             );
-            resolved.insert("COLORTERM".to_owned(), "truecolor".to_owned());
         }
 
         resolved.insert(
@@ -227,6 +224,10 @@ impl TerminalProfile {
             Some(ProcessCommand::Argv(_)) | Some(_) => shell_program_name(&self.shell),
         }
     }
+}
+
+fn base_process_environment() -> HashMap<String, String> {
+    std::env::vars().collect()
 }
 
 fn shell_command_window_name(command: &str) -> Option<String> {

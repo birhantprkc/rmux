@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use rmux_os::identity::UserIdentity;
 use rmux_os::process;
@@ -14,12 +15,25 @@ use crate::server_access::current_owner_uid;
 
 use super::{
     attach_support::{self, ClientFlags},
-    control_support, prompt_support, RequestHandler,
+    control_support, option_value_u32, prompt_support, RequestHandler,
 };
 
 pub(in crate::handler) const LIST_CLIENTS_TEMPLATE: &str = "#{client_name}: #{session_name} [#{client_width}x#{client_height} #{client_termname}]#{?#{==:#{client_uid},#{uid}},, [user #{?client_user,#{client_user},#{client_uid}}]}#{?client_flags, (#{client_flags}),}";
 
 impl RequestHandler {
+    pub(crate) async fn attached_status_interval(
+        &self,
+        session_name: &rmux_proto::SessionName,
+    ) -> Option<Duration> {
+        let state = self.state.lock().await;
+        let seconds = option_value_u32(
+            &state.options,
+            Some(session_name),
+            OptionName::StatusInterval,
+        );
+        (seconds > 0).then(|| Duration::from_secs(u64::from(seconds)))
+    }
+
     pub(in crate::handler) async fn requester_can_write(&self, requester_pid: u32) -> bool {
         {
             let active_attach = self.active_attach.lock().await;
@@ -122,7 +136,7 @@ impl RequestHandler {
         attach_clients.into_iter().chain(control_clients).collect()
     }
 
-    pub(in crate::handler) async fn refresh_attached_client_status(
+    pub(crate) async fn refresh_attached_client_status(
         &self,
         attach_pid: u32,
         session_name: &rmux_proto::SessionName,

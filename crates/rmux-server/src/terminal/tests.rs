@@ -89,7 +89,11 @@ fn terminal_profile_sets_rmux_term_shell_and_pane_context() {
         profile.environment_value("TERM_PROGRAM_VERSION"),
         Some(env!("CARGO_PKG_VERSION"))
     );
-    assert_eq!(profile.environment_value("COLORTERM"), Some("truecolor"));
+    let ambient_colorterm = std::env::var("COLORTERM").ok();
+    assert_eq!(
+        profile.environment_value("COLORTERM"),
+        ambient_colorterm.as_deref()
+    );
     let socket_path = temp_socket_path();
     let expected_rmux = format!("{},{},7", socket_path.display(), std::process::id());
     assert_eq!(
@@ -108,6 +112,50 @@ fn terminal_profile_sets_rmux_term_shell_and_pane_context() {
         Some(expected_cwd.to_string_lossy().as_ref())
     );
     assert_eq!(profile.cwd(), expected_cwd.as_path());
+}
+
+#[test]
+fn terminal_profile_honors_explicit_color_environment_overrides() {
+    let mut environment = EnvironmentStore::new();
+    let mut options = OptionStore::new();
+    let session_name = SessionName::new("alpha").expect("valid session name");
+
+    environment.set(
+        ScopeSelector::Session(session_name.clone()),
+        "NO_COLOR".to_owned(),
+        "1".to_owned(),
+    );
+    environment.set(
+        ScopeSelector::Session(session_name.clone()),
+        "COLORTERM".to_owned(),
+        "truecolor".to_owned(),
+    );
+    options
+        .set(
+            ScopeSelector::Global,
+            OptionName::DefaultTerminal,
+            "tmux-256color".to_owned(),
+            SetOptionMode::Replace,
+        )
+        .expect("default-terminal succeeds");
+
+    let profile = TerminalProfile::for_session(
+        &environment,
+        &options,
+        &session_name,
+        7,
+        temp_socket_path().as_path(),
+        true,
+        Some(&["NODE_DISABLE_COLORS=1".to_owned(), "CLICOLOR=0".to_owned()]),
+        Some(rmux_core::PaneId::new(3)),
+        Some(std::env::temp_dir().as_path()),
+    )
+    .expect("profile");
+
+    assert_eq!(profile.environment_value("NO_COLOR"), Some("1"));
+    assert_eq!(profile.environment_value("COLORTERM"), Some("truecolor"));
+    assert_eq!(profile.environment_value("NODE_DISABLE_COLORS"), Some("1"));
+    assert_eq!(profile.environment_value("CLICOLOR"), Some("0"));
 }
 
 #[test]

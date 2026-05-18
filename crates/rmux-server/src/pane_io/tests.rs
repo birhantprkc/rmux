@@ -1,3 +1,4 @@
+use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, AtomicU64};
 use std::sync::Arc;
 use std::time::Duration;
@@ -12,6 +13,8 @@ use rmux_pty::PtyPair;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::{mpsc, watch};
 
+use super::control::{apply_pending_attach_controls, PendingAttachAction};
+use super::wire::open_attach_target;
 use super::wire::recv_pane_output;
 use super::{
     forward_attach, pane_output_channel, pane_output_channel_with_limits, process_socket_messages,
@@ -290,6 +293,57 @@ fn test_attach_target(
         persistent_overlay_state_id,
         live_pane: None,
     }
+}
+
+#[tokio::test]
+async fn pending_switch_action_reports_target_change_for_status_reschedule() {
+    let alpha = SessionName::new("alpha").expect("valid session name");
+    let beta = SessionName::new("beta").expect("valid session name");
+    let (stream, mut peer) = tokio::net::UnixStream::pair().expect("attach stream pair");
+    let (control_tx, mut control_rx) = mpsc::unbounded_channel();
+    let mut current_target =
+        open_attach_target(test_attach_target(&alpha, b"BASE-A", None)).expect("open target");
+    let mut render_generation = 0_u64;
+    let mut overlay_generation = 0_u64;
+    let mut persistent_overlay = None::<Vec<u8>>;
+    let mut persistent_overlay_visible = false;
+    let mut persistent_overlay_state_id = current_target.persistent_overlay_state_id;
+    let mut locked = false;
+    let mut deferred_controls = VecDeque::new();
+
+    control_tx
+        .send(AttachControl::switch(test_attach_target(
+            &beta, b"BASE-B", None,
+        )))
+        .expect("send switch control");
+
+    let action = apply_pending_attach_controls(
+        &mut deferred_controls,
+        Some(&mut control_rx),
+        &mut current_target,
+        &stream,
+        &mut render_generation,
+        &mut overlay_generation,
+        &mut persistent_overlay,
+        &mut persistent_overlay_visible,
+        &mut persistent_overlay_state_id,
+        &mut locked,
+    )
+    .await
+    .expect("apply pending switch");
+
+    assert!(matches!(
+        action,
+        PendingAttachAction::Continue {
+            target_changed: true
+        }
+    ));
+    assert_eq!(current_target.session_name, beta);
+    let refresh = read_attach_data_until(&mut peer, b"BASE-B").await;
+    assert!(
+        String::from_utf8_lossy(&refresh).contains("BASE-B"),
+        "switch should render the target frame"
+    );
 }
 
 async fn read_attach_data_until(peer: &mut tokio::net::UnixStream, needle: &[u8]) -> Vec<u8> {
