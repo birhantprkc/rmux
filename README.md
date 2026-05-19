@@ -38,7 +38,7 @@ RMUX is usable by agents, headless CLI workflows, and humans alike: you can give
 
 ## Demos
 
-Short, real examples of what RMUX can automate and orchestrate.
+Short, real examples of what RMUX can be used for.
 
 <table>
   <tr>
