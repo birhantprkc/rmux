@@ -40,11 +40,11 @@ RMUX is usable by agents, headless CLI workflows, and humans alike: you can give
 
 <table>
   <tr>
-    <td align="center" width="20%"><a href="https://rmux.io/#demo-orchestration"><img src="https://rmux.io/demos/demo-orchestration.png" width="150" alt="Multi Agents Orchestration demo preview"></a><br><sub>Multi Agents Orchestration</sub><br><sub>≃ 514 lines</sub></td>
-    <td align="center" width="20%"><a href="https://rmux.io/#demo-broadcast"><img src="https://rmux.io/demos/demo-broadcast.png" width="150" alt="Agent Broadcast Arena demo preview"></a><br><sub>Agent Broadcast Arena</sub><br><sub>≃ 2,171 lines</sub></td>
-    <td align="center" width="20%"><a href="https://rmux.io/#demo-zellij"><img src="https://rmux.io/demos/demo-zellij.png" width="150" alt="Mini-Zellij demo preview"></a><br><sub>Mini-Zellij</sub><br><sub>≃ 944 lines</sub></td>
-    <td align="center" width="20%"><a href="https://rmux.io/#demo-mirroring"><img src="https://rmux.io/demos/demo-mirroring.png" width="150" alt="Terminal browser mirroring demo preview"></a><br><sub>Terminal &lt;&gt; Browser Mirroring</sub><br><sub>≃ 649 lines</sub></td>
-    <td align="center" width="20%"><a href="https://rmux.io/#demo-playwright"><img src="https://rmux.io/demos/demo-playwright.png" width="150" alt="Playwright Testing demo preview"></a><br><sub>Playwright Testing</sub><br><sub>≃ 1,495 lines</sub></td>
+    <td align="center" width="20%"><a href="https://rmux.io/#demo-orchestration"><img src="https://rmux.io/demos/demo-orchestration.png" width="150" alt="Multi Agents Orchestration demo preview"></a><br><sub><a href="https://github.com/Helvesec/rmux-demos/tree/main/demo-orchestration"><strong>Multi Agents Orchestration</strong></a></sub><br><sub>≃ 514 lines</sub></td>
+    <td align="center" width="20%"><a href="https://rmux.io/#demo-broadcast"><img src="https://rmux.io/demos/demo-broadcast.png" width="150" alt="Agent Broadcast Arena demo preview"></a><br><sub><a href="https://github.com/Helvesec/rmux-demos/tree/main/demo-broadcast"><strong>Agent Broadcast Arena</strong></a></sub><br><sub>≃ 2,171 lines</sub></td>
+    <td align="center" width="20%"><a href="https://rmux.io/#demo-zellij"><img src="https://rmux.io/demos/demo-zellij.png" width="150" alt="Mini-Zellij demo preview"></a><br><sub><a href="https://github.com/Helvesec/rmux-demos/tree/main/demo-zellij"><strong>Mini-Zellij</strong></a></sub><br><sub>≃ 944 lines</sub></td>
+    <td align="center" width="20%"><a href="https://rmux.io/#demo-mirroring"><img src="https://rmux.io/demos/demo-mirroring.png" width="150" alt="Terminal browser mirroring demo preview"></a><br><sub><a href="https://github.com/Helvesec/rmux-demos/tree/main/demo-mirroring"><strong>Terminal &lt;&gt; Browser Mirroring</strong></a></sub><br><sub>≃ 649 lines</sub></td>
+    <td align="center" width="20%"><a href="https://rmux.io/#demo-playwright"><img src="https://rmux.io/demos/demo-playwright.png" width="150" alt="Playwright Testing demo preview"></a><br><sub><a href="https://github.com/Helvesec/rmux-demos/tree/main/demo-playwright"><strong>Playwright Testing</strong></a></sub><br><sub>≃ 1,495 lines</sub></td>
   </tr>
 </table>
 
