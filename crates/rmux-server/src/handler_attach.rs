@@ -619,7 +619,7 @@ fn kitty_graphics_passthrough_enabled(
                 pane.index(),
                 OptionName::AllowPassthrough,
             ),
-            Some("on" | "all")
+            Some("on")
         )
 }
 

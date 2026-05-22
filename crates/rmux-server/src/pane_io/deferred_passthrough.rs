@@ -55,6 +55,16 @@ pub(super) fn take_passthrough_frame(
 }
 
 #[cfg(any(unix, windows))]
+pub(super) fn clear_deferred_passthroughs_if_target_changed(
+    target_changed: bool,
+    deferred_passthroughs: &mut Vec<TerminalPassthrough>,
+) {
+    if target_changed {
+        deferred_passthroughs.clear();
+    }
+}
+
+#[cfg(any(unix, windows))]
 pub(super) async fn flush_deferred_passthroughs(
     stream: &LocalStream,
     current_target: &OpenAttachTarget,
@@ -70,4 +80,37 @@ pub(super) async fn flush_deferred_passthroughs(
         return Ok(());
     }
     emit_attach_bytes(stream, &frame).await
+}
+
+#[cfg(all(test, any(unix, windows)))]
+mod tests {
+    use rmux_core::TerminalPassthrough;
+
+    use super::clear_deferred_passthroughs_if_target_changed;
+
+    #[test]
+    fn target_change_discards_deferred_passthroughs() {
+        let mut deferred = vec![TerminalPassthrough::kitty_graphics(
+            0,
+            0,
+            b"Gf=100;AAAA".to_vec(),
+        )];
+
+        clear_deferred_passthroughs_if_target_changed(true, &mut deferred);
+
+        assert!(deferred.is_empty());
+    }
+
+    #[test]
+    fn same_target_keeps_deferred_passthroughs() {
+        let mut deferred = vec![TerminalPassthrough::kitty_graphics(
+            0,
+            0,
+            b"Gf=100;AAAA".to_vec(),
+        )];
+
+        clear_deferred_passthroughs_if_target_changed(false, &mut deferred);
+
+        assert_eq!(deferred.len(), 1);
+    }
 }

@@ -10,7 +10,7 @@ use super::{
     SHOW_WINDOW,
 };
 
-const ALLOW_PASSTHROUGH_CHOICES: &[&str] = &["off", "on", "all"];
+const ALLOW_PASSTHROUGH_CHOICES: &[&str] = &["off", "on"];
 const BELL_ACTION_CHOICES: &[&str] = &["none", "any", "current", "other"];
 const CLOCK_MODE_STYLE_CHOICES: &[&str] = &["12", "24", "12-with-seconds", "24-with-seconds"];
 const CURSOR_STYLE_CHOICES: &[&str] = &[

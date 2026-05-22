@@ -36,7 +36,8 @@ use control::{
 };
 #[cfg(any(unix, windows))]
 use deferred_passthrough::{
-    defer_passthroughs, flush_deferred_passthroughs, take_passthrough_frame,
+    clear_deferred_passthroughs_if_target_changed, defer_passthroughs, flush_deferred_passthroughs,
+    take_passthrough_frame,
 };
 pub(crate) use live_render::LivePaneRender;
 #[cfg(any(unix, windows))]
@@ -176,9 +177,10 @@ pub(crate) async fn forward_attach(
                         &current_target,
                     )
                     .await;
-                    if target_changed {
-                        deferred_passthroughs.clear();
-                    }
+                    clear_deferred_passthroughs_if_target_changed(
+                        target_changed,
+                        &mut deferred_passthroughs,
+                    );
                     flush_deferred_passthroughs(
                         &stream,
                         &current_target,
@@ -244,9 +246,10 @@ pub(crate) async fn forward_attach(
                         &current_target,
                     )
                     .await;
-                    if target_changed {
-                        deferred_passthroughs.clear();
-                    }
+                    clear_deferred_passthroughs_if_target_changed(
+                        target_changed,
+                        &mut deferred_passthroughs,
+                    );
                     flush_deferred_passthroughs(
                         &stream,
                         &current_target,
@@ -302,9 +305,10 @@ pub(crate) async fn forward_attach(
                                 &current_target,
                             )
                             .await;
-                            if target_changed {
-                                deferred_passthroughs.clear();
-                            }
+                            clear_deferred_passthroughs_if_target_changed(
+                                target_changed,
+                                &mut deferred_passthroughs,
+                            );
                             flush_deferred_passthroughs(
                                 &stream,
                                 &current_target,
@@ -353,13 +357,17 @@ pub(crate) async fn forward_attach(
                         PendingAttachAction::Exit => {
                             return Ok(());
                         }
-                        PendingAttachAction::Continue { target_changed: _ } => {
+                        PendingAttachAction::Continue { target_changed } => {
                             reschedule_status_refresh_for_target(
                                 &mut status_refresh,
                                 &live_input,
                                 &current_target,
                             )
                             .await;
+                            clear_deferred_passthroughs_if_target_changed(
+                                target_changed,
+                                &mut deferred_passthroughs,
+                            );
                             flush_deferred_passthroughs(
                                 &stream,
                                 &current_target,
@@ -623,6 +631,10 @@ pub(crate) async fn forward_attach(
                                 &current_target,
                             )
                             .await;
+                            clear_deferred_passthroughs_if_target_changed(
+                                target_changed,
+                                &mut deferred_passthroughs,
+                            );
                             continue;
                         }
                         PendingAttachAction::Write => {

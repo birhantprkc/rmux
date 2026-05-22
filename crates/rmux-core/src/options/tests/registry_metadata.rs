@@ -103,6 +103,10 @@ fn frozen_choice_lists_and_scope_masks_match_tmux_inventory() {
         registry::option_metadata(OptionName::AllowPassthrough).scope_mask(),
         registry::SCOPE_WINDOW | registry::SCOPE_PANE
     );
+    assert_eq!(
+        registry::option_metadata(OptionName::AllowPassthrough).value_type(),
+        registry::OptionValueType::Choice(&["off", "on"])
+    );
 }
 
 #[test]
