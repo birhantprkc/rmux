@@ -1,4 +1,4 @@
-use rmux_core::{PaneGeometry, TerminalPassthrough, TerminalPassthroughKind};
+use rmux_core::{PaneGeometry, TerminalPassthrough};
 
 use super::types::OpenAttachTarget;
 
@@ -11,15 +11,12 @@ pub(super) fn render_passthroughs(
     }
 
     let mut frame = Vec::new();
+    frame.extend_from_slice(b"\x1b[s");
     for passthrough in passthroughs {
-        match passthrough.kind() {
-            TerminalPassthroughKind::KittyGraphics => {
-                append_cursor_position(&mut frame, target.active_pane_geometry, passthrough);
-            }
-            TerminalPassthroughKind::Raw => {}
-        }
+        append_cursor_position(&mut frame, target.active_pane_geometry, passthrough);
         frame.extend_from_slice(&passthrough.render_sequence());
     }
+    frame.extend_from_slice(b"\x1b[u");
     frame
 }
 
@@ -88,11 +85,11 @@ mod tests {
                 b"Gf=100;AAAA".to_vec(),
             )],
         );
-        assert_eq!(frame, b"\x1b[9;7H\x1b_Gf=100;AAAA\x1b\\");
+        assert_eq!(frame, b"\x1b[s\x1b[9;7H\x1b_Gf=100;AAAA\x1b\\\x1b[u");
     }
 
     #[test]
-    fn render_passthroughs_forwards_raw_queries_without_cursor_wrap() {
+    fn render_passthroughs_is_empty_when_target_disables_passthrough() {
         let pty = PtyPair::open().expect("open pty pair");
         let pane_output = pane_output_channel();
         let target = OpenAttachTarget {
@@ -106,12 +103,19 @@ mod tests {
             ),
             cursor_style: 0,
             active_pane_geometry: PaneGeometry::new(5, 6, 80, 24),
-            kitty_graphics_passthrough: true,
+            kitty_graphics_passthrough: false,
             persistent_overlay_state_id: None,
             live_pane: None,
         };
 
-        let frame = render_passthroughs(&target, &[TerminalPassthrough::raw(0, 0, b"\x1b[c")]);
-        assert_eq!(frame, b"\x1b[c");
+        let frame = render_passthroughs(
+            &target,
+            &[TerminalPassthrough::kitty_graphics(
+                1,
+                2,
+                b"Gf=100;AAAA".to_vec(),
+            )],
+        );
+        assert!(frame.is_empty());
     }
 }

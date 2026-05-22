@@ -12,8 +12,6 @@ pub struct TerminalPassthrough {
 pub enum TerminalPassthroughKind {
     /// Kitty terminal graphics protocol, encoded as an APC payload.
     KittyGraphics,
-    /// Raw terminal query that must be answered by the attached terminal.
-    Raw,
 }
 
 impl TerminalPassthrough {
@@ -22,17 +20,6 @@ impl TerminalPassthrough {
     pub fn kitty_graphics(cursor_x: u32, cursor_y: u32, payload: impl Into<Vec<u8>>) -> Self {
         Self {
             kind: TerminalPassthroughKind::KittyGraphics,
-            cursor_x,
-            cursor_y,
-            payload: payload.into(),
-        }
-    }
-
-    /// Creates a raw terminal query passthrough event.
-    #[must_use]
-    pub fn raw(cursor_x: u32, cursor_y: u32, payload: impl Into<Vec<u8>>) -> Self {
-        Self {
-            kind: TerminalPassthroughKind::Raw,
             cursor_x,
             cursor_y,
             payload: payload.into(),
@@ -74,7 +61,6 @@ impl TerminalPassthrough {
                 sequence.extend_from_slice(b"\x1b\\");
                 sequence
             }
-            TerminalPassthroughKind::Raw => self.payload.clone(),
         }
     }
 }

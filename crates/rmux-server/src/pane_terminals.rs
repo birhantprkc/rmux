@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::Path;
-#[cfg(all(test, windows))]
+#[cfg(test)]
 use std::sync::Mutex as StdMutex;
 
 use rmux_core::{
@@ -93,7 +93,7 @@ pub(crate) struct HandlerState {
     pane_lifecycle: HashMap<PaneId, PaneLifecycleState>,
     attached_submitted_rows: HashMap<SessionName, HashMap<PaneId, AttachedSubmittedLine>>,
     attached_terminal_pixels: HashMap<SessionName, TerminalPixels>,
-    #[cfg(all(test, windows))]
+    #[cfg(test)]
     pane_input_captures: StdMutex<HashMap<String, Vec<u8>>>,
     dead_panes: HashMap<SessionName, HashMap<PaneId, PaneExitMetadata>>,
     marked_pane: Option<PaneId>,
