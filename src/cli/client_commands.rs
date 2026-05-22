@@ -1,5 +1,7 @@
 use std::path::Path;
 
+#[cfg(unix)]
+use rmux_client::attach_terminal_with_initial_bytes_and_resize_geometry;
 use rmux_client::{
     attach_terminal_with_initial_bytes, connect, connect_or_absent, detect_context,
     drive_control_mode, AttachTransition, ClientContext, ConnectResult, Connection,
@@ -9,7 +11,9 @@ use rmux_proto::request::{
     AttachSessionExt2Request, DetachClientExtRequest, ListClientsRequest, RefreshClientRequest,
     SuspendClientRequest, SwitchClientExt3Request,
 };
-use rmux_proto::{ClientTerminalContext, ControlMode, ErrorResponse, Response};
+use rmux_proto::{
+    ClientTerminalContext, ControlMode, ErrorResponse, Response, CAPABILITY_ATTACH_RESIZE_GEOMETRY,
+};
 
 use super::{
     connect_with_startserver, current_terminal_size, expect_command_success,
@@ -306,17 +310,34 @@ pub(super) fn run_suspend_client(
 }
 
 pub(super) fn attach_with_connection(
-    connection: Connection,
+    mut connection: Connection,
     request: AttachSessionExt2Request,
 ) -> Result<i32, ExitFailure> {
+    let attach_resize_geometry = connection
+        .supports_capability(CAPABILITY_ATTACH_RESIZE_GEOMETRY)
+        .map_err(ExitFailure::from_client)?;
     match connection
         .begin_attach_with_target_spec(request)
         .map_err(ExitFailure::from_client)?
     {
         AttachTransition::Upgraded(upgrade) => {
             let (stream, initial_bytes) = upgrade.into_parts();
-            attach_terminal_with_initial_bytes(stream, initial_bytes)
-                .map_err(ExitFailure::from_client)?;
+            #[cfg(unix)]
+            {
+                if attach_resize_geometry {
+                    attach_terminal_with_initial_bytes_and_resize_geometry(stream, initial_bytes)
+                        .map_err(ExitFailure::from_client)?;
+                } else {
+                    attach_terminal_with_initial_bytes(stream, initial_bytes)
+                        .map_err(ExitFailure::from_client)?;
+                }
+            }
+            #[cfg(windows)]
+            {
+                let _ = attach_resize_geometry;
+                attach_terminal_with_initial_bytes(stream, initial_bytes)
+                    .map_err(ExitFailure::from_client)?;
+            }
             Ok(0)
         }
         AttachTransition::Rejected(response) => {

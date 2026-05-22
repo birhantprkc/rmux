@@ -14,8 +14,8 @@ use std::time::Duration;
 use crate::ClientError;
 use rmux_ipc::{connect_blocking, BlockingLocalStream, LocalEndpoint};
 use rmux_proto::{
-    encode_frame, AttachSessionResponse, ControlMode, ControlModeResponse, FrameDecoder, Request,
-    Response,
+    encode_frame, AttachSessionResponse, ControlMode, ControlModeResponse, FrameDecoder,
+    HandshakeRequest, Request, Response,
 };
 
 /// Read buffer size for blocking socket reads.
@@ -194,6 +194,23 @@ impl Connection {
     pub fn roundtrip(&mut self, request: &Request) -> Result<Response, ClientError> {
         self.write_request(request)?;
         self.read_response()
+    }
+
+    /// Returns whether the connected daemon advertises a protocol capability.
+    ///
+    /// Optional client behavior uses this as a soft gate: older daemons that do
+    /// not answer the handshake shape or report an error are treated as not
+    /// supporting the capability, leaving the connection usable for legacy
+    /// requests.
+    pub fn supports_capability(&mut self, capability: &str) -> Result<bool, ClientError> {
+        match self.roundtrip(&Request::Handshake(HandshakeRequest::current()))? {
+            Response::Handshake(response) => Ok(response
+                .capabilities
+                .iter()
+                .any(|supported| supported == capability)),
+            Response::Error(_) => Ok(false),
+            _ => Ok(false),
+        }
     }
 
     /// Sends a request without a detached response read timeout.

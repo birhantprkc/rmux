@@ -17,6 +17,7 @@ use tokio::sync::watch;
 
 const READ_BUFFER_SIZE: usize = 8192;
 mod control;
+mod deferred_passthrough;
 mod live_render;
 mod passthrough;
 mod persistent_overlay;
@@ -33,9 +34,11 @@ use control::{
     redraw_after_persistent_overlay_state_advance, should_emit_overlay, switch_attach_target,
     PendingAttachAction,
 };
-pub(crate) use live_render::LivePaneRender;
 #[cfg(any(unix, windows))]
-use passthrough::render_passthroughs;
+use deferred_passthrough::{
+    defer_passthroughs, flush_deferred_passthroughs, take_passthrough_frame,
+};
+pub(crate) use live_render::LivePaneRender;
 #[cfg(any(unix, windows))]
 use persistent_overlay::{
     accept_persistent_overlay_state, advance_persistent_overlay_state, clear_then_base_frame,
@@ -94,6 +97,7 @@ pub(crate) async fn forward_attach(
     let mut persistent_overlay_visible = false;
     let mut persistent_overlay_state_id = current_target.persistent_overlay_state_id;
     let mut pane_refresh = AttachRefreshScheduler::default();
+    let mut deferred_passthroughs = Vec::new();
     let mut status_refresh = AttachStatusRefreshScheduler::new(
         live_input
             .handler
@@ -172,6 +176,17 @@ pub(crate) async fn forward_attach(
                         &current_target,
                     )
                     .await;
+                    if target_changed {
+                        deferred_passthroughs.clear();
+                    }
+                    flush_deferred_passthroughs(
+                        &stream,
+                        &current_target,
+                        &mut deferred_passthroughs,
+                        persistent_overlay_visible,
+                        persistent_overlay.is_some(),
+                    )
+                    .await?;
                     continue;
                 }
                 PendingAttachAction::Write => {}
@@ -229,6 +244,17 @@ pub(crate) async fn forward_attach(
                         &current_target,
                     )
                     .await;
+                    if target_changed {
+                        deferred_passthroughs.clear();
+                    }
+                    flush_deferred_passthroughs(
+                        &stream,
+                        &current_target,
+                        &mut deferred_passthroughs,
+                        persistent_overlay_visible,
+                        persistent_overlay.is_some(),
+                    )
+                    .await?;
                     continue;
                 }
                 PendingAttachAction::Write => {}
@@ -276,6 +302,17 @@ pub(crate) async fn forward_attach(
                                 &current_target,
                             )
                             .await;
+                            if target_changed {
+                                deferred_passthroughs.clear();
+                            }
+                            flush_deferred_passthroughs(
+                                &stream,
+                                &current_target,
+                                &mut deferred_passthroughs,
+                                persistent_overlay_visible,
+                                persistent_overlay.is_some(),
+                            )
+                            .await?;
                             continue;
                         }
                         PendingAttachAction::Write => {
@@ -323,6 +360,14 @@ pub(crate) async fn forward_attach(
                                 &current_target,
                             )
                             .await;
+                            flush_deferred_passthroughs(
+                                &stream,
+                                &current_target,
+                                &mut deferred_passthroughs,
+                                persistent_overlay_visible,
+                                persistent_overlay.is_some(),
+                            )
+                            .await?;
                             continue;
                         }
                         PendingAttachAction::Write => {}
@@ -389,6 +434,7 @@ pub(crate) async fn forward_attach(
                             }
                             render_generation = render_generation.saturating_add(1);
                             pending_input.clear();
+                            deferred_passthroughs.clear();
                             let pending_overlay = take_pending_persistent_overlay_for_state(
                                 attach_controls.as_mut(),
                                 &mut deferred_controls,
@@ -507,6 +553,14 @@ pub(crate) async fn forward_attach(
                                     clear_frame.as_deref().unwrap_or(&overlay.frame),
                                 )
                                 .await?;
+                                flush_deferred_passthroughs(
+                                    &stream,
+                                    &current_target,
+                                    &mut deferred_passthroughs,
+                                    persistent_overlay_visible,
+                                    persistent_overlay.is_some(),
+                                )
+                                .await?;
                             }
                         }
                         Some(AttachControl::Write(bytes)) => {
@@ -580,11 +634,15 @@ pub(crate) async fn forward_attach(
                                 return Ok(());
                             }
                             if persistent_overlay_visible || persistent_overlay.is_some() {
+                                defer_passthroughs(&mut deferred_passthroughs, passthroughs);
                                 pane_refresh.schedule_now();
                                 continue;
                             }
-                            let passthrough_frame =
-                                render_passthroughs(&current_target, &passthroughs);
+                            defer_passthroughs(&mut deferred_passthroughs, passthroughs);
+                            let passthrough_frame = take_passthrough_frame(
+                                &current_target,
+                                &mut deferred_passthroughs,
+                            );
                             match current_target
                                 .live_pane
                                 .as_mut()

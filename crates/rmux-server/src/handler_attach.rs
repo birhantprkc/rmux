@@ -650,6 +650,7 @@ pub(super) fn option_affects_attached_rendering(option: rmux_proto::OptionName) 
     matches!(
         option,
         rmux_proto::OptionName::ExtendedKeys
+            | rmux_proto::OptionName::AllowPassthrough
             | rmux_proto::OptionName::FocusEvents
             | rmux_proto::OptionName::Mouse
             | rmux_proto::OptionName::SetClipboard

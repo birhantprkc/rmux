@@ -19,6 +19,8 @@ pub mod connection;
 pub mod control;
 pub mod nested;
 
+#[cfg(unix)]
+pub use attach::attach_terminal_with_initial_bytes_and_resize_geometry;
 pub use attach::{
     attach_terminal, attach_terminal_with_initial_bytes, attach_with_terminal, drive_attach_stream,
     AttachError, RawTerminal,

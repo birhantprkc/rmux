@@ -168,7 +168,12 @@ impl OuterTerminal {
         if term.starts_with("foot") {
             self.add_features(DEFAULT_FOOT_FEATURES);
         }
-        if term.starts_with("xterm-kitty") {
+        if term.starts_with("xterm-kitty")
+            || term.starts_with("xterm-ghostty")
+            || term.starts_with("wezterm")
+            || term_program.eq_ignore_ascii_case("ghostty")
+            || term_program.eq_ignore_ascii_case("wezterm")
+        {
             self.add_features(DEFAULT_KITTY_FEATURES);
         }
         if term.starts_with("xterm") {

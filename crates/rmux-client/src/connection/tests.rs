@@ -11,8 +11,8 @@ use std::thread;
 use std::time::Duration;
 
 use rmux_proto::{
-    encode_frame, ErrorResponse, FrameDecoder, HasSessionRequest, HasSessionResponse, Request,
-    Response, RmuxError,
+    encode_frame, ErrorResponse, FrameDecoder, HandshakeRequest, HandshakeResponse,
+    HasSessionRequest, HasSessionResponse, Request, Response, RmuxError,
 };
 
 use super::{is_absent_error, socket_path_from_parts, ClientError};
@@ -333,6 +333,51 @@ fn roundtrip_preserves_error_responses() {
     let mut connection = super::Connection::new(client_stream).expect("connection with timeout");
     let actual = connection.roundtrip(&request).expect("roundtrip succeeds");
     assert_eq!(actual, response);
+
+    server.join().expect("server thread joins");
+}
+
+#[test]
+fn supports_capability_reads_handshake_capabilities() {
+    let response = Response::Handshake(HandshakeResponse {
+        wire_version: rmux_proto::RMUX_WIRE_VERSION,
+        capabilities: vec!["stream.attach.resize_geometry".to_owned()],
+    });
+    let (client_stream, server_stream) = UnixStream::pair().expect("create stream pair");
+
+    let server = thread::spawn(move || {
+        let stream = expect_request(server_stream, Request::Handshake(HandshakeRequest::current()));
+        write_response(stream, response);
+    });
+
+    let mut connection = super::Connection::new(client_stream).expect("connection with timeout");
+    assert!(
+        connection
+            .supports_capability("stream.attach.resize_geometry")
+            .expect("capability query succeeds")
+    );
+
+    server.join().expect("server thread joins");
+}
+
+#[test]
+fn supports_capability_treats_error_response_as_unsupported() {
+    let response = Response::Error(ErrorResponse {
+        error: RmuxError::UnknownCommand("handshake".to_owned()),
+    });
+    let (client_stream, server_stream) = UnixStream::pair().expect("create stream pair");
+
+    let server = thread::spawn(move || {
+        let stream = expect_request(server_stream, Request::Handshake(HandshakeRequest::current()));
+        write_response(stream, response);
+    });
+
+    let mut connection = super::Connection::new(client_stream).expect("connection with timeout");
+    assert!(
+        !connection
+            .supports_capability("stream.attach.resize_geometry")
+            .expect("capability query succeeds")
+    );
 
     server.join().expect("server thread joins");
 }

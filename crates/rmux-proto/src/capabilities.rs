@@ -12,6 +12,8 @@ pub const CAPABILITY_HANDSHAKE: &str = "protocol.capabilities";
 pub const CAPABILITY_FRAMED_ERRORS: &str = "protocol.framed_errors";
 /// Stable feature id for `attach-session` framed-to-raw stream upgrades.
 pub const CAPABILITY_ATTACH_STREAM: &str = "stream.attach";
+/// Stable feature id for attach-stream resize messages that carry pixel geometry.
+pub const CAPABILITY_ATTACH_RESIZE_GEOMETRY: &str = "stream.attach.resize_geometry";
 /// Stable feature id for control-mode framed-to-raw stream upgrades.
 pub const CAPABILITY_CONTROL_STREAM: &str = "stream.control";
 /// Stable feature id for daemon shutdown over detached RPC.
@@ -33,6 +35,7 @@ pub const SUPPORTED_CAPABILITIES: &[&str] = &[
     CAPABILITY_HANDSHAKE,
     CAPABILITY_FRAMED_ERRORS,
     CAPABILITY_ATTACH_STREAM,
+    CAPABILITY_ATTACH_RESIZE_GEOMETRY,
     CAPABILITY_CONTROL_STREAM,
     CAPABILITY_DAEMON_SHUTDOWN,
     CAPABILITY_SDK_WAITS,

@@ -17,9 +17,9 @@ use rustix::event::{poll, PollFd, PollFlags, Timespec};
 use rustix::termios::{tcsetwinsize, Winsize};
 
 use super::{
-    attach_with_terminal, fallback_attach_stop_sequence, input_loop, output_loop,
-    terminal_size_from_fd, AttachScreenTracker, RawTerminal, ResizeWatcher, SignalMaskGuard,
-    TerminalSize,
+    attach_with_terminal, drain_resize_events, fallback_attach_stop_sequence, input_loop,
+    output_loop, terminal_size_from_fd, AttachScreenTracker, RawTerminal, ResizeWatcher,
+    SignalMaskGuard, TerminalSize,
 };
 
 #[test]
@@ -112,7 +112,14 @@ fn input_loop_emits_typed_keystroke_frame() -> Result<(), Box<dyn std::error::Er
     let locked = Arc::new(AtomicBool::new(false));
 
     let input_thread = std::thread::spawn(move || {
-        input_loop(client_stream, input_reader, resize_rx, closed, locked)
+        input_loop(
+            client_stream,
+            input_reader,
+            resize_rx,
+            false,
+            closed,
+            locked,
+        )
     });
 
     input_writer.write_all(b"a")?;
@@ -137,6 +144,50 @@ fn input_loop_emits_typed_keystroke_frame() -> Result<(), Box<dyn std::error::Er
     input_thread
         .join()
         .map_err(|_| "input loop thread panicked")??;
+    Ok(())
+}
+
+#[test]
+fn drain_resize_events_uses_legacy_resize_until_geometry_is_enabled(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let (mut client_stream, mut server_stream) = UnixStream::pair()?;
+    let (resize_tx, resize_rx) = mpsc::channel();
+    resize_tx.send(TerminalGeometry::new(120, 40).with_pixels(TerminalPixels::new(1440, 960)))?;
+
+    drain_resize_events(&mut client_stream, &resize_rx, false)?;
+
+    let mut frame = [0_u8; 128];
+    let bytes_read = server_stream.read(&mut frame)?;
+    let mut decoder = AttachFrameDecoder::new();
+    decoder.push_bytes(&frame[..bytes_read]);
+    assert_eq!(
+        decoder.next_message()?,
+        Some(AttachMessage::Resize(TerminalSize {
+            cols: 120,
+            rows: 40
+        }))
+    );
+    Ok(())
+}
+
+#[test]
+fn drain_resize_events_sends_geometry_after_capability_gate(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let (mut client_stream, mut server_stream) = UnixStream::pair()?;
+    let (resize_tx, resize_rx) = mpsc::channel();
+    let geometry = TerminalGeometry::new(120, 40).with_pixels(TerminalPixels::new(1440, 960));
+    resize_tx.send(geometry)?;
+
+    drain_resize_events(&mut client_stream, &resize_rx, true)?;
+
+    let mut frame = [0_u8; 128];
+    let bytes_read = server_stream.read(&mut frame)?;
+    let mut decoder = AttachFrameDecoder::new();
+    decoder.push_bytes(&frame[..bytes_read]);
+    assert_eq!(
+        decoder.next_message()?,
+        Some(AttachMessage::ResizeGeometry(geometry))
+    );
     Ok(())
 }
 

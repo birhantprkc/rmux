@@ -231,7 +231,7 @@ fn publish_pane_bytes(
         .send_for_generation_with_passthroughs(generation, bytes, append_result.passthroughs)
         .is_none()
     {
-        return replies;
+        return Vec::new();
     }
     if let Some(callback) = pane_alert_callback {
         callback(PaneAlertEvent {

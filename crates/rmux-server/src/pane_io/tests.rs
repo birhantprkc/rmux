@@ -280,12 +280,28 @@ fn test_attach_target(
     render_frame: &[u8],
     persistent_overlay_state_id: Option<u64>,
 ) -> AttachTarget {
+    test_attach_target_with_output(
+        session_name,
+        render_frame,
+        persistent_overlay_state_id,
+        pane_output_channel(),
+        false,
+    )
+}
+
+fn test_attach_target_with_output(
+    session_name: &SessionName,
+    render_frame: &[u8],
+    persistent_overlay_state_id: Option<u64>,
+    pane_output: super::types::PaneOutputSender,
+    kitty_graphics_passthrough: bool,
+) -> AttachTarget {
     let pty = PtyPair::open().expect("open pty pair");
     let pane_master = pty.into_master();
     AttachTarget {
         session_name: session_name.clone(),
         pane_master,
-        pane_output: pane_output_channel(),
+        pane_output,
         render_frame: render_frame.to_vec(),
         outer_terminal: OuterTerminal::resolve(
             &OptionStore::default(),
@@ -293,7 +309,7 @@ fn test_attach_target(
         ),
         cursor_style: 0,
         active_pane_geometry: PaneGeometry::new(0, 0, 80, 24),
-        kitty_graphics_passthrough: false,
+        kitty_graphics_passthrough,
         persistent_overlay_state_id,
         live_pane: None,
     }
