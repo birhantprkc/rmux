@@ -10,7 +10,7 @@ use crate::backend;
 use crate::unsupported_op;
 #[cfg(all(not(unix), not(windows)))]
 use crate::PtyError;
-use crate::{Result, TerminalSize};
+use crate::{Result, TerminalGeometry, TerminalSize};
 
 #[cfg(unix)]
 /// The slave endpoint of a Unix pseudoterminal pair.
@@ -107,6 +107,28 @@ impl PtyIo {
             #[cfg(not(windows))]
             {
                 let _ = size;
+                Err(PtyError::Unsupported(unsupported_op::RESIZE_PTY))
+            }
+        }
+    }
+
+    /// Resizes this PTY endpoint, preserving optional pixel geometry where supported.
+    pub fn resize_geometry(&self, geometry: TerminalGeometry) -> Result<()> {
+        #[cfg(unix)]
+        {
+            backend::apply_geometry(self.fd.as_fd(), geometry)
+        }
+
+        #[cfg(not(unix))]
+        {
+            #[cfg(windows)]
+            {
+                backend::apply_geometry(&self.pty, geometry)
+            }
+
+            #[cfg(not(windows))]
+            {
+                let _ = geometry;
                 Err(PtyError::Unsupported(unsupported_op::RESIZE_PTY))
             }
         }
@@ -270,6 +292,11 @@ impl PtyMaster {
     /// Resizes this PTY.
     pub fn resize(&self, size: TerminalSize) -> Result<()> {
         self.io.resize(size)
+    }
+
+    /// Resizes this PTY, preserving optional pixel geometry where supported.
+    pub fn resize_geometry(&self, geometry: TerminalGeometry) -> Result<()> {
+        self.io.resize_geometry(geometry)
     }
 
     /// Duplicates the master handle.

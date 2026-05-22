@@ -1,6 +1,6 @@
 //! Attach-stream message codec shared by client and server.
 
-use crate::{RmuxError, TerminalSize, DEFAULT_MAX_FRAME_LENGTH};
+use crate::{RmuxError, TerminalGeometry, TerminalSize, DEFAULT_MAX_FRAME_LENGTH};
 use serde::{Deserialize, Serialize};
 
 const DATA_TAG: u8 = 1;
@@ -14,6 +14,7 @@ const KEYSTROKE_TAG: u8 = 8;
 const KEY_DISPATCHED_TAG: u8 = 9;
 const LOCK_SHELL_COMMAND_TAG: u8 = 10;
 const DETACH_EXEC_SHELL_COMMAND_TAG: u8 = 11;
+const RESIZE_GEOMETRY_TAG: u8 = 12;
 const DATA_HEADER_LEN: usize = 5;
 const RESIZE_FRAME_LEN: usize = 5;
 const SINGLE_TAG_FRAME_LEN: usize = 1;
@@ -126,6 +127,8 @@ pub enum AttachMessage {
     KeyDispatched(KeyDispatched),
     /// A terminal resize event.
     Resize(TerminalSize),
+    /// A terminal resize event that includes optional pixel geometry.
+    ResizeGeometry(TerminalGeometry),
     /// A request for the client to run the configured lock command locally.
     Lock(String),
     /// A request for the client to run the configured lock command through the
@@ -153,6 +156,9 @@ pub fn encode_attach_message(message: &AttachMessage) -> Result<Vec<u8>, RmuxErr
             encode_structured_message(KEY_DISPATCHED_TAG, response)
         }
         AttachMessage::Resize(size) => Ok(encode_resize_message(*size)),
+        AttachMessage::ResizeGeometry(geometry) => {
+            encode_structured_message(RESIZE_GEOMETRY_TAG, geometry)
+        }
         AttachMessage::Lock(command) => encode_data_like_message(LOCK_TAG, command.as_bytes()),
         AttachMessage::LockShellCommand(command) => {
             encode_structured_message(LOCK_SHELL_COMMAND_TAG, command)
@@ -215,6 +221,7 @@ impl AttachFrameDecoder {
             KEY_DISPATCHED_TAG => self.next_key_dispatched_message(),
             LOCK_SHELL_COMMAND_TAG => self.next_lock_shell_command_message(),
             DETACH_EXEC_SHELL_COMMAND_TAG => self.next_detach_exec_shell_command_message(),
+            RESIZE_GEOMETRY_TAG => self.next_resize_geometry_message(),
             other => {
                 self.buffer.clear();
                 Err(RmuxError::Decode(format!(
@@ -270,6 +277,11 @@ impl AttachFrameDecoder {
         );
 
         Ok(Some(AttachMessage::Resize(TerminalSize { cols, rows })))
+    }
+
+    fn next_resize_geometry_message(&mut self) -> Result<Option<AttachMessage>, RmuxError> {
+        self.next_structured_message(RESIZE_GEOMETRY_TAG)
+            .map(|message| message.map(AttachMessage::ResizeGeometry))
     }
 
     fn next_lock_message(&mut self) -> Result<Option<AttachMessage>, RmuxError> {

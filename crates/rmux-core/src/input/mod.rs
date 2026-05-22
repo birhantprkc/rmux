@@ -11,6 +11,7 @@ mod commands;
 mod csi_helpers;
 mod dispatch;
 mod params;
+mod passthrough;
 mod sgr;
 mod states;
 mod tables;
@@ -159,6 +160,8 @@ pub struct InputParser {
 
     /// Reply buffer: replies to be sent back to the PTY.
     reply_buf: Vec<u8>,
+    /// Dropped terminal passthrough events caused by parser string limits.
+    terminal_passthrough_dropped_count: u64,
 }
 
 impl InputParser {
@@ -186,6 +189,7 @@ impl InputParser {
             since_ground: Vec::new(),
             ground_timer_active: false,
             reply_buf: Vec::new(),
+            terminal_passthrough_dropped_count: 0,
         }
     }
 
@@ -198,6 +202,13 @@ impl InputParser {
     /// Returns and drains accumulated reply bytes.
     pub fn take_replies(&mut self) -> Vec<u8> {
         std::mem::take(&mut self.reply_buf)
+    }
+
+    /// Returns and drains terminal passthrough drops caused by parser limits.
+    pub(crate) fn take_terminal_passthrough_dropped_count(&mut self) -> u64 {
+        let dropped = self.terminal_passthrough_dropped_count;
+        self.terminal_passthrough_dropped_count = 0;
+        dropped
     }
 
     /// Returns and drains accumulated since-ground bytes.
@@ -393,6 +404,10 @@ impl InputParser {
         if self.flags & INPUT_DISCARD != 0 {
             return;
         }
+        if passthrough::is_kitty_graphics_apc(&self.input_buf) {
+            writer.apc_passthrough(&self.input_buf);
+            return;
+        }
         let buf = String::from_utf8_lossy(&self.input_buf).into_owned();
         writer.set_title(&buf);
     }
@@ -455,6 +470,13 @@ impl InputParser {
 
     fn handle_input(&mut self) -> bool {
         if self.input_buf.len() + 1 >= INPUT_BUF_MAX {
+            if self.flags & INPUT_DISCARD == 0
+                && self.state == InputState::ApcString
+                && passthrough::is_kitty_graphics_apc(&self.input_buf)
+            {
+                self.terminal_passthrough_dropped_count =
+                    self.terminal_passthrough_dropped_count.saturating_add(1);
+            }
             self.flags |= INPUT_DISCARD;
         } else {
             self.input_buf.push(self.ch);

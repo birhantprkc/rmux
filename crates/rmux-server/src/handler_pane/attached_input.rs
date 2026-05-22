@@ -20,8 +20,12 @@ use crate::pane_io::{AttachControl, OverlayFrame};
 
 #[path = "attached_input/bracketed_paste.rs"]
 mod bracketed_paste;
+#[path = "attached_input/kitty_graphics.rs"]
+mod kitty_graphics;
 #[path = "attached_input/live.rs"]
 mod live;
+#[path = "attached_input/terminal_response.rs"]
+mod terminal_response;
 
 const MAX_RETAINED_ATTACHED_CONTROL_INPUT: usize = DEFAULT_MAX_FRAME_LENGTH;
 

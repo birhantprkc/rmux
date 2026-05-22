@@ -212,6 +212,12 @@ impl ScreenWriter for RecordingWriter {
             String::from_utf8_lossy(data)
         ));
     }
+    fn apc_passthrough(&mut self, data: &[u8]) {
+        self.calls.push(format!(
+            "apc_passthrough({:?})",
+            String::from_utf8_lossy(data)
+        ));
+    }
     fn screen_size_x(&self) -> u32 {
         self.sx
     }

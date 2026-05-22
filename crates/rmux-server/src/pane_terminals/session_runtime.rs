@@ -92,6 +92,11 @@ impl HandlerState {
             }
         }
 
+        if let Some(pixels) = self.attached_terminal_pixels.remove(session_name) {
+            self.attached_terminal_pixels
+                .insert(new_name.clone(), pixels);
+        }
+
         Ok(())
     }
 
@@ -126,6 +131,7 @@ impl HandlerState {
         self.remove_session_pane_outputs(session_name);
         let _ = self.dead_panes.remove(session_name);
         let _ = self.attached_submitted_rows.remove(session_name);
+        let _ = self.attached_terminal_pixels.remove(session_name);
         self.auto_named_windows
             .retain(|(tracked_session, _)| tracked_session != session_name);
         let mut removed_terminals = self.terminals.remove_session(session_name);

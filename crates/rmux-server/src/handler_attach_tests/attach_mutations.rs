@@ -220,6 +220,112 @@ async fn terminal_feature_mutations_refresh_attached_targets_with_client_context
 }
 
 #[tokio::test]
+async fn allow_passthrough_mutations_refresh_attached_targets() {
+    let handler = RequestHandler::new();
+    let requester_pid = 43;
+    let alpha = session_name("alpha");
+
+    let created = handler
+        .handle(Request::NewSession(NewSessionRequest {
+            session_name: alpha.clone(),
+            detached: true,
+            size: Some(TerminalSize { cols: 80, rows: 24 }),
+            environment: None,
+        }))
+        .await;
+    assert!(matches!(created, Response::NewSession(_)));
+
+    let (control_tx, mut control_rx) = mpsc::unbounded_channel();
+    let _attach_id = handler
+        .register_attach_with_terminal_context(
+            requester_pid,
+            alpha,
+            control_tx,
+            OuterTerminalContext::from_pairs(&[("TERM", "xterm-kitty")]),
+        )
+        .await;
+
+    let set = handler
+        .handle(Request::SetOption(SetOptionRequest {
+            scope: ScopeSelector::Global,
+            option: OptionName::AllowPassthrough,
+            value: "on".to_owned(),
+            mode: SetOptionMode::Replace,
+        }))
+        .await;
+    assert!(matches!(set, Response::SetOption(_)));
+
+    let target = take_switch_target(control_rx.try_recv().expect("passthrough refresh"));
+    assert!(
+        target.kitty_graphics_passthrough,
+        "allow-passthrough changes must recompute the attach target gate"
+    );
+}
+
+#[tokio::test]
+async fn kitty_passthrough_is_disabled_while_active_pane_is_in_copy_mode() {
+    let handler = RequestHandler::new();
+    let requester_pid = 43;
+    let alpha = session_name("alpha");
+
+    let created = handler
+        .handle(Request::NewSession(NewSessionRequest {
+            session_name: alpha.clone(),
+            detached: true,
+            size: Some(TerminalSize { cols: 80, rows: 24 }),
+            environment: None,
+        }))
+        .await;
+    assert!(matches!(created, Response::NewSession(_)));
+
+    let (control_tx, mut control_rx) = mpsc::unbounded_channel();
+    let _attach_id = handler
+        .register_attach_with_terminal_context(
+            requester_pid,
+            alpha.clone(),
+            control_tx,
+            OuterTerminalContext::from_pairs(&[("TERM", "xterm-kitty")]),
+        )
+        .await;
+
+    let set = handler
+        .handle(Request::SetOption(SetOptionRequest {
+            scope: ScopeSelector::Global,
+            option: OptionName::AllowPassthrough,
+            value: "on".to_owned(),
+            mode: SetOptionMode::Replace,
+        }))
+        .await;
+    assert!(matches!(set, Response::SetOption(_)));
+    let target = take_switch_target(control_rx.try_recv().expect("passthrough refresh"));
+    assert!(
+        target.kitty_graphics_passthrough,
+        "kitty passthrough should be available before modal pane modes"
+    );
+
+    let copied = handler
+        .handle(Request::CopyMode(CopyModeRequest {
+            target: Some(PaneTarget::new(alpha, 0)),
+            page_down: false,
+            exit_on_scroll: false,
+            hide_position: false,
+            mouse_drag_start: false,
+            cancel_mode: false,
+            scrollbar_scroll: false,
+            source: None,
+            page_up: false,
+        }))
+        .await;
+    assert!(matches!(copied, Response::CopyMode(_)));
+
+    let target = take_switch_target(control_rx.try_recv().expect("copy-mode refresh"));
+    assert!(
+        !target.kitty_graphics_passthrough,
+        "modal pane modes must suppress live kitty passthrough"
+    );
+}
+
+#[tokio::test]
 async fn different_requester_pids_can_control_the_sole_active_attach() {
     let handler = RequestHandler::new();
     let owner_pid = 101;

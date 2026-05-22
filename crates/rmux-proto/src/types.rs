@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 
 pub use crate::identity::SessionName;
 use crate::{PaneId, RmuxError};
-pub use rmux_types::TerminalSize;
+pub use rmux_types::{TerminalGeometry, TerminalPixels, TerminalSize};
 
 #[path = "types/hooks.rs"]
 mod hooks;

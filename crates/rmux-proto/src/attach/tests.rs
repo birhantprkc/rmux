@@ -2,7 +2,7 @@ use super::{
     encode_attach_message, AttachFrameDecoder, AttachMessage, AttachShellCommand,
     AttachedKeystroke, KeyDispatched,
 };
-use crate::{RmuxError, TerminalSize};
+use crate::{RmuxError, TerminalGeometry, TerminalPixels, TerminalSize};
 
 #[test]
 fn data_messages_round_trip() {
@@ -33,6 +33,23 @@ fn resize_messages_round_trip() {
 
     assert_eq!(
         decoder.next_message().expect("decode attach resize"),
+        Some(message)
+    );
+}
+
+#[test]
+fn resize_geometry_messages_round_trip() {
+    let message = AttachMessage::ResizeGeometry(
+        TerminalGeometry::new(120, 40).with_pixels(TerminalPixels::new(1920, 1080)),
+    );
+    let encoded = encode_attach_message(&message).expect("encode attach geometry resize");
+    let mut decoder = AttachFrameDecoder::new();
+    decoder.push_bytes(&encoded);
+
+    assert_eq!(
+        decoder
+            .next_message()
+            .expect("decode attach geometry resize"),
         Some(message)
     );
 }

@@ -1,6 +1,7 @@
 use std::collections::VecDeque;
 
 use super::cursor::{OutputCursor, OutputCursorItem, OutputGap};
+use crate::TerminalPassthrough;
 
 /// Default retained pane-output events per pane.
 pub const DEFAULT_OUTPUT_RING_CAPACITY: usize = 1024;
@@ -12,6 +13,7 @@ pub const DEFAULT_RECENT_LIVE_BUFFER_CAPACITY: usize = 1024 * 1024;
 pub struct OutputEvent {
     sequence: u64,
     bytes: Vec<u8>,
+    passthroughs: Vec<TerminalPassthrough>,
 }
 
 impl OutputEvent {
@@ -27,10 +29,29 @@ impl OutputEvent {
         &self.bytes
     }
 
+    /// Returns terminal passthrough events produced by this output event.
+    #[must_use]
+    pub fn passthroughs(&self) -> &[TerminalPassthrough] {
+        &self.passthroughs
+    }
+
     /// Consumes this event and returns its raw bytes.
     #[must_use]
     pub fn into_bytes(self) -> Vec<u8> {
         self.bytes
+    }
+
+    /// Consumes this event and returns both raw bytes and terminal side effects.
+    #[must_use]
+    pub fn into_parts(self) -> (Vec<u8>, Vec<TerminalPassthrough>) {
+        (self.bytes, self.passthroughs)
+    }
+
+    /// Returns a copy of this event carrying terminal passthrough side effects.
+    #[must_use]
+    pub fn with_passthroughs(mut self, passthroughs: Vec<TerminalPassthrough>) -> Self {
+        self.passthroughs = passthroughs;
+        self
     }
 }
 
@@ -159,6 +180,7 @@ impl OutputRing {
         let event = OutputEvent {
             sequence: self.next_sequence,
             bytes,
+            passthroughs: Vec::new(),
         };
         self.next_sequence = self
             .next_sequence

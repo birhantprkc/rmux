@@ -5,7 +5,7 @@ use std::time::Instant;
 
 use rmux_core::KeyCode;
 use rmux_os::identity::UserIdentity;
-use rmux_proto::{PaneTarget, TerminalSize, WindowTarget};
+use rmux_proto::{PaneTarget, TerminalPixels, TerminalSize, WindowTarget};
 use tokio::sync::mpsc;
 
 use super::super::mode_tree_support::ModeTreeClientState;
@@ -40,6 +40,7 @@ pub(in crate::handler) struct ActiveAttach {
     pub(in crate::handler) closing: Arc<AtomicBool>,
     pub(in crate::handler) terminal_context: OuterTerminalContext,
     pub(in crate::handler) client_size: TerminalSize,
+    pub(in crate::handler) client_pixels: Option<TerminalPixels>,
     pub(in crate::handler) persistent_overlay_epoch: Arc<AtomicU64>,
     pub(in crate::handler) render_generation: u64,
     pub(in crate::handler) overlay_generation: u64,

@@ -116,6 +116,7 @@ pub(crate) struct OuterTerminal {
     supports_rgb: bool,
     supports_hyperlinks: bool,
     supports_sixel: bool,
+    supports_kitty_graphics: bool,
     supports_rectfill: bool,
     supports_margins: bool,
     supports_strikethrough: bool,
@@ -156,6 +157,10 @@ pub(crate) struct OuterTerminal {
 impl OuterTerminal {
     pub(crate) fn context(&self) -> &OuterTerminalContext {
         &self.context
+    }
+
+    pub(crate) const fn supports_kitty_graphics(&self) -> bool {
+        self.supports_kitty_graphics
     }
 
     pub(crate) fn attach_start_sequence(&self) -> Vec<u8> {

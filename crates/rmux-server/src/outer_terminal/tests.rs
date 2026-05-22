@@ -35,6 +35,37 @@ fn terminal_features_match_globs_and_case_insensitive_feature_names() {
 }
 
 #[test]
+fn xterm_kitty_enables_kitty_graphics_feature() {
+    let terminal = OuterTerminal::resolve(
+        &OptionStore::default(),
+        OuterTerminalContext::from_pairs(&[("TERM", "xterm-kitty")]),
+    );
+
+    assert!(terminal.supports_kitty_graphics());
+    assert!(terminal.features_string().contains("kitty-graphics"));
+}
+
+#[test]
+fn modern_kitty_graphics_terminals_enable_kitty_graphics_feature() {
+    for context in [
+        OuterTerminalContext::from_pairs(&[("TERM", "xterm-ghostty")]),
+        OuterTerminalContext::from_pairs(&[("TERM", "wezterm")]),
+        OuterTerminalContext::from_pairs(&[
+            ("TERM", "xterm-256color"),
+            ("TERM_PROGRAM", "ghostty"),
+        ]),
+        OuterTerminalContext::from_pairs(&[
+            ("TERM", "xterm-256color"),
+            ("TERM_PROGRAM", "WezTerm"),
+        ]),
+    ] {
+        let terminal = OuterTerminal::resolve(&OptionStore::default(), context);
+        assert!(terminal.supports_kitty_graphics());
+        assert!(terminal.features_string().contains("kitty-graphics"));
+    }
+}
+
+#[test]
 fn terminal_overrides_apply_legacy_tc_xt_and_ax_flags() {
     let mut options = OptionStore::new();
     options

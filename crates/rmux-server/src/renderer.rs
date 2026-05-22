@@ -302,6 +302,22 @@ pub(crate) fn render_pane_cursor(
     cursor_position_bytes(y, x)
 }
 
+pub(crate) fn visible_pane_terminal_geometry(
+    session: &Session,
+    options: &OptionStore,
+    pane: &Pane,
+) -> Option<PaneGeometry> {
+    let geometry = StatusGeometry::for_session(session, options);
+    visible_pane_geometry(session, pane, geometry.content_rows).map(|pane_geometry| {
+        PaneGeometry::new(
+            pane_geometry.x(),
+            pane_geometry.y().saturating_add(geometry.content_y_offset),
+            pane_geometry.cols(),
+            pane_geometry.rows(),
+        )
+    })
+}
+
 pub(crate) fn render_copy_mode_position(
     session: &Session,
     options: &OptionStore,

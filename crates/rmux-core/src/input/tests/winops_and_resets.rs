@@ -134,6 +134,21 @@ fn input_buf_overflow_sets_discard() {
     assert!(!writer.has_call("set_title"));
 }
 
+#[test]
+fn oversized_kitty_apc_records_a_passthrough_drop() {
+    let mut parser = InputParser::new();
+    let mut writer = RecordingWriter::new(80, 24);
+
+    parser.parse(b"\x1b_G", &mut writer);
+    let chunk = vec![b'A'; INPUT_BUF_MAX + 1];
+    parser.parse(&chunk, &mut writer);
+    parser.parse(b"\x1b\\", &mut writer);
+
+    assert!(!writer.has_call("apc_passthrough"));
+    assert_eq!(parser.take_terminal_passthrough_dropped_count(), 1);
+    assert_eq!(parser.take_terminal_passthrough_dropped_count(), 0);
+}
+
 // ─── Hardening: DSR status report ─────────────────────────────────
 
 #[test]

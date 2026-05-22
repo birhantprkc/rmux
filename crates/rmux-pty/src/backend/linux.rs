@@ -11,7 +11,7 @@ use rustix::pty::{grantpt, ioctl_tiocgptpeer, openpt, ptsname, unlockpt, OpenptF
 use rustix::termios::{tcgetwinsize, tcsetpgrp, tcsetwinsize};
 
 use super::unix_io;
-use crate::{size, ProcessId, Result, Signal, TerminalSize};
+use crate::{size, ProcessId, Result, Signal, TerminalGeometry, TerminalSize};
 
 pub(crate) fn open_pty_pair() -> Result<(OwnedFd, OwnedFd)> {
     let master = openpt(OpenptFlags::RDWR | OpenptFlags::NOCTTY | OpenptFlags::CLOEXEC)?;
@@ -48,6 +48,11 @@ pub(crate) fn query_size(fd: BorrowedFd<'_>) -> Result<TerminalSize> {
 
 pub(crate) fn apply_size(fd: BorrowedFd<'_>, size: TerminalSize) -> Result<()> {
     tcsetwinsize(fd, size::into_winsize(size))?;
+    Ok(())
+}
+
+pub(crate) fn apply_geometry(fd: BorrowedFd<'_>, geometry: TerminalGeometry) -> Result<()> {
+    tcsetwinsize(fd, size::into_winsize_geometry(geometry))?;
     Ok(())
 }
 

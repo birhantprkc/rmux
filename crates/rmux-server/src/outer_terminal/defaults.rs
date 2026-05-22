@@ -84,6 +84,26 @@ pub(super) const DEFAULT_FOOT_FEATURES: &[&str] = &[
     "cstyle",
     "extkeys",
 ];
+pub(super) const DEFAULT_KITTY_FEATURES: &[&str] = &[
+    "256",
+    "RGB",
+    "bpaste",
+    "clipboard",
+    "mouse",
+    "strikethrough",
+    "title",
+    "ccolour",
+    "cstyle",
+    "extkeys",
+    "focus",
+    "margins",
+    "overline",
+    "usstyle",
+    "sync",
+    "osc7",
+    "hyperlinks",
+    "kitty-graphics",
+];
 pub(super) const DEFAULT_XTERM_FEATURES: &[&str] = &[
     "256",
     "RGB",

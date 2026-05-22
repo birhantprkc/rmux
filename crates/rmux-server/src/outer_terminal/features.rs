@@ -6,9 +6,9 @@ use super::{
     defaults::{
         DEFAULT_CR, DEFAULT_CS, DEFAULT_DSBP, DEFAULT_DSEKS, DEFAULT_DSFCS, DEFAULT_DSMG,
         DEFAULT_ENBP, DEFAULT_ENEKS, DEFAULT_ENFCS, DEFAULT_ENMG, DEFAULT_FOOT_FEATURES,
-        DEFAULT_FSL, DEFAULT_HLS, DEFAULT_ITERM2_FEATURES, DEFAULT_MINTTY_FEATURES, DEFAULT_MS,
-        DEFAULT_RXVT_UNICODE_FEATURES, DEFAULT_SE, DEFAULT_SS, DEFAULT_SWD, DEFAULT_SYNC,
-        DEFAULT_TMUX_FEATURES, DEFAULT_TSL, DEFAULT_XTERM_FEATURES,
+        DEFAULT_FSL, DEFAULT_HLS, DEFAULT_ITERM2_FEATURES, DEFAULT_KITTY_FEATURES,
+        DEFAULT_MINTTY_FEATURES, DEFAULT_MS, DEFAULT_RXVT_UNICODE_FEATURES, DEFAULT_SE, DEFAULT_SS,
+        DEFAULT_SWD, DEFAULT_SYNC, DEFAULT_TMUX_FEATURES, DEFAULT_TSL, DEFAULT_XTERM_FEATURES,
     },
     OuterTerminal, OuterTerminalContext,
 };
@@ -98,6 +98,9 @@ impl OuterTerminal {
         if self.hyperlink_template.is_some() {
             features.push("hyperlinks");
         }
+        if self.supports_kitty_graphics {
+            features.push("kitty-graphics");
+        }
         if self.cursor_style_template.is_some() && self.cursor_style_reset.is_some() {
             features.push("cstyle");
         }
@@ -164,6 +167,14 @@ impl OuterTerminal {
         }
         if term.starts_with("foot") {
             self.add_features(DEFAULT_FOOT_FEATURES);
+        }
+        if term.starts_with("xterm-kitty")
+            || term.starts_with("xterm-ghostty")
+            || term.starts_with("wezterm")
+            || term_program.eq_ignore_ascii_case("ghostty")
+            || term_program.eq_ignore_ascii_case("wezterm")
+        {
+            self.add_features(DEFAULT_KITTY_FEATURES);
         }
         if term.starts_with("xterm") {
             self.add_features(DEFAULT_XTERM_FEATURES);
@@ -271,6 +282,7 @@ impl OuterTerminal {
                     .get_or_insert_with(|| DEFAULT_DSFCS.to_owned());
             }
             "ignorefkeys" => self.ignore_function_keys = true,
+            "kitty-graphics" | "kitty_graphics" | "kgp" => self.supports_kitty_graphics = true,
             "margins" => {
                 self.supports_margins = true;
                 self.enable_margins

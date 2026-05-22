@@ -6,6 +6,8 @@ use super::super::pane_prompt_input::{
     decode_utf8_char, is_extended_key_prefix, is_utf8_lead_byte, utf8_expected_len,
 };
 use super::bracketed_paste::{decode_bracketed_paste, BracketedPasteDecode};
+use super::kitty_graphics::{decode_kitty_graphics_apc, KittyGraphicsApcDecode};
+use super::terminal_response::{decode_terminal_response, TerminalResponseDecode};
 use super::{is_enter_key, is_mouse_prefix, retain_partial_attached_control_input};
 use crate::input_keys::{decode_extended_key, decode_mouse, ExtendedKeyDecode, MouseDecode};
 use crate::key_table::{decode_attached_key, AttachedKeyDecode, PREFIX_TABLE};
@@ -129,6 +131,59 @@ impl RequestHandler {
                     return Ok(forwarded_to_pane);
                 }
                 BracketedPasteDecode::NotPaste => {}
+            }
+            match decode_kitty_graphics_apc(slice) {
+                KittyGraphicsApcDecode::Matched { size } => {
+                    if raw_start < offset {
+                        self.write_attached_bytes(attach_pid, &pending_input[raw_start..offset])
+                            .await?;
+                    }
+                    self.write_attached_bytes(attach_pid, &pending_input[offset..offset + size])
+                        .await?;
+                    forwarded_to_pane = true;
+                    offset += size;
+                    raw_start = offset;
+                    continue;
+                }
+                KittyGraphicsApcDecode::Partial => {
+                    if raw_start < offset {
+                        self.write_attached_bytes(attach_pid, &pending_input[raw_start..offset])
+                            .await?;
+                        forwarded_to_pane = true;
+                    }
+                    pending_input.drain(..offset);
+                    retain_partial_attached_control_input(
+                        "live kitty graphics APC",
+                        pending_input,
+                    )?;
+                    return Ok(forwarded_to_pane);
+                }
+                KittyGraphicsApcDecode::NotKittyGraphics => {}
+            }
+            match decode_terminal_response(slice) {
+                TerminalResponseDecode::Matched { size } => {
+                    if raw_start < offset {
+                        self.write_attached_bytes(attach_pid, &pending_input[raw_start..offset])
+                            .await?;
+                    }
+                    self.write_attached_bytes(attach_pid, &pending_input[offset..offset + size])
+                        .await?;
+                    forwarded_to_pane = true;
+                    offset += size;
+                    raw_start = offset;
+                    continue;
+                }
+                TerminalResponseDecode::Partial => {
+                    if raw_start < offset {
+                        self.write_attached_bytes(attach_pid, &pending_input[raw_start..offset])
+                            .await?;
+                        forwarded_to_pane = true;
+                    }
+                    pending_input.drain(..offset);
+                    retain_partial_attached_control_input("live terminal response", pending_input)?;
+                    return Ok(forwarded_to_pane);
+                }
+                TerminalResponseDecode::NotResponse => {}
             }
             if is_mouse_prefix(slice) {
                 if raw_start < offset {

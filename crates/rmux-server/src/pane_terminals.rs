@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::Path;
-#[cfg(all(test, windows))]
+#[cfg(test)]
 use std::sync::Mutex as StdMutex;
 
 use rmux_core::{
@@ -9,7 +9,7 @@ use rmux_core::{
 };
 use rmux_proto::{
     KillPaneResponse, KillWindowResponse, OptionName, PaneTarget, ProcessCommand, RmuxError,
-    SessionName, WindowTarget,
+    SessionName, TerminalPixels, WindowTarget,
 };
 
 use crate::pane_io::{PaneAlertCallback, PaneExitCallback, PaneOutputSender};
@@ -92,7 +92,8 @@ pub(crate) struct HandlerState {
     pane_output_generations: HashMap<SessionName, HashMap<PaneId, u64>>,
     pane_lifecycle: HashMap<PaneId, PaneLifecycleState>,
     attached_submitted_rows: HashMap<SessionName, HashMap<PaneId, AttachedSubmittedLine>>,
-    #[cfg(all(test, windows))]
+    attached_terminal_pixels: HashMap<SessionName, TerminalPixels>,
+    #[cfg(test)]
     pane_input_captures: StdMutex<HashMap<String, Vec<u8>>>,
     dead_panes: HashMap<SessionName, HashMap<PaneId, PaneExitMetadata>>,
     marked_pane: Option<PaneId>,
@@ -161,8 +162,25 @@ impl HandlerState {
         }
         self.auto_named_windows.clear();
         self.attached_submitted_rows.clear();
+        self.attached_terminal_pixels.clear();
         self.dead_panes.clear();
         self.pane_lifecycle.clear();
+    }
+
+    pub(crate) fn set_attached_terminal_pixels(
+        &mut self,
+        session_name: &SessionName,
+        pixels: Option<TerminalPixels>,
+    ) {
+        match pixels {
+            Some(pixels) => {
+                self.attached_terminal_pixels
+                    .insert(session_name.clone(), pixels);
+            }
+            None => {
+                self.attached_terminal_pixels.remove(session_name);
+            }
+        }
     }
 
     pub(crate) fn add_message(&mut self, message: impl Into<String>) {

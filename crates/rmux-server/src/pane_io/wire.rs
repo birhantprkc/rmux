@@ -24,6 +24,8 @@ pub(super) fn open_attach_target(target: AttachTarget) -> io::Result<OpenAttachT
         render_frame,
         outer_terminal,
         cursor_style,
+        active_pane_geometry,
+        kitty_graphics_passthrough,
         persistent_overlay_state_id,
         live_pane,
     } = target;
@@ -34,17 +36,20 @@ pub(super) fn open_attach_target(target: AttachTarget) -> io::Result<OpenAttachT
         render_frame,
         outer_terminal,
         cursor_style,
+        active_pane_geometry,
+        kitty_graphics_passthrough,
         persistent_overlay_state_id,
         live_pane,
     })
 }
 
 #[cfg(unix)]
-pub(super) fn open_pane_writer(pane_master: PtyMaster) -> io::Result<AsyncFd<PtyIo>> {
+pub(super) fn open_pane_writer(pane_master: PtyMaster) -> io::Result<(AsyncFd<PtyIo>, PtyIo)> {
     let pane_writer = pane_master.into_io();
+    let reply_writer = pane_writer.try_clone().map_err(io::Error::other)?;
     pane_writer.set_nonblocking()?;
 
-    AsyncFd::new(pane_writer)
+    Ok((AsyncFd::new(pane_writer)?, reply_writer))
 }
 
 pub(super) async fn emit_render_frame(

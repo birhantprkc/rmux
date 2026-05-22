@@ -138,7 +138,7 @@ async fn read_pane_output(
     pane_alert_callback: Option<PaneAlertCallback>,
     pane_exit_callback: Option<PaneExitCallback>,
 ) -> io::Result<()> {
-    let pane_reader = open_pane_writer(pane_master)?;
+    let (pane_reader, reply_writer) = open_pane_writer(pane_master)?;
     let mut buffer = [0_u8; READ_BUFFER_SIZE];
 
     loop {
@@ -156,29 +156,17 @@ async fn read_pane_output(
         }
 
         let bytes = buffer[..bytes_read].to_vec();
-        publish_pane_bytes(
-            PaneOutputPublish {
-                session_name: &session_name,
-                pane_id,
-                pane_writer: pane_reader.get_ref(),
-                transcript: &transcript,
-                pane_output: &pane_output,
-                generation,
-                pane_alert_callback: pane_alert_callback.as_ref(),
-            },
+        let replies = publish_pane_bytes(
+            &session_name,
+            pane_id,
+            &transcript,
+            &pane_output,
+            generation,
+            pane_alert_callback.as_ref(),
             bytes,
         );
+        write_parser_replies_to_pane(&reply_writer, replies).await?;
     }
-}
-
-struct PaneOutputPublish<'a> {
-    session_name: &'a rmux_proto::SessionName,
-    pane_id: PaneId,
-    pane_writer: &'a PtyIo,
-    transcript: &'a SharedPaneTranscript,
-    pane_output: &'a PaneOutputSender,
-    generation: Option<u64>,
-    pane_alert_callback: Option<&'a PaneAlertCallback>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -207,70 +195,81 @@ fn read_pane_output_blocking(
             return Ok(());
         }
 
-        publish_pane_bytes(
-            PaneOutputPublish {
-                session_name: &session_name,
-                pane_id,
-                pane_writer: &pane_reader,
-                transcript: &transcript,
-                pane_output: &pane_output,
-                generation,
-                pane_alert_callback: pane_alert_callback.as_ref(),
-            },
+        let replies = publish_pane_bytes(
+            &session_name,
+            pane_id,
+            &transcript,
+            &pane_output,
+            generation,
+            pane_alert_callback.as_ref(),
             buffer[..bytes_read].to_vec(),
         );
+        write_parser_replies_to_pane_blocking(&pane_reader, replies)?;
     }
 }
 
-fn publish_pane_bytes(context: PaneOutputPublish<'_>, bytes: Vec<u8>) {
-    let PaneOutputPublish {
-        session_name,
-        pane_id,
-        pane_writer,
-        transcript,
-        pane_output,
-        generation,
-        pane_alert_callback,
-    } = context;
+fn publish_pane_bytes(
+    session_name: &rmux_proto::SessionName,
+    pane_id: PaneId,
+    transcript: &SharedPaneTranscript,
+    pane_output: &PaneOutputSender,
+    generation: Option<u64>,
+    pane_alert_callback: Option<&PaneAlertCallback>,
+    bytes: Vec<u8>,
+) -> Vec<u8> {
     if !pane_output.accepts_generation(generation) {
-        return;
+        return Vec::new();
     }
-    let append = {
+    let append_result = {
         let mut transcript = transcript
             .lock()
             .expect("pane transcript mutex must not be poisoned");
-        transcript.append_bytes_and_take_replies(&bytes)
+        transcript.append_bytes_with_effects(&bytes)
     };
-    write_terminal_replies(session_name, pane_id, pane_writer, &append.replies);
-    if pane_output.send_for_generation(generation, bytes).is_none() {
-        return;
+    let replies = append_result.replies;
+    let dropped_passthrough_count = append_result.dropped_passthrough_count;
+    if pane_output
+        .send_for_generation_with_passthroughs(generation, bytes, append_result.passthroughs)
+        .is_none()
+    {
+        return Vec::new();
+    }
+    if dropped_passthrough_count > 0 {
+        warn!(
+            session = %session_name,
+            pane_id = pane_id.as_u32(),
+            dropped = dropped_passthrough_count,
+            "dropped terminal passthrough events due to parser safety limits"
+        );
     }
     if let Some(callback) = pane_alert_callback {
         callback(PaneAlertEvent {
             session_name: session_name.clone(),
             pane_id,
-            bell_count: append.bell_count,
+            bell_count: append_result.bell_count,
             generation,
         });
     }
+    replies
 }
 
-fn write_terminal_replies(
-    session_name: &rmux_proto::SessionName,
-    pane_id: PaneId,
-    pane_writer: &PtyIo,
-    replies: &[u8],
-) {
+#[cfg(unix)]
+async fn write_parser_replies_to_pane(pane_writer: &PtyIo, replies: Vec<u8>) -> io::Result<()> {
     if replies.is_empty() {
-        return;
+        return Ok(());
     }
-    if let Err(error) = pane_writer.write_all(replies) {
-        warn!(
-            session = %session_name,
-            pane_id = pane_id.as_u32(),
-            "failed to write terminal reply bytes to pane: {error}"
-        );
+    let pane_writer = pane_writer.try_clone().map_err(io::Error::other)?;
+    tokio::task::spawn_blocking(move || pane_writer.write_all(&replies))
+        .await
+        .map_err(|error| io::Error::other(format!("parser reply task failed: {error}")))?
+}
+
+#[cfg(windows)]
+fn write_parser_replies_to_pane_blocking(pane_writer: &PtyIo, replies: Vec<u8>) -> io::Result<()> {
+    if replies.is_empty() {
+        return Ok(());
     }
+    pane_writer.write_all(&replies)
 }
 
 #[cfg(all(test, unix))]

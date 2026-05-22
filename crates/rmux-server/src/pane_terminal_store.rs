@@ -6,13 +6,13 @@ use std::path::PathBuf;
 use std::process::ExitStatus;
 
 use rmux_core::PaneId;
-use rmux_proto::{PaneTarget, RmuxError, SessionName};
+use rmux_proto::{PaneTarget, RmuxError, SessionName, TerminalPixels, TerminalSize};
 use rmux_pty::PtyMaster;
 #[cfg(unix)]
 use tracing::{debug, warn};
 
 use crate::pane_terminal_lookup::{missing_pane_terminal, SessionPane};
-use crate::pane_terminal_process::{pty_size_from_geometry, PaneTerminal};
+use crate::pane_terminal_process::{pty_geometry_from_layout, PaneTerminal};
 use crate::terminal::TerminalProfile;
 
 #[derive(Debug, Default)]
@@ -96,6 +96,8 @@ impl PaneTerminalStore {
         &mut self,
         session_name: &SessionName,
         pane_geometries: &[SessionPane],
+        session_size: TerminalSize,
+        terminal_pixels: Option<TerminalPixels>,
     ) -> Result<(), RmuxError> {
         #[cfg(test)]
         if self.fail_next_resize {
@@ -117,7 +119,11 @@ impl PaneTerminalStore {
                 .ok_or_else(|| RmuxError::Server(format!("missing pane terminal for {target}")))?;
 
             terminal
-                .resize(pty_size_from_geometry(pane.geometry))
+                .resize(pty_geometry_from_layout(
+                    pane.geometry,
+                    session_size,
+                    terminal_pixels,
+                ))
                 .map_err(|error| {
                     RmuxError::Server(format!(
                         "failed to resize pane terminal for {target}: {error}"

@@ -120,11 +120,22 @@ impl HandlerState {
     }
 
     pub(crate) fn resize_terminals(&mut self, session_name: &SessionName) -> Result<(), RmuxError> {
+        let session_size = self
+            .sessions
+            .session(session_name)
+            .ok_or_else(|| session_not_found(session_name))?
+            .window()
+            .size();
+        let terminal_pixels = self.attached_terminal_pixels.get(session_name).copied();
         for (runtime_session_name, pane_geometries) in
             self.session_pane_terminal_geometries_by_runtime(session_name)?
         {
-            self.terminals
-                .resize_session(&runtime_session_name, &pane_geometries)?;
+            self.terminals.resize_session(
+                &runtime_session_name,
+                &pane_geometries,
+                session_size,
+                terminal_pixels,
+            )?;
             self.resize_transcripts(&runtime_session_name, &pane_geometries);
         }
         self.sync_pane_lifecycle_dimensions_for_session(session_name);

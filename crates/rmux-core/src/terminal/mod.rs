@@ -21,6 +21,7 @@ use rmux_proto::TerminalSize;
 
 use crate::input::{InputParser, InputState};
 use crate::screen::Screen;
+use crate::terminal_passthrough::TerminalPassthrough;
 use crate::utf8::Utf8Config;
 
 /// Backend-neutral parser progress exposed by [`TerminalParser`].
@@ -131,6 +132,18 @@ impl TerminalParser {
         self.parser.take_replies()
     }
 
+    /// Returns and drains terminal passthrough events generated while parsing.
+    pub(crate) fn take_terminal_passthrough(&mut self) -> Vec<TerminalPassthrough> {
+        self.screen.take_terminal_passthrough()
+    }
+
+    /// Returns and drains terminal passthrough events dropped by parser limits.
+    pub(crate) fn take_terminal_passthrough_dropped_count(&mut self) -> u64 {
+        self.parser
+            .take_terminal_passthrough_dropped_count()
+            .saturating_add(self.screen.take_terminal_passthrough_dropped_count())
+    }
+
     /// Returns any bytes still buffered inside an incomplete parser state.
     #[must_use]
     pub(crate) fn pending_bytes(&self) -> Vec<u8> {
@@ -203,6 +216,18 @@ mod tests {
         let replies = parser.take_replies();
         assert!(!replies.is_empty());
         assert!(parser.take_replies().is_empty());
+    }
+
+    #[test]
+    fn kitty_graphics_passthrough_drains_once() {
+        let mut parser = TerminalParser::new(size(20, 4), 10);
+        parser.feed(b"\x1b[2;3H\x1b_Gf=100;AAAA\x1b\\");
+        let passthroughs = parser.take_terminal_passthrough();
+        assert_eq!(passthroughs.len(), 1);
+        assert_eq!(passthroughs[0].cursor_x(), 2);
+        assert_eq!(passthroughs[0].cursor_y(), 1);
+        assert_eq!(passthroughs[0].payload(), b"Gf=100;AAAA");
+        assert!(parser.take_terminal_passthrough().is_empty());
     }
 
     #[test]

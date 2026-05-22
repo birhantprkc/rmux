@@ -206,6 +206,41 @@ async fn attach_session_render_frame_positions_cursor_at_active_pane_cursor() {
 }
 
 #[tokio::test]
+async fn attach_session_active_pane_geometry_tracks_top_status_offset() {
+    let handler = RequestHandler::new();
+    let alpha = session_name("alpha");
+
+    create_quiet_session(&handler, &alpha).await;
+    assert!(matches!(
+        handler
+            .handle(Request::SetOption(SetOptionRequest {
+                scope: ScopeSelector::Global,
+                option: OptionName::StatusPosition,
+                value: "top".to_owned(),
+                mode: SetOptionMode::Replace,
+            }))
+            .await,
+        Response::SetOption(_)
+    ));
+
+    let outcome = handler
+        .dispatch(
+            std::process::id(),
+            Request::AttachSession(rmux_proto::AttachSessionRequest { target: alpha }),
+        )
+        .await;
+
+    assert!(matches!(outcome.response, Response::AttachSession(_)));
+    let target = outcome.attach.expect("attach upgrade").target;
+    assert_eq!(
+        target.active_pane_geometry.y(),
+        1,
+        "kitty passthrough coordinates must share the renderer's top-status content offset"
+    );
+    assert_eq!(target.active_pane_geometry.rows(), 23);
+}
+
+#[tokio::test]
 async fn attach_session_replays_all_visible_pane_screens() {
     let handler = RequestHandler::new();
     let alpha = session_name("alpha");

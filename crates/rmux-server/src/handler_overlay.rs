@@ -1,6 +1,6 @@
 use std::io;
 
-use rmux_proto::{RmuxError, TerminalSize};
+use rmux_proto::{RmuxError, TerminalGeometry, TerminalSize};
 
 use super::pane_support::retain_partial_attached_control_input;
 use super::prompt_support::PromptInputEvent;
@@ -185,6 +185,16 @@ impl RequestHandler {
         attach_pid: u32,
         size: TerminalSize,
     ) -> Result<(), RmuxError> {
+        self.handle_attached_resize_geometry(attach_pid, TerminalGeometry::from_size(size))
+            .await
+    }
+
+    pub(crate) async fn handle_attached_resize_geometry(
+        &self,
+        attach_pid: u32,
+        geometry: TerminalGeometry,
+    ) -> Result<(), RmuxError> {
+        let size = geometry.size;
         if size.cols == 0 || size.rows == 0 {
             return Ok(());
         }
@@ -202,6 +212,7 @@ impl RequestHandler {
                 return Ok(());
             }
             active.client_size = size;
+            active.client_pixels = geometry.pixels;
             let session_name = active.session_name.clone();
             let mode_tree_zoom_target = active
                 .mode_tree
@@ -259,6 +270,7 @@ impl RequestHandler {
 
         {
             let mut state = self.state.lock().await;
+            state.set_attached_terminal_pixels(&resized_session, geometry.pixels);
             if let Some(target) = mode_tree_zoom_target {
                 {
                     let session = state

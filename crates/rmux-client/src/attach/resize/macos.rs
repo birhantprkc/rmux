@@ -4,11 +4,11 @@ use std::os::fd::OwnedFd;
 use std::sync::mpsc;
 use std::thread;
 
-use rmux_proto::TerminalSize;
+use rmux_proto::TerminalGeometry;
 use signal_hook::consts::signal::SIGWINCH;
 use signal_hook::iterator::{Handle, Signals};
 
-use super::terminal_size_from_fd;
+use super::terminal_geometry_from_fd;
 use crate::ClientError;
 
 #[derive(Debug)]
@@ -29,7 +29,7 @@ pub(in crate::attach) struct ResizeWatcher {
 impl ResizeWatcher {
     pub(in crate::attach) fn spawn(
         terminal_fd: OwnedFd,
-        resize_tx: mpsc::Sender<TerminalSize>,
+        resize_tx: mpsc::Sender<TerminalGeometry>,
     ) -> std::result::Result<Self, ClientError> {
         let mut signals = Signals::new([SIGWINCH]).map_err(ClientError::Io)?;
         let handle = signals.handle();
@@ -37,13 +37,13 @@ impl ResizeWatcher {
         let thread = thread::spawn(move || {
             for signal in signals.forever() {
                 if signal == SIGWINCH {
-                    let size = match terminal_size_from_fd(&terminal_fd) {
-                        Ok(Some(size)) => size,
+                    let geometry = match terminal_geometry_from_fd(&terminal_fd) {
+                        Ok(Some(geometry)) => geometry,
                         Ok(None) => continue,
                         Err(_) => return,
                     };
 
-                    if resize_tx.send(size).is_err() {
+                    if resize_tx.send(geometry).is_err() {
                         return;
                     }
                 }

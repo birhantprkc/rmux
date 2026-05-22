@@ -1,4 +1,4 @@
-use super::Screen;
+use super::{Screen, MAX_TERMINAL_PASSTHROUGH_EVENTS, MAX_TERMINAL_PASSTHROUGH_PAYLOAD_BYTES};
 use crate::input::InputParser;
 use crate::{GridRenderOptions, OptionStore, ScreenCaptureRange, Utf8Config};
 use rmux_proto::{OptionName, ScopeSelector, SetOptionMode, TerminalSize};
@@ -10,6 +10,40 @@ fn parse(screen: &mut Screen, bytes: &[u8]) {
 
 fn new_screen(cols: u16, rows: u16, history: usize) -> Screen {
     Screen::new(TerminalSize { cols, rows }, history)
+}
+
+#[test]
+fn terminal_passthrough_drops_oversized_payloads() {
+    let mut screen = new_screen(10, 2, 10);
+    let payload = vec![b'A'; MAX_TERMINAL_PASSTHROUGH_PAYLOAD_BYTES + 1];
+
+    screen.push_terminal_passthrough(0, 0, &payload);
+
+    assert!(screen.take_terminal_passthrough().is_empty());
+    assert_eq!(screen.take_terminal_passthrough_dropped_count(), 1);
+    assert_eq!(screen.take_terminal_passthrough_dropped_count(), 0);
+}
+
+#[test]
+fn terminal_passthrough_keeps_newest_events_when_queue_is_full() {
+    let mut screen = new_screen(10, 2, 10);
+    for index in 0..=MAX_TERMINAL_PASSTHROUGH_EVENTS {
+        let payload = format!("Gf=100;{index}");
+        screen.push_terminal_passthrough(index as u32, 0, payload.as_bytes());
+    }
+
+    let passthroughs = screen.take_terminal_passthrough();
+
+    assert_eq!(passthroughs.len(), MAX_TERMINAL_PASSTHROUGH_EVENTS);
+    assert_eq!(screen.take_terminal_passthrough_dropped_count(), 1);
+    assert_eq!(passthroughs[0].payload(), b"Gf=100;1");
+    assert_eq!(
+        passthroughs
+            .last()
+            .expect("newest passthrough is retained")
+            .payload(),
+        format!("Gf=100;{MAX_TERMINAL_PASSTHROUGH_EVENTS}").as_bytes()
+    );
 }
 
 fn utf8_config(codepoint_widths: &[&str], vs16_wide: bool) -> Utf8Config {

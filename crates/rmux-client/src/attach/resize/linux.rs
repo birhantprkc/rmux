@@ -4,12 +4,12 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc};
 use std::thread;
 
-use rmux_proto::TerminalSize;
+use rmux_proto::TerminalGeometry;
 use rustix::process::{Pid, Signal};
 use rustix::runtime::{kernel_sigprocmask, kernel_sigwait, tkill, How, KernelSigSet};
 use rustix::thread::gettid;
 
-use super::terminal_size_from_fd;
+use super::terminal_geometry_from_fd;
 use crate::ClientError;
 
 #[derive(Debug)]
@@ -45,7 +45,7 @@ pub(in crate::attach) struct ResizeWatcher {
 impl ResizeWatcher {
     pub(in crate::attach) fn spawn(
         terminal_fd: OwnedFd,
-        resize_tx: mpsc::Sender<TerminalSize>,
+        resize_tx: mpsc::Sender<TerminalGeometry>,
     ) -> std::result::Result<Self, ClientError> {
         let stop = Arc::new(AtomicBool::new(false));
         let stop_flag = Arc::clone(&stop);
@@ -68,13 +68,13 @@ impl ResizeWatcher {
                 }
 
                 if signal == Signal::WINCH {
-                    let size = match terminal_size_from_fd(&terminal_fd) {
-                        Ok(Some(size)) => size,
+                    let geometry = match terminal_geometry_from_fd(&terminal_fd) {
+                        Ok(Some(geometry)) => geometry,
                         Ok(None) => continue,
                         Err(_) => return,
                     };
 
-                    if resize_tx.send(size).is_err() {
+                    if resize_tx.send(geometry).is_err() {
                         return;
                     }
                 }

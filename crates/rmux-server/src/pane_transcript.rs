@@ -2,15 +2,12 @@ use std::sync::{Arc, Mutex};
 
 use crate::clock_mode::{ClockModeState, CLOCK_MODE_NAME};
 use crate::copy_mode::{CopyModeState, CopyModeSummary};
-use rmux_core::{GridRenderOptions, Screen, ScreenCaptureRange, TerminalScreen, Utf8Config};
+use rmux_core::{
+    GridRenderOptions, Screen, ScreenCaptureRange, TerminalPassthrough, TerminalScreen, Utf8Config,
+};
 use rmux_proto::TerminalSize;
 
 pub(crate) type SharedPaneTranscript = Arc<Mutex<PaneTranscript>>;
-
-pub(crate) struct PaneAppendResult {
-    pub(crate) bell_count: u64,
-    pub(crate) replies: Vec<u8>,
-}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum PaneModeState {
@@ -27,6 +24,14 @@ pub(crate) struct PaneTranscript {
     clear_on_dead_exit: bool,
     #[cfg(test)]
     utf8_config: Utf8Config,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub(crate) struct PaneAppendResult {
+    pub(crate) bell_count: u64,
+    pub(crate) passthroughs: Vec<TerminalPassthrough>,
+    pub(crate) dropped_passthrough_count: u64,
+    pub(crate) replies: Vec<u8>,
 }
 
 impl std::fmt::Debug for PaneTranscript {
@@ -60,18 +65,26 @@ impl PaneTranscript {
     }
 
     pub(crate) fn append_bytes(&mut self, bytes: &[u8]) -> u64 {
-        self.append_bytes_and_take_replies(bytes).bell_count
+        self.append_bytes_with_effects(bytes).bell_count
     }
 
+    #[cfg(test)]
     pub(crate) fn append_bytes_and_take_replies(&mut self, bytes: &[u8]) -> PaneAppendResult {
+        self.append_bytes_with_effects(bytes)
+    }
+
+    pub(crate) fn append_bytes_with_effects(&mut self, bytes: &[u8]) -> PaneAppendResult {
         if !bytes.is_empty() {
             self.output_sequence = self.output_sequence.saturating_add(1);
         }
         self.terminal.feed(bytes);
-        let bell_count = self.terminal.screen_mut().take_bell_count();
+        let passthroughs = self.terminal.take_terminal_passthrough();
+        let dropped_passthrough_count = self.terminal.take_terminal_passthrough_dropped_count();
         let replies = self.terminal.take_replies();
         PaneAppendResult {
-            bell_count,
+            bell_count: self.terminal.screen_mut().take_bell_count(),
+            passthroughs,
+            dropped_passthrough_count,
             replies,
         }
     }
@@ -361,6 +374,65 @@ mod tests {
         assert_eq!(
             transcript.capture_main(ScreenCaptureRange::default(), GridRenderOptions::default()),
             b"three\n\n"
+        );
+    }
+
+    #[test]
+    fn append_bytes_reports_kitty_graphics_passthrough_without_capturing_text() {
+        let mut transcript = transcript(40, 4, 10);
+        let result = transcript.append_bytes_with_effects(b"\x1b[2;3H\x1b_Gf=100;AAAA\x1b\\");
+
+        assert_eq!(result.passthroughs.len(), 1);
+        assert_eq!(result.passthroughs[0].payload(), b"Gf=100;AAAA");
+        let capture = String::from_utf8(
+            transcript.capture_main(ScreenCaptureRange::default(), GridRenderOptions::default()),
+        )
+        .expect("capture is utf8");
+        assert!(!capture.contains("Gf=100"));
+    }
+
+    #[test]
+    fn append_bytes_reports_dropped_oversized_kitty_passthroughs() {
+        let mut transcript = transcript(40, 4, 10);
+        assert_eq!(
+            transcript
+                .append_bytes_with_effects(b"\x1b_G")
+                .dropped_passthrough_count,
+            0
+        );
+
+        let chunk = vec![b'A'; 1_048_577];
+        let result = transcript.append_bytes_with_effects(&chunk);
+
+        assert!(result.passthroughs.is_empty());
+        assert_eq!(result.dropped_passthrough_count, 1);
+        assert_eq!(
+            transcript
+                .append_bytes_with_effects(b"\x1b\\")
+                .dropped_passthrough_count,
+            0
+        );
+    }
+
+    #[test]
+    fn append_bytes_reports_terminal_replies() {
+        let mut transcript = transcript(40, 4, 10);
+        let result = transcript.append_bytes_with_effects(b"\x1b[c");
+
+        assert_eq!(result.replies, b"\x1b[?1;2c");
+        assert!(transcript.append_bytes_with_effects(b"").replies.is_empty());
+    }
+
+    #[test]
+    fn kitty_passthrough_batches_keep_da_reply_for_child() {
+        let mut transcript = transcript(40, 4, 10);
+        let result = transcript.append_bytes_with_effects(b"\x1b_Ga=q,f=24,i=1;MTIz\x1b\\\x1b[c");
+
+        assert_eq!(result.replies, b"\x1b[?1;2c");
+        assert_eq!(result.passthroughs.len(), 1);
+        assert_eq!(
+            result.passthroughs[0].render_sequence(),
+            b"\x1b_Ga=q,f=24,i=1;MTIz\x1b\\"
         );
     }
 

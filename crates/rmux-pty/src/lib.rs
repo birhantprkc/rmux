@@ -54,7 +54,7 @@ pub use child::{ChildCommand, PtyChild, SpawnedPty};
 #[cfg(unix)]
 pub use pty::PtySlave;
 pub use pty::{PtyIo, PtyMaster, PtyPair};
-pub use size::TerminalSize;
+pub use size::{TerminalGeometry, TerminalPixels, TerminalSize};
 
 /// A crate-local result type for PTY operations.
 pub type Result<T> = std::result::Result<T, PtyError>;

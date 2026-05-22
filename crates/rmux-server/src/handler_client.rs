@@ -4,7 +4,7 @@ use rmux_core::formats::{is_truthy, FormatContext};
 use rmux_proto::request::{ListClientsRequest, RefreshClientRequest, SuspendClientRequest};
 use rmux_proto::{
     ErrorResponse, ListClientsResponse, RefreshClientResponse, Response, RmuxError,
-    SuspendClientResponse, TerminalSize,
+    SuspendClientResponse, TerminalGeometry, TerminalSize,
 };
 
 use crate::format_runtime::{render_runtime_template, RuntimeFormatContext};
@@ -237,11 +237,27 @@ impl RequestHandler {
         session_name: &rmux_proto::SessionName,
         client_size: Option<TerminalSize>,
     ) -> Result<(), RmuxError> {
-        let Some(client_size) = client_size.filter(|size| size.cols > 0 && size.rows > 0) else {
+        self.resize_session_geometry_for_attach_client(
+            session_name,
+            client_size.map(TerminalGeometry::from_size),
+        )
+        .await
+    }
+
+    async fn resize_session_geometry_for_attach_client(
+        &self,
+        session_name: &rmux_proto::SessionName,
+        client_geometry: Option<TerminalGeometry>,
+    ) -> Result<(), RmuxError> {
+        let Some(client_geometry) =
+            client_geometry.filter(|geometry| geometry.size.cols > 0 && geometry.size.rows > 0)
+        else {
             return Ok(());
         };
+        let client_size = client_geometry.size;
 
         let mut state = self.state.lock().await;
+        state.set_attached_terminal_pixels(session_name, client_geometry.pixels);
         state.mutate_session_and_resize_terminals(session_name, |session| {
             session.touch_attached();
             session.resize_terminal(client_size);

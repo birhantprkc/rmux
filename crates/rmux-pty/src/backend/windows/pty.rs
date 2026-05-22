@@ -7,7 +7,7 @@ use windows_sys::Win32::System::Console::{
     ClosePseudoConsole, CreatePseudoConsole, ResizePseudoConsole, COORD, HPCON,
 };
 
-use crate::{Result, TerminalSize};
+use crate::{Result, TerminalGeometry, TerminalSize};
 
 use super::flags::{
     conpty_flags_without_passthrough, selected_conpty_flags, standard_conpty_flags, ConptyFlags,
@@ -214,6 +214,10 @@ pub(crate) fn apply_size(pty: &WindowsPty, size: TerminalSize) -> Result<()> {
         .map_err(|_| io::Error::other("ConPTY size mutex poisoned"))?;
     *stored = size;
     Ok(())
+}
+
+pub(crate) fn apply_geometry(pty: &WindowsPty, geometry: TerminalGeometry) -> Result<()> {
+    apply_size(pty, geometry.size)
 }
 
 fn create_pty_state_with_fallback(

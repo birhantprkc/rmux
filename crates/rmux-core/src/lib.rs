@@ -32,6 +32,7 @@ pub mod style;
 mod target;
 mod target_find;
 mod terminal;
+mod terminal_passthrough;
 mod terminal_screen;
 mod terminal_sequences;
 mod transcript;
@@ -83,6 +84,7 @@ pub use target_find::{
     command_target_metadata, CommandTargetMetadata, CommandTargetSpec, TargetFindContext,
     TargetFindFlags, TargetFindType, UnresolvedTarget,
 };
+pub use terminal_passthrough::{TerminalPassthrough, TerminalPassthroughKind};
 pub use terminal_screen::TerminalScreen;
 pub use terminal_sequences::{alternate_screen_enter_sequence, alternate_screen_exit_sequence};
 pub use transcript::{ScreenCaptureRange, Transcript};

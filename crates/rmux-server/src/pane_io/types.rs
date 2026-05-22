@@ -2,9 +2,10 @@ use rmux_core::events::{
     OutputCursor, OutputCursorItem, OutputRing, DEFAULT_OUTPUT_RING_CAPACITY,
     DEFAULT_RECENT_LIVE_BUFFER_CAPACITY,
 };
-use rmux_core::PaneId;
+use rmux_core::{PaneGeometry, PaneId, TerminalPassthrough};
 use rmux_proto::{AttachShellCommand, TerminalSize};
 use rmux_pty::PtyMaster;
+use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use tokio::sync::{mpsc, Notify};
@@ -114,6 +115,8 @@ pub(crate) struct AttachTarget {
     pub(crate) render_frame: Vec<u8>,
     pub(crate) outer_terminal: OuterTerminal,
     pub(crate) cursor_style: u32,
+    pub(crate) active_pane_geometry: PaneGeometry,
+    pub(crate) kitty_graphics_passthrough: bool,
     pub(crate) persistent_overlay_state_id: Option<u64>,
     pub(crate) live_pane: Option<Box<LivePaneRender>>,
 }
@@ -188,6 +191,8 @@ pub(super) struct OpenAttachTarget {
     pub(super) render_frame: Vec<u8>,
     pub(super) outer_terminal: OuterTerminal,
     pub(super) cursor_style: u32,
+    pub(super) active_pane_geometry: PaneGeometry,
+    pub(super) kitty_graphics_passthrough: bool,
     pub(super) persistent_overlay_state_id: Option<u64>,
     pub(super) live_pane: Option<Box<LivePaneRender>>,
 }
@@ -198,7 +203,7 @@ pub(crate) struct PaneOutputSender {
 }
 
 struct PaneOutputInner {
-    ring: Mutex<OutputRing>,
+    state: Mutex<PaneOutputState>,
     generation: AtomicU64,
     notify: Notify,
 }
@@ -206,6 +211,102 @@ struct PaneOutputInner {
 pub(crate) struct PaneOutputReceiver {
     inner: Arc<PaneOutputInner>,
     cursor: OutputCursor,
+    passthrough_floor_sequence: u64,
+}
+
+struct PaneOutputState {
+    ring: OutputRing,
+    passthroughs: VecDeque<PaneOutputPassthroughs>,
+}
+
+struct PaneOutputPassthroughs {
+    sequence: u64,
+    passthroughs: Vec<TerminalPassthrough>,
+}
+
+const PANE_OUTPUT_PASSTHROUGH_CAPACITY: usize = 16;
+
+impl PaneOutputState {
+    fn new(event_capacity: usize, recent_byte_capacity: usize) -> Self {
+        Self {
+            ring: OutputRing::new(event_capacity, recent_byte_capacity),
+            passthroughs: VecDeque::with_capacity(PANE_OUTPUT_PASSTHROUGH_CAPACITY),
+        }
+    }
+
+    fn push(&mut self, bytes: Vec<u8>, passthroughs: Vec<TerminalPassthrough>) -> u64 {
+        let sequence = self.ring.push(bytes).sequence();
+        if !passthroughs.is_empty() {
+            self.passthroughs.push_back(PaneOutputPassthroughs {
+                sequence,
+                passthroughs,
+            });
+            while self.passthroughs.len() > PANE_OUTPUT_PASSTHROUGH_CAPACITY {
+                let _ = self.passthroughs.pop_front();
+            }
+        }
+        sequence
+    }
+
+    fn cursor_from_now(&self) -> OutputCursor {
+        self.ring.cursor_from_now()
+    }
+
+    fn cursor_from_oldest(&self) -> OutputCursor {
+        self.ring.cursor_from_oldest()
+    }
+
+    fn next_sequence(&self) -> u64 {
+        self.ring.next_sequence()
+    }
+
+    fn clear_retained(&mut self) {
+        self.ring.clear_retained();
+        self.passthroughs.clear();
+    }
+
+    fn poll_cursor(
+        &self,
+        cursor: &mut OutputCursor,
+        passthrough_floor_sequence: u64,
+    ) -> Option<OutputCursorItem> {
+        self.ring
+            .poll_cursor(cursor)
+            .map(|item| self.attach_passthroughs(item, passthrough_floor_sequence))
+    }
+
+    fn poll_cursor_batch(
+        &self,
+        cursor: &mut OutputCursor,
+        passthrough_floor_sequence: u64,
+        limit: usize,
+    ) -> Vec<OutputCursorItem> {
+        self.ring
+            .poll_cursor_batch(cursor, limit)
+            .into_iter()
+            .map(|item| self.attach_passthroughs(item, passthrough_floor_sequence))
+            .collect()
+    }
+
+    fn attach_passthroughs(
+        &self,
+        item: OutputCursorItem,
+        passthrough_floor_sequence: u64,
+    ) -> OutputCursorItem {
+        let OutputCursorItem::Event(event) = item else {
+            return item;
+        };
+        if event.sequence() < passthrough_floor_sequence {
+            return OutputCursorItem::Event(event);
+        }
+        let passthroughs = self
+            .passthroughs
+            .iter()
+            .find(|candidate| candidate.sequence == event.sequence())
+            .map(|candidate| candidate.passthroughs.clone())
+            .unwrap_or_default();
+        OutputCursorItem::Event(event.with_passthroughs(passthroughs))
+    }
 }
 
 impl std::fmt::Debug for PaneOutputSender {
@@ -219,7 +320,7 @@ impl std::fmt::Debug for PaneOutputSender {
 impl PaneOutputSender {
     #[cfg(test)]
     pub(crate) fn send(&self, bytes: Vec<u8>) -> u64 {
-        self.push_for_generation(None, bytes)
+        self.push_for_generation(None, bytes, Vec::new())
             .expect("unguarded pane output send should always be accepted")
     }
 
@@ -228,7 +329,16 @@ impl PaneOutputSender {
         generation: Option<u64>,
         bytes: Vec<u8>,
     ) -> Option<u64> {
-        self.push_for_generation(generation, bytes)
+        self.push_for_generation(generation, bytes, Vec::new())
+    }
+
+    pub(crate) fn send_for_generation_with_passthroughs(
+        &self,
+        generation: Option<u64>,
+        bytes: Vec<u8>,
+        passthroughs: Vec<TerminalPassthrough>,
+    ) -> Option<u64> {
+        self.push_for_generation(generation, bytes, passthroughs)
     }
 
     pub(crate) fn accepts_generation(&self, generation: Option<u64>) -> bool {
@@ -241,9 +351,9 @@ impl PaneOutputSender {
         // generation and then publish after a respawn.
         let _ring = self
             .inner
-            .ring
+            .state
             .lock()
-            .expect("pane output ring mutex must not be poisoned");
+            .expect("pane output state mutex must not be poisoned");
         self.inner.generation.store(generation, Ordering::SeqCst);
     }
 
@@ -252,51 +362,64 @@ impl PaneOutputSender {
     }
 
     pub(crate) fn subscribe(&self) -> PaneOutputReceiver {
-        let cursor = self
-            .inner
-            .ring
-            .lock()
-            .expect("pane output ring mutex must not be poisoned")
-            .cursor_from_now();
+        let (cursor, passthrough_floor_sequence) = {
+            let state = self
+                .inner
+                .state
+                .lock()
+                .expect("pane output state mutex must not be poisoned");
+            let cursor = state.cursor_from_now();
+            let passthrough_floor_sequence = cursor.next_sequence();
+            (cursor, passthrough_floor_sequence)
+        };
         PaneOutputReceiver {
             inner: Arc::clone(&self.inner),
             cursor,
+            passthrough_floor_sequence,
         }
     }
 
     pub(crate) fn subscribe_from_oldest(&self) -> PaneOutputReceiver {
-        let cursor = self
-            .inner
-            .ring
-            .lock()
-            .expect("pane output ring mutex must not be poisoned")
-            .cursor_from_oldest();
+        let (cursor, passthrough_floor_sequence) = {
+            let state = self
+                .inner
+                .state
+                .lock()
+                .expect("pane output state mutex must not be poisoned");
+            (state.cursor_from_oldest(), state.next_sequence())
+        };
         PaneOutputReceiver {
             inner: Arc::clone(&self.inner),
             cursor,
+            passthrough_floor_sequence,
         }
     }
 
     pub(crate) fn clear_retained(&self) {
         self.inner
-            .ring
+            .state
             .lock()
-            .expect("pane output ring mutex must not be poisoned")
+            .expect("pane output state mutex must not be poisoned")
             .clear_retained();
         self.inner.notify.notify_waiters();
     }
 
-    fn push_for_generation(&self, generation: Option<u64>, bytes: Vec<u8>) -> Option<u64> {
+    fn push_for_generation(
+        &self,
+        generation: Option<u64>,
+        bytes: Vec<u8>,
+        passthroughs: Vec<TerminalPassthrough>,
+    ) -> Option<u64> {
         let sequence = {
-            let mut ring = self
+            let mut state = self
                 .inner
-                .ring
+                .state
                 .lock()
-                .expect("pane output ring mutex must not be poisoned");
+                .expect("pane output state mutex must not be poisoned");
             if !generation_matches(self.current_generation(), generation) {
                 return None;
             }
-            ring.push(bytes).sequence()
+            state.push(bytes, passthroughs)
         };
         self.inner.notify.notify_waiters();
         Some(sequence)
@@ -326,18 +449,18 @@ impl PaneOutputReceiver {
 
     pub(crate) fn try_recv(&mut self) -> Option<OutputCursorItem> {
         self.inner
-            .ring
+            .state
             .lock()
-            .expect("pane output ring mutex must not be poisoned")
-            .poll_cursor(&mut self.cursor)
+            .expect("pane output state mutex must not be poisoned")
+            .poll_cursor(&mut self.cursor, self.passthrough_floor_sequence)
     }
 
     pub(crate) fn try_recv_batch(&mut self, limit: usize) -> Vec<OutputCursorItem> {
         self.inner
-            .ring
+            .state
             .lock()
-            .expect("pane output ring mutex must not be poisoned")
-            .poll_cursor_batch(&mut self.cursor, limit)
+            .expect("pane output state mutex must not be poisoned")
+            .poll_cursor_batch(&mut self.cursor, self.passthrough_floor_sequence, limit)
     }
 
     pub(crate) const fn cursor(&self) -> &OutputCursor {
@@ -358,7 +481,7 @@ pub(crate) fn pane_output_channel_with_limits(
 ) -> PaneOutputSender {
     PaneOutputSender {
         inner: Arc::new(PaneOutputInner {
-            ring: Mutex::new(OutputRing::new(event_capacity, recent_byte_capacity)),
+            state: Mutex::new(PaneOutputState::new(event_capacity, recent_byte_capacity)),
             generation: AtomicU64::new(0),
             notify: Notify::new(),
         }),
@@ -402,5 +525,80 @@ mod tests {
         };
         assert_eq!(event.sequence(), 1);
         assert_eq!(event.bytes(), b"fresh");
+    }
+
+    #[test]
+    fn live_passthroughs_are_attached_to_existing_receivers() {
+        let sender = pane_output_channel_with_limits(4, 64);
+        let mut receiver = sender.subscribe();
+
+        sender.send_for_generation_with_passthroughs(
+            None,
+            b"image".to_vec(),
+            vec![TerminalPassthrough::kitty_graphics(1, 2, b"Gf=100;AAAA")],
+        );
+
+        let Some(OutputCursorItem::Event(event)) = receiver.try_recv() else {
+            panic!("receiver should see live output");
+        };
+        assert_eq!(event.bytes(), b"image");
+        assert_eq!(event.passthroughs().len(), 1);
+        assert_eq!(event.passthroughs()[0].cursor_x(), 1);
+        assert_eq!(event.passthroughs()[0].payload(), b"Gf=100;AAAA");
+    }
+
+    #[test]
+    fn passthroughs_are_not_replayed_to_oldest_subscribers() {
+        let sender = pane_output_channel_with_limits(4, 64);
+
+        sender.send_for_generation_with_passthroughs(
+            None,
+            b"historic-image".to_vec(),
+            vec![TerminalPassthrough::kitty_graphics(0, 0, b"Gf=100;AAAA")],
+        );
+        let mut receiver = sender.subscribe_from_oldest();
+
+        let Some(OutputCursorItem::Event(event)) = receiver.try_recv() else {
+            panic!("receiver should replay retained bytes");
+        };
+        assert_eq!(event.bytes(), b"historic-image");
+        assert!(
+            event.passthroughs().is_empty(),
+            "kitty passthrough is live-only and must not replay from retained output"
+        );
+    }
+
+    #[test]
+    fn live_passthrough_retention_is_bounded() {
+        let sender = pane_output_channel_with_limits(PANE_OUTPUT_PASSTHROUGH_CAPACITY + 2, 1024);
+        let mut receiver = sender.subscribe();
+
+        for index in 0..=PANE_OUTPUT_PASSTHROUGH_CAPACITY {
+            sender.send_for_generation_with_passthroughs(
+                None,
+                format!("event-{index}").into_bytes(),
+                vec![TerminalPassthrough::kitty_graphics(
+                    0,
+                    0,
+                    format!("Gf=100;{index}").into_bytes(),
+                )],
+            );
+        }
+
+        let Some(OutputCursorItem::Event(first)) = receiver.try_recv() else {
+            panic!("receiver should see the first retained event");
+        };
+        assert_eq!(first.sequence(), 0);
+        assert!(
+            first.passthroughs().is_empty(),
+            "old live passthrough side effects should be dropped when the bounded queue rotates"
+        );
+
+        let mut latest = first;
+        while let Some(OutputCursorItem::Event(event)) = receiver.try_recv() {
+            latest = event;
+        }
+        assert_eq!(latest.sequence(), PANE_OUTPUT_PASSTHROUGH_CAPACITY as u64);
+        assert_eq!(latest.passthroughs().len(), 1);
     }
 }

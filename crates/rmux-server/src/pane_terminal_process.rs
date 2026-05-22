@@ -6,8 +6,11 @@ use std::process::ExitStatus;
 use std::time::Duration;
 
 use rmux_core::PaneGeometry;
-use rmux_proto::{ProcessCommand, RmuxError};
-use rmux_pty::{PtyChild, PtyMaster, Signal, TerminalSize as PtyTerminalSize};
+use rmux_proto::{ProcessCommand, RmuxError, TerminalPixels, TerminalSize};
+use rmux_pty::{
+    PtyChild, PtyMaster, Signal, TerminalGeometry as PtyTerminalGeometry,
+    TerminalSize as PtyTerminalSize,
+};
 
 use crate::terminal::{spawn_pane_process, TerminalProfile};
 
@@ -44,8 +47,8 @@ impl PaneTerminal {
         }
     }
 
-    pub(crate) fn resize(&self, size: PtyTerminalSize) -> rmux_pty::Result<()> {
-        self.master.resize(size)
+    pub(crate) fn resize(&self, geometry: PtyTerminalGeometry) -> rmux_pty::Result<()> {
+        self.master.resize_geometry(geometry)
     }
 
     #[cfg(unix)]
@@ -161,4 +164,57 @@ pub(crate) fn open_pane_terminal(
 
 pub(crate) fn pty_size_from_geometry(geometry: PaneGeometry) -> PtyTerminalSize {
     PtyTerminalSize::new(geometry.cols(), geometry.rows())
+}
+
+pub(crate) fn pty_geometry_from_layout(
+    geometry: PaneGeometry,
+    session_size: TerminalSize,
+    terminal_pixels: Option<TerminalPixels>,
+) -> PtyTerminalGeometry {
+    let size = pty_size_from_geometry(geometry);
+    let Some(terminal_pixels) = terminal_pixels else {
+        return PtyTerminalGeometry::from_size(size);
+    };
+    let Some(pixels) = scale_pane_pixels(size, session_size, terminal_pixels) else {
+        return PtyTerminalGeometry::from_size(size);
+    };
+    PtyTerminalGeometry::from_size(size).with_pixels(pixels)
+}
+
+fn scale_pane_pixels(
+    pane_size: TerminalSize,
+    session_size: TerminalSize,
+    terminal_pixels: TerminalPixels,
+) -> Option<TerminalPixels> {
+    let width = scale_dimension_pixels(pane_size.cols, session_size.cols, terminal_pixels.width)?;
+    let height = scale_dimension_pixels(pane_size.rows, session_size.rows, terminal_pixels.height)?;
+    Some(TerminalPixels::new(width, height))
+}
+
+fn scale_dimension_pixels(cells: u16, total_cells: u16, total_pixels: u16) -> Option<u16> {
+    if cells == 0 || total_cells == 0 || total_pixels == 0 {
+        return None;
+    }
+    let scaled = u32::from(total_pixels).saturating_mul(u32::from(cells)) / u32::from(total_cells);
+    Some(u16::try_from(scaled.max(1)).unwrap_or(u16::MAX))
+}
+
+#[cfg(test)]
+mod tests {
+    use rmux_core::PaneGeometry;
+    use rmux_proto::{TerminalPixels, TerminalSize};
+
+    use super::pty_geometry_from_layout;
+
+    #[test]
+    fn pty_geometry_scales_terminal_pixels_to_pane_cells() {
+        let geometry = pty_geometry_from_layout(
+            PaneGeometry::new(0, 0, 60, 20),
+            TerminalSize::new(120, 40),
+            Some(TerminalPixels::new(1440, 960)),
+        );
+
+        assert_eq!(geometry.size, TerminalSize::new(60, 20));
+        assert_eq!(geometry.pixels, Some(TerminalPixels::new(720, 480)));
+    }
 }

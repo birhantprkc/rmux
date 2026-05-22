@@ -20,7 +20,7 @@ pub(super) struct PaneInputWrite {
 
 enum PaneInputSink {
     Pty(PtyMaster),
-    #[cfg(all(test, windows))]
+    #[cfg(test)]
     CapturedForTest,
 }
 
@@ -33,9 +33,9 @@ pub(super) fn prepare_pane_input_write(
     let window_index = target.window_index();
     let pane_index = target.pane_index();
     let master = state.pane_master_in_window(&session_name, window_index, pane_index)?;
-    #[cfg(not(all(test, windows)))]
+    #[cfg(not(test))]
     let _ = bytes;
-    #[cfg(all(test, windows))]
+    #[cfg(test)]
     if state.append_pane_input_capture_for_test(target, bytes) {
         return Ok(PaneInputWrite {
             session_name,
@@ -83,7 +83,7 @@ pub(super) async fn write_bytes_to_target_io(
                 session_name, window_index, pane_index, error
             ))
         }),
-        #[cfg(all(test, windows))]
+        #[cfg(test)]
         PaneInputSink::CapturedForTest => Ok(()),
     }
 }

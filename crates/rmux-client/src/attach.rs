@@ -11,7 +11,7 @@ use std::time::Duration;
 
 use rmux_proto::{
     encode_attach_message, AttachFrameDecoder, AttachMessage, AttachedKeystroke, RmuxError,
-    TerminalSize,
+    TerminalGeometry, TerminalSize,
 };
 use rustix::event::{poll, PollFd, PollFlags, Timespec};
 use rustix::process::{kill_process, Signal};
@@ -27,7 +27,9 @@ mod terminal;
 #[path = "attach/terminal_cleanup.rs"]
 mod terminal_cleanup;
 
-use resize::{terminal_size_from_fd, ResizeWatcher, SignalMaskGuard};
+#[cfg(test)]
+use resize::terminal_size_from_fd;
+use resize::{terminal_geometry_from_fd, ResizeWatcher, SignalMaskGuard};
 use screen::{
     contains_subslice, AttachScreenTracker, AttachStopDetector, ALT_SCREEN_EXIT_FALLBACK,
     DETACHED_BANNER_PREFIX, EXITED_BANNER,
@@ -54,11 +56,38 @@ pub fn attach_terminal_with_initial_bytes(
     stream: UnixStream,
     initial_bytes: Vec<u8>,
 ) -> std::result::Result<(), ClientError> {
+    attach_terminal_with_initial_bytes_and_geometry_flag(stream, initial_bytes, false)
+}
+
+/// Runs the attach loop and sends resize events with pixel geometry.
+///
+/// Call this only after the daemon advertises the
+/// `stream.attach.resize_geometry` capability. Older daemons do not understand
+/// that attach-stream frame and would close the stream on decode.
+pub fn attach_terminal_with_initial_bytes_and_resize_geometry(
+    stream: UnixStream,
+    initial_bytes: Vec<u8>,
+) -> std::result::Result<(), ClientError> {
+    attach_terminal_with_initial_bytes_and_geometry_flag(stream, initial_bytes, true)
+}
+
+fn attach_terminal_with_initial_bytes_and_geometry_flag(
+    stream: UnixStream,
+    initial_bytes: Vec<u8>,
+    resize_geometry_enabled: bool,
+) -> std::result::Result<(), ClientError> {
     let terminal = io::stdin();
     let input = io::stdin();
     let output = io::stdout();
 
-    attach_with_terminal_with_initial_bytes(stream, initial_bytes, &terminal, input, output)
+    attach_with_terminal_with_initial_bytes(
+        stream,
+        initial_bytes,
+        &terminal,
+        input,
+        output,
+        resize_geometry_enabled,
+    )
 }
 
 /// Runs the attach loop with an explicit terminal file descriptor.
@@ -76,7 +105,7 @@ where
     Input: Read + AsFd + Send + 'static,
     Output: Write + Send + 'static,
 {
-    attach_with_terminal_with_initial_bytes(stream, Vec::new(), terminal, input, output)
+    attach_with_terminal_with_initial_bytes(stream, Vec::new(), terminal, input, output, false)
 }
 
 fn attach_with_terminal_with_initial_bytes<Terminal, Input, Output>(
@@ -85,6 +114,7 @@ fn attach_with_terminal_with_initial_bytes<Terminal, Input, Output>(
     terminal: &Terminal,
     input: Input,
     output: Output,
+    resize_geometry_enabled: bool,
 ) -> std::result::Result<(), ClientError>
 where
     Terminal: AsFd,
@@ -94,15 +124,15 @@ where
     let raw_terminal = RawTerminal::from_fd(terminal).map_err(ClientError::from)?;
     let _ = raw_terminal.flush_pending_input();
     let screen_tracker = AttachScreenTracker::default();
-    let result = drive_attach_with_terminal_state(
+    let attach_state = AttachTerminalState {
         stream,
         initial_bytes,
         terminal,
-        &raw_terminal,
-        &screen_tracker,
-        input,
-        output,
-    );
+        raw_terminal: &raw_terminal,
+        screen_tracker: &screen_tracker,
+        resize_geometry_enabled,
+    };
+    let result = drive_attach_with_terminal_state(attach_state, input, output);
     if result.is_err() && !screen_tracker.was_stopped() {
         let _ = raw_terminal.restore_attach_terminal_state();
     }
@@ -111,12 +141,26 @@ where
     result
 }
 
-fn drive_attach_with_terminal_state<Terminal, Input, Output>(
+struct AttachTerminalState<'a, Terminal> {
     stream: UnixStream,
     initial_bytes: Vec<u8>,
-    terminal: &Terminal,
-    raw_terminal: &RawTerminal,
-    screen_tracker: &AttachScreenTracker,
+    terminal: &'a Terminal,
+    raw_terminal: &'a RawTerminal,
+    screen_tracker: &'a AttachScreenTracker,
+    resize_geometry_enabled: bool,
+}
+
+struct AttachStreamState<'a> {
+    stream: UnixStream,
+    initial_bytes: Vec<u8>,
+    raw_terminal: Option<&'a RawTerminal>,
+    screen_tracker: AttachScreenTracker,
+    resize_events: mpsc::Receiver<TerminalGeometry>,
+    resize_geometry_enabled: bool,
+}
+
+fn drive_attach_with_terminal_state<Terminal, Input, Output>(
+    state: AttachTerminalState<'_, Terminal>,
     input: Input,
     output: Output,
 ) -> std::result::Result<(), ClientError>
@@ -129,14 +173,15 @@ where
     // which keeps termios restoration as the last drop on every return path.
     let _signal_mask = SignalMaskGuard::block_winch().map_err(ClientError::from)?;
     let (resize_tx, resize_rx) = mpsc::channel();
-    let initial_size = terminal_size_from_fd(terminal).map_err(ClientError::from)?;
-    let terminal_fd = terminal
+    let initial_geometry = terminal_geometry_from_fd(state.terminal).map_err(ClientError::from)?;
+    let terminal_fd = state
+        .terminal
         .as_fd()
         .try_clone_to_owned()
         .map_err(AttachError::from)?;
 
-    if let Some(initial_size) = initial_size {
-        resize_tx.send(initial_size).map_err(|_| {
+    if let Some(initial_geometry) = initial_geometry {
+        resize_tx.send(initial_geometry).map_err(|_| {
             ClientError::Io(io::Error::other(
                 "resize channel closed before attach start",
             ))
@@ -144,15 +189,15 @@ where
     }
 
     let resize_watcher = ResizeWatcher::spawn(terminal_fd, resize_tx)?;
-    let attach_result = drive_attach_stream_with_locking(
-        stream,
-        initial_bytes,
-        raw_terminal,
-        screen_tracker,
-        input,
-        output,
-        resize_rx,
-    );
+    let stream_state = AttachStreamState {
+        stream: state.stream,
+        initial_bytes: state.initial_bytes,
+        raw_terminal: Some(state.raw_terminal),
+        screen_tracker: state.screen_tracker.clone(),
+        resize_events: resize_rx,
+        resize_geometry_enabled: state.resize_geometry_enabled,
+    };
+    let attach_result = drive_attach_stream_inner(stream_state, input, output);
     drop(resize_watcher);
     attach_result
 }
@@ -168,57 +213,30 @@ where
     Input: Read + AsFd + Send + 'static,
     Output: Write + Send + 'static,
 {
-    drive_attach_stream_inner(
+    let resize_events = geometry_resize_events_from_size_events(resize_events);
+    let stream_state = AttachStreamState {
         stream,
-        Vec::new(),
-        None,
-        AttachScreenTracker::default(),
-        input,
-        output,
+        initial_bytes: Vec::new(),
+        raw_terminal: None,
+        screen_tracker: AttachScreenTracker::default(),
         resize_events,
-    )
-}
-
-fn drive_attach_stream_with_locking<Input, Output>(
-    stream: UnixStream,
-    initial_bytes: Vec<u8>,
-    raw_terminal: &RawTerminal,
-    screen_tracker: &AttachScreenTracker,
-    input: Input,
-    output: Output,
-    resize_events: mpsc::Receiver<TerminalSize>,
-) -> std::result::Result<(), ClientError>
-where
-    Input: Read + AsFd + Send + 'static,
-    Output: Write + Send + 'static,
-{
-    drive_attach_stream_inner(
-        stream,
-        initial_bytes,
-        Some(raw_terminal),
-        screen_tracker.clone(),
-        input,
-        output,
-        resize_events,
-    )
+        resize_geometry_enabled: false,
+    };
+    drive_attach_stream_inner(stream_state, input, output)
 }
 
 fn drive_attach_stream_inner<Input, Output>(
-    stream: UnixStream,
-    initial_bytes: Vec<u8>,
-    raw_terminal: Option<&RawTerminal>,
-    screen_tracker: AttachScreenTracker,
+    state: AttachStreamState<'_>,
     input: Input,
     output: Output,
-    resize_events: mpsc::Receiver<TerminalSize>,
 ) -> std::result::Result<(), ClientError>
 where
     Input: Read + AsFd + Send + 'static,
     Output: Write + Send + 'static,
 {
-    let control = stream.try_clone().map_err(ClientError::Io)?;
-    let mut lock_stream = stream.try_clone().map_err(ClientError::Io)?;
-    let input_stream = stream.try_clone().map_err(ClientError::Io)?;
+    let control = state.stream.try_clone().map_err(ClientError::Io)?;
+    let mut lock_stream = state.stream.try_clone().map_err(ClientError::Io)?;
+    let input_stream = state.stream.try_clone().map_err(ClientError::Io)?;
     let closed = Arc::new(AtomicBool::new(false));
     let input_closed = Arc::clone(&closed);
     let output_closed = Arc::clone(&closed);
@@ -231,16 +249,17 @@ where
         input_loop(
             input_stream,
             input,
-            resize_events,
+            state.resize_events,
+            state.resize_geometry_enabled,
             input_closed,
             input_locked,
         )
     });
-    let output_screen_tracker = screen_tracker.clone();
+    let output_screen_tracker = state.screen_tracker.clone();
     let output_thread = thread::spawn(move || {
         output_loop(
-            stream,
-            initial_bytes,
+            state.stream,
+            state.initial_bytes,
             output,
             output_closed,
             output_locked,
@@ -251,7 +270,7 @@ where
 
     let output_result = wait_for_output_thread(
         output_thread,
-        raw_terminal,
+        state.raw_terminal,
         &mut lock_stream,
         &locked,
         action_rx,
@@ -264,10 +283,25 @@ where
     input_result
 }
 
+fn geometry_resize_events_from_size_events(
+    resize_events: mpsc::Receiver<TerminalSize>,
+) -> mpsc::Receiver<TerminalGeometry> {
+    let (geometry_tx, geometry_rx) = mpsc::channel();
+    let _forwarder = thread::spawn(move || {
+        while let Ok(size) = resize_events.recv() {
+            if geometry_tx.send(TerminalGeometry::from_size(size)).is_err() {
+                break;
+            }
+        }
+    });
+    geometry_rx
+}
+
 fn input_loop<Input>(
     mut stream: UnixStream,
     mut input: Input,
-    resize_events: mpsc::Receiver<TerminalSize>,
+    resize_events: mpsc::Receiver<TerminalGeometry>,
+    resize_geometry_enabled: bool,
     closed: Arc<AtomicBool>,
     locked: Arc<AtomicBool>,
 ) -> std::result::Result<(), ClientError>
@@ -281,7 +315,7 @@ where
             return Ok(());
         }
 
-        drain_resize_events(&mut stream, &resize_events)?;
+        drain_resize_events(&mut stream, &resize_events, resize_geometry_enabled)?;
         if locked.load(Ordering::SeqCst) {
             thread::sleep(Duration::from_millis(20));
             continue;
@@ -365,7 +399,7 @@ where
                     output.flush().map_err(ClientError::Io)?;
                 }
                 AttachMessage::KeyDispatched(_) => {}
-                AttachMessage::Resize(_) => {
+                AttachMessage::Resize(_) | AttachMessage::ResizeGeometry(_) => {
                     return Err(ClientError::Protocol(RmuxError::Decode(
                         "received unexpected resize message from attach stream".to_owned(),
                     )));
@@ -540,10 +574,16 @@ fn handle_attach_action(
 
 fn drain_resize_events(
     stream: &mut UnixStream,
-    resize_events: &mpsc::Receiver<TerminalSize>,
+    resize_events: &mpsc::Receiver<TerminalGeometry>,
+    resize_geometry_enabled: bool,
 ) -> std::result::Result<(), ClientError> {
-    while let Ok(size) = resize_events.try_recv() {
-        write_attach_message(stream, AttachMessage::Resize(size))?;
+    while let Ok(geometry) = resize_events.try_recv() {
+        let message = if resize_geometry_enabled && geometry.pixels.is_some() {
+            AttachMessage::ResizeGeometry(geometry)
+        } else {
+            AttachMessage::Resize(geometry.size)
+        };
+        write_attach_message(stream, message)?;
     }
 
     Ok(())

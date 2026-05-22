@@ -235,7 +235,7 @@ where
                 send_attach_action(action_tx, AttachAction::Suspend)?;
                 *pending_actions += 1;
             }
-            AttachMessage::Resize(_) => {
+            AttachMessage::Resize(_) | AttachMessage::ResizeGeometry(_) => {
                 return Err(ClientError::Protocol(RmuxError::Decode(
                     "received unexpected resize message from attach stream".to_owned(),
                 )));

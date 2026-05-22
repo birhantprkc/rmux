@@ -4,6 +4,7 @@ use crate::grid::{Grid, GridCell, GridCellFlags, GridLine};
 use crate::hyperlinks::Hyperlinks;
 use crate::input::mode;
 use crate::input::{CellState, SavedState, ScreenWriter, COLOUR_DEFAULT};
+use crate::terminal_passthrough::TerminalPassthrough;
 use crate::utf8::{combine_char as utf8_combine_char, CombineResult, Utf8Config};
 use rmux_proto::TerminalSize;
 
@@ -19,6 +20,9 @@ mod view;
 mod writer;
 
 pub use view::{ScreenCellView, ScreenLineView};
+
+pub(crate) const MAX_TERMINAL_PASSTHROUGH_EVENTS: usize = 256;
+pub(crate) const MAX_TERMINAL_PASSTHROUGH_PAYLOAD_BYTES: usize = 8 * 1024 * 1024;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct SavedGrid {
@@ -51,6 +55,8 @@ pub struct Screen {
     hyperlinks: Hyperlinks,
     active_hyperlink: u32,
     bell_count: u64,
+    terminal_passthrough: Vec<TerminalPassthrough>,
+    dropped_terminal_passthrough_count: u64,
     utf8_config: Utf8Config,
 }
 
@@ -81,6 +87,8 @@ impl Screen {
             hyperlinks: Hyperlinks::new(),
             active_hyperlink: 0,
             bell_count: 0,
+            terminal_passthrough: Vec::new(),
+            dropped_terminal_passthrough_count: 0,
             utf8_config: Utf8Config::default(),
         };
         screen.reset_tabs();
@@ -228,6 +236,45 @@ impl Screen {
         let bell_count = self.bell_count;
         self.bell_count = 0;
         bell_count
+    }
+
+    /// Drains terminal passthrough events observed since the last drain.
+    pub fn take_terminal_passthrough(&mut self) -> Vec<TerminalPassthrough> {
+        std::mem::take(&mut self.terminal_passthrough)
+    }
+
+    /// Drains the count of terminal passthrough events dropped by safety limits.
+    pub fn take_terminal_passthrough_dropped_count(&mut self) -> u64 {
+        let dropped = self.dropped_terminal_passthrough_count;
+        self.dropped_terminal_passthrough_count = 0;
+        dropped
+    }
+
+    fn push_terminal_passthrough(&mut self, cursor_x: u32, cursor_y: u32, payload: &[u8]) {
+        if payload.len() > MAX_TERMINAL_PASSTHROUGH_PAYLOAD_BYTES {
+            self.dropped_terminal_passthrough_count =
+                self.dropped_terminal_passthrough_count.saturating_add(1);
+            return;
+        }
+
+        let overflow = self
+            .terminal_passthrough
+            .len()
+            .saturating_add(1)
+            .saturating_sub(MAX_TERMINAL_PASSTHROUGH_EVENTS);
+        if overflow > 0 {
+            self.terminal_passthrough.drain(..overflow);
+            self.dropped_terminal_passthrough_count = self
+                .dropped_terminal_passthrough_count
+                .saturating_add(overflow as u64);
+        }
+
+        self.terminal_passthrough
+            .push(TerminalPassthrough::kitty_graphics(
+                cursor_x,
+                cursor_y,
+                payload.to_vec(),
+            ));
     }
 
     /// Returns the stored OSC 8 URI for a hyperlink inner ID.

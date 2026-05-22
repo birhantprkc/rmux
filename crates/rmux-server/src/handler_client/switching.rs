@@ -265,7 +265,7 @@ impl RequestHandler {
 
         match client {
             ManagedClient::Attach(attach_pid) => {
-                let Some((terminal_context, client_size)) = self
+                let Some((terminal_context, client_size, client_pixels)) = self
                     .terminal_context_and_size_for_attached_client(attach_pid)
                     .await
                 else {
@@ -274,7 +274,13 @@ impl RequestHandler {
                     });
                 };
                 if let Err(error) = self
-                    .resize_session_for_attach_client(&session_name, Some(client_size))
+                    .resize_session_geometry_for_attach_client(
+                        &session_name,
+                        Some(rmux_proto::TerminalGeometry {
+                            size: client_size,
+                            pixels: client_pixels,
+                        }),
+                    )
                     .await
                 {
                     return Response::Error(ErrorResponse { error });
