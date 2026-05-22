@@ -10,8 +10,8 @@ use super::args::{
 };
 use super::text::{normalize_positions, owner_positions};
 use super::types::{
-    ClearPolicy, CopyBufferTarget, CopyModeCommandOutcome, CopyModeTransfer, CopyPosition,
-    ModeKeys, SelectionMode,
+    ClearPolicy, CopyBufferTarget, CopyModeCommandOutcome, CopyModePipeCommand, CopyModeTransfer,
+    CopyPosition, ModeKeys, SelectionMode,
 };
 use super::CopyModeState;
 
@@ -88,11 +88,6 @@ impl CopyModeState {
         let parsed = parse_flagged_args(args, "CP")?;
         ensure_max_positional("copy-pipe", &parsed.positionals, 2)?;
         let data = self.current_selection_bytes();
-        let pipe_command = parsed
-            .positionals
-            .first()
-            .cloned()
-            .filter(|value| !value.is_empty());
         let buffer_target = if parsed.flags.contains(&'P') {
             None
         } else {
@@ -110,7 +105,7 @@ impl CopyModeState {
                 data,
                 buffer_target,
                 append: false,
-                pipe_command,
+                pipe_command: Some(copy_pipe_command(&parsed.positionals)),
             }),
         };
         if clear != ClearPolicy::Never {
@@ -134,10 +129,7 @@ impl CopyModeState {
                 data,
                 buffer_target: None,
                 append: false,
-                pipe_command: positionals
-                    .first()
-                    .cloned()
-                    .filter(|value| !value.is_empty()),
+                pipe_command: explicit_pipe_command(&positionals),
             }),
         };
         if clear != ClearPolicy::Never {
@@ -183,11 +175,7 @@ impl CopyModeState {
                 buffer_target,
                 append: false,
                 pipe_command: if pipe {
-                    parsed
-                        .positionals
-                        .first()
-                        .cloned()
-                        .filter(|value| !value.is_empty())
+                    Some(copy_pipe_command(&parsed.positionals))
                 } else {
                     None
                 },
@@ -237,11 +225,7 @@ impl CopyModeState {
                 buffer_target,
                 append: false,
                 pipe_command: if pipe {
-                    parsed
-                        .positionals
-                        .first()
-                        .cloned()
-                        .filter(|value| !value.is_empty())
+                    Some(copy_pipe_command(&parsed.positionals))
                 } else {
                     None
                 },
@@ -371,6 +355,18 @@ impl CopyModeState {
         let owner = line.owning_cell_x(end.x).unwrap_or(end.x);
         owner_positions(&line).into_iter().rfind(|x| *x < owner)
     }
+}
+
+fn copy_pipe_command(positionals: &[String]) -> CopyModePipeCommand {
+    explicit_pipe_command(positionals).unwrap_or(CopyModePipeCommand::CopyCommandOption)
+}
+
+fn explicit_pipe_command(positionals: &[String]) -> Option<CopyModePipeCommand> {
+    positionals
+        .first()
+        .cloned()
+        .filter(|value| !value.is_empty())
+        .map(CopyModePipeCommand::Explicit)
 }
 
 pub(crate) async fn run_pipe_command(

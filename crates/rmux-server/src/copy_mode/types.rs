@@ -86,7 +86,13 @@ pub(crate) struct CopyModeTransfer {
     pub(crate) data: Vec<u8>,
     pub(crate) buffer_target: Option<CopyBufferTarget>,
     pub(crate) append: bool,
-    pub(crate) pipe_command: Option<String>,
+    pub(crate) pipe_command: Option<CopyModePipeCommand>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum CopyModePipeCommand {
+    Explicit(String),
+    CopyCommandOption,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

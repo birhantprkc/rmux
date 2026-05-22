@@ -26,8 +26,8 @@ use text::{
 pub(crate) use transfer::run_pipe_command;
 #[cfg_attr(windows, allow(unused_imports))]
 pub(crate) use types::{
-    CopyBufferTarget, CopyModeCommandContext, CopyModeMouseContext, CopyModeSummary,
-    CopyModeTransfer, CopyPosition, ModeKeys,
+    CopyBufferTarget, CopyModeCommandContext, CopyModeMouseContext, CopyModePipeCommand,
+    CopyModeSummary, CopyModeTransfer, CopyPosition, ModeKeys,
 };
 use types::{JumpState, SearchDirection, SearchMatch, SelectionState};
 

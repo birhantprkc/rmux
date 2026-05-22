@@ -26,13 +26,13 @@ bind T if-shell -F '#{mouse}' 'set -g mouse off \; display-message "mouse OFF: n
 # Keep cwd when opening new panes or windows.
 # new-window supports -c, but split-window may not on current RMUX preview builds.
 # Use a tiny helper for cwd-preserving pane splits.
-bind % split-window -h ~/.local/bin/rmux-pane-shell "#{pane_current_path}"
-bind '"' split-window -v ~/.local/bin/rmux-pane-shell "#{pane_current_path}"
+bind % split-window -h 'exec "$HOME/.local/bin/rmux-pane-shell" "#{pane_current_path}"'
+bind '"' split-window -v 'exec "$HOME/.local/bin/rmux-pane-shell" "#{pane_current_path}"'
 bind c new-window -c "#{pane_current_path}"
 
 # Easier split bindings for keyboard layouts where %, ", or | are awkward.
-bind v split-window -h ~/.local/bin/rmux-pane-shell "#{pane_current_path}"
-bind b split-window -v ~/.local/bin/rmux-pane-shell "#{pane_current_path}"
+bind v split-window -h 'exec "$HOME/.local/bin/rmux-pane-shell" "#{pane_current_path}"'
+bind b split-window -v 'exec "$HOME/.local/bin/rmux-pane-shell" "#{pane_current_path}"'
 
 # WSL clipboard integration.
 set -s copy-command '/mnt/c/WINDOWS/System32/clip.exe'

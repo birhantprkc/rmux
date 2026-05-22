@@ -2,8 +2,8 @@ use super::pane_support::resolve_input_target;
 use super::prompt_support::PromptInputEvent;
 use super::RequestHandler;
 use crate::copy_mode::{
-    run_pipe_command, CopyBufferTarget, CopyModeCommandContext, CopyModeState, CopyModeTransfer,
-    ModeKeys,
+    run_pipe_command, CopyBufferTarget, CopyModeCommandContext, CopyModePipeCommand, CopyModeState,
+    CopyModeTransfer, ModeKeys,
 };
 use crate::mouse::copy_mode_mouse_context;
 use crate::pane_terminals::HandlerState;
@@ -340,16 +340,37 @@ impl RequestHandler {
             self.store_copy_mode_buffer(buffer_target, transfer.append, &transfer.data)
                 .await?;
         }
-        if let Some(command) = transfer.pipe_command.as_deref() {
+        if let Some(command) = self
+            .resolve_copy_mode_pipe_command(transfer.pipe_command.as_ref())
+            .await
+        {
             run_pipe_command(
                 &context.default_shell,
-                command,
+                &command,
                 context.working_directory.as_ref(),
                 &transfer.data,
             )
             .await?;
         }
         Ok(())
+    }
+
+    async fn resolve_copy_mode_pipe_command(
+        &self,
+        pipe_command: Option<&CopyModePipeCommand>,
+    ) -> Option<String> {
+        match pipe_command {
+            Some(CopyModePipeCommand::Explicit(command)) => Some(command.clone()),
+            Some(CopyModePipeCommand::CopyCommandOption) => {
+                let state = self.state.lock().await;
+                state
+                    .options
+                    .resolve(None, OptionName::CopyCommand)
+                    .filter(|command| !command.is_empty())
+                    .map(str::to_owned)
+            }
+            None => None,
+        }
     }
 
     async fn store_copy_mode_buffer(

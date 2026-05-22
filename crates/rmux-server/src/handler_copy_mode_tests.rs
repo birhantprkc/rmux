@@ -1,11 +1,16 @@
-use std::time::Duration;
+use std::{
+    fs,
+    path::{Path, PathBuf},
+    time::{Duration, SystemTime, UNIX_EPOCH},
+};
 
 use super::super::RequestHandler;
 use super::session_name;
 use rmux_core::{input::InputParser, Screen};
 use rmux_proto::{
-    CapturePaneRequest, CopyModeRequest, ListPanesRequest, NewSessionRequest, PaneTarget, Request,
-    Response, SendKeysExtRequest, ShowBufferRequest, TerminalSize,
+    CapturePaneRequest, CopyModeRequest, ListPanesRequest, NewSessionRequest, OptionScopeSelector,
+    PaneTarget, Request, Response, SendKeysExtRequest, SetOptionByNameRequest, SetOptionMode,
+    ShowBufferRequest, TerminalSize,
 };
 use tokio::time::sleep;
 
@@ -150,6 +155,50 @@ fn platform_copy_mode_arg(arg: &str) -> String {
         "cat >/dev/null" => crate::test_shell::stdin_discard_command(),
         _ => arg.to_owned(),
     }
+}
+
+fn unique_copy_pipe_output_path(label: &str) -> PathBuf {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system clock must be after Unix epoch")
+        .as_nanos();
+    std::env::temp_dir().join(format!(
+        "rmux-copy-pipe-{label}-{}-{nanos}.txt",
+        std::process::id()
+    ))
+}
+
+#[cfg(unix)]
+fn stdin_to_file_command(path: &Path) -> String {
+    format!("cat > {}", crate::test_shell::sh_quote_path(path))
+}
+
+#[cfg(windows)]
+fn stdin_to_file_command(path: &Path) -> String {
+    let quoted_path = crate::test_shell::powershell_quote_path(path);
+    crate::test_shell::powershell_encoded_command(&format!(
+        "$inputStream=[Console]::OpenStandardInput(); \
+         $output=[System.IO.File]::Create({quoted_path}); \
+         try {{ $inputStream.CopyTo($output) }} finally {{ $output.Dispose() }}"
+    ))
+}
+
+async fn set_copy_command(handler: &RequestHandler, command: String) {
+    let response = handler
+        .handle(Request::SetOptionByName(SetOptionByNameRequest {
+            scope: OptionScopeSelector::ServerGlobal,
+            name: "copy-command".to_owned(),
+            value: Some(command),
+            mode: SetOptionMode::Replace,
+            only_if_unset: false,
+            unset: false,
+            unset_pane_overrides: false,
+        }))
+        .await;
+    assert!(
+        matches!(response, Response::SetOptionByName(_)),
+        "set-option copy-command returned {response:?}"
+    );
 }
 
 async fn prepare_transfer_selection(handler: &RequestHandler, target: &PaneTarget) {
@@ -425,4 +474,103 @@ async fn copy_mode_copy_selection_and_cancel_writes_buffer() {
         .await;
     let output = buffer.command_output().expect("show-buffer returns output");
     assert!(String::from_utf8_lossy(output.stdout()).contains("needle"));
+}
+
+#[tokio::test]
+async fn copy_pipe_without_command_uses_copy_command_option() {
+    let handler = RequestHandler::new();
+    let target = create_session(&handler, "copy-command", TerminalSize { cols: 40, rows: 4 }).await;
+    let output_path = unique_copy_pipe_output_path("fallback");
+    set_copy_command(&handler, stdin_to_file_command(&output_path)).await;
+
+    replace_transcript_contents(
+        &handler,
+        &target,
+        TerminalSize { cols: 40, rows: 4 },
+        b"alpha\r\nneedle fallback\r\nomega\r\n",
+    )
+    .await;
+    wait_for_capture(&handler, &target, "needle fallback", false).await;
+
+    assert!(matches!(
+        enter_copy_mode(&handler, &target, false).await,
+        Response::CopyMode(_)
+    ));
+    assert!(matches!(
+        send_copy_mode_command(&handler, &target, &["search-backward", "--", "needle"]).await,
+        Response::SendKeys(_)
+    ));
+    assert!(matches!(
+        send_copy_mode_command(&handler, &target, &["select-line"]).await,
+        Response::SendKeys(_)
+    ));
+    assert!(matches!(
+        send_copy_mode_command(&handler, &target, &["copy-pipe-and-cancel"]).await,
+        Response::SendKeys(_)
+    ));
+
+    let output = fs::read_to_string(&output_path).expect("copy-command should write selection");
+    let _ = fs::remove_file(&output_path);
+    assert!(output.contains("needle fallback"));
+}
+
+#[tokio::test]
+async fn copy_pipe_explicit_command_overrides_copy_command_option() {
+    let handler = RequestHandler::new();
+    let target = create_session(
+        &handler,
+        "copy-command-explicit",
+        TerminalSize { cols: 40, rows: 4 },
+    )
+    .await;
+    let fallback_path = unique_copy_pipe_output_path("fallback-unused");
+    let explicit_path = unique_copy_pipe_output_path("explicit");
+    set_copy_command(&handler, stdin_to_file_command(&fallback_path)).await;
+
+    replace_transcript_contents(
+        &handler,
+        &target,
+        TerminalSize { cols: 40, rows: 4 },
+        b"alpha\r\nneedle explicit\r\nomega\r\n",
+    )
+    .await;
+    wait_for_capture(&handler, &target, "needle explicit", false).await;
+
+    assert!(matches!(
+        enter_copy_mode(&handler, &target, false).await,
+        Response::CopyMode(_)
+    ));
+    assert!(matches!(
+        send_copy_mode_command(&handler, &target, &["search-backward", "--", "needle"]).await,
+        Response::SendKeys(_)
+    ));
+    assert!(matches!(
+        send_copy_mode_command(&handler, &target, &["select-line"]).await,
+        Response::SendKeys(_)
+    ));
+    let explicit_command = stdin_to_file_command(&explicit_path);
+    assert!(matches!(
+        send_copy_mode_command_values(
+            &handler,
+            &target,
+            vec![
+                "copy-pipe-and-cancel".to_owned(),
+                "--".to_owned(),
+                explicit_command,
+            ],
+        )
+        .await,
+        Response::SendKeys(_)
+    ));
+
+    let explicit_output =
+        fs::read_to_string(&explicit_path).expect("explicit pipe command should write selection");
+    let fallback_output = fs::read_to_string(&fallback_path).ok();
+    let _ = fs::remove_file(&explicit_path);
+    let _ = fs::remove_file(&fallback_path);
+    assert!(explicit_output.contains("needle explicit"));
+    assert!(
+        fallback_output.is_none(),
+        "copy-command fallback should not run when copy-pipe has an explicit command"
+    );
 }
