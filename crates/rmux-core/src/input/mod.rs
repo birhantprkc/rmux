@@ -11,6 +11,7 @@ mod commands;
 mod csi_helpers;
 mod dispatch;
 mod params;
+mod passthrough;
 mod sgr;
 mod states;
 mod tables;
@@ -391,6 +392,10 @@ impl InputParser {
 
     fn exit_apc(&mut self, writer: &mut dyn ScreenWriter) {
         if self.flags & INPUT_DISCARD != 0 {
+            return;
+        }
+        if passthrough::is_kitty_graphics_apc(&self.input_buf) {
+            writer.apc_passthrough(&self.input_buf);
             return;
         }
         let buf = String::from_utf8_lossy(&self.input_buf).into_owned();

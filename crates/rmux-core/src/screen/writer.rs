@@ -478,6 +478,15 @@ impl ScreenWriter for Screen {
         self.bell_count = self.bell_count.saturating_add(1);
     }
 
+    fn apc_passthrough(&mut self, data: &[u8]) {
+        self.terminal_passthrough
+            .push(crate::TerminalPassthrough::kitty_graphics(
+                self.cursor_x,
+                self.cursor_y,
+                data.to_vec(),
+            ));
+    }
+
     fn screen_size_x(&self) -> u32 {
         self.grid.sx()
     }

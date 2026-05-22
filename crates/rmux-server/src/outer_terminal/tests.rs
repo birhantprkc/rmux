@@ -35,6 +35,17 @@ fn terminal_features_match_globs_and_case_insensitive_feature_names() {
 }
 
 #[test]
+fn xterm_kitty_enables_kitty_graphics_feature() {
+    let terminal = OuterTerminal::resolve(
+        &OptionStore::default(),
+        OuterTerminalContext::from_pairs(&[("TERM", "xterm-kitty")]),
+    );
+
+    assert!(terminal.supports_kitty_graphics());
+    assert!(terminal.features_string().contains("kitty-graphics"));
+}
+
+#[test]
 fn terminal_overrides_apply_legacy_tc_xt_and_ax_flags() {
     let mut options = OptionStore::new();
     options

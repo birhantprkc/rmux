@@ -103,6 +103,14 @@ fn apc_string_sets_title() {
     assert!(writer.has_call("set_title(\"APC Title\")"));
 }
 
+#[test]
+fn kitty_graphics_apc_uses_passthrough() {
+    let (parser, writer) = parse(b"\x1b_Gf=100;AAAA\x1b\\");
+    assert_eq!(parser.state(), InputState::Ground);
+    assert!(writer.has_call("apc_passthrough(\"Gf=100;AAAA\")"));
+    assert!(!writer.has_call("set_title("));
+}
+
 // ─── C0 dispatch tests ────────────────────────────────────────────
 
 #[test]

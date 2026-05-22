@@ -2,7 +2,7 @@ use rmux_core::events::{
     OutputCursor, OutputCursorItem, OutputRing, DEFAULT_OUTPUT_RING_CAPACITY,
     DEFAULT_RECENT_LIVE_BUFFER_CAPACITY,
 };
-use rmux_core::PaneId;
+use rmux_core::{PaneGeometry, PaneId, TerminalPassthrough};
 use rmux_proto::{AttachShellCommand, TerminalSize};
 use rmux_pty::PtyMaster;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -114,6 +114,8 @@ pub(crate) struct AttachTarget {
     pub(crate) render_frame: Vec<u8>,
     pub(crate) outer_terminal: OuterTerminal,
     pub(crate) cursor_style: u32,
+    pub(crate) active_pane_geometry: PaneGeometry,
+    pub(crate) kitty_graphics_passthrough: bool,
     pub(crate) persistent_overlay_state_id: Option<u64>,
     pub(crate) live_pane: Option<Box<LivePaneRender>>,
 }
@@ -188,6 +190,8 @@ pub(super) struct OpenAttachTarget {
     pub(super) render_frame: Vec<u8>,
     pub(super) outer_terminal: OuterTerminal,
     pub(super) cursor_style: u32,
+    pub(super) active_pane_geometry: PaneGeometry,
+    pub(super) kitty_graphics_passthrough: bool,
     pub(super) persistent_overlay_state_id: Option<u64>,
     pub(super) live_pane: Option<Box<LivePaneRender>>,
 }
@@ -219,7 +223,7 @@ impl std::fmt::Debug for PaneOutputSender {
 impl PaneOutputSender {
     #[cfg(test)]
     pub(crate) fn send(&self, bytes: Vec<u8>) -> u64 {
-        self.push_for_generation(None, bytes)
+        self.push_for_generation(None, bytes, Vec::new())
             .expect("unguarded pane output send should always be accepted")
     }
 
@@ -228,7 +232,16 @@ impl PaneOutputSender {
         generation: Option<u64>,
         bytes: Vec<u8>,
     ) -> Option<u64> {
-        self.push_for_generation(generation, bytes)
+        self.push_for_generation(generation, bytes, Vec::new())
+    }
+
+    pub(crate) fn send_for_generation_with_passthroughs(
+        &self,
+        generation: Option<u64>,
+        bytes: Vec<u8>,
+        passthroughs: Vec<TerminalPassthrough>,
+    ) -> Option<u64> {
+        self.push_for_generation(generation, bytes, passthroughs)
     }
 
     pub(crate) fn accepts_generation(&self, generation: Option<u64>) -> bool {
@@ -286,7 +299,12 @@ impl PaneOutputSender {
         self.inner.notify.notify_waiters();
     }
 
-    fn push_for_generation(&self, generation: Option<u64>, bytes: Vec<u8>) -> Option<u64> {
+    fn push_for_generation(
+        &self,
+        generation: Option<u64>,
+        bytes: Vec<u8>,
+        passthroughs: Vec<TerminalPassthrough>,
+    ) -> Option<u64> {
         let sequence = {
             let mut ring = self
                 .inner
@@ -296,7 +314,7 @@ impl PaneOutputSender {
             if !generation_matches(self.current_generation(), generation) {
                 return None;
             }
-            ring.push(bytes).sequence()
+            ring.push_with_passthroughs(bytes, passthroughs).sequence()
         };
         self.inner.notify.notify_waiters();
         Some(sequence)

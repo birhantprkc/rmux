@@ -4,7 +4,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use rmux_core::events::OutputCursorItem;
-use rmux_core::OptionStore;
+use rmux_core::{OptionStore, PaneGeometry};
 use rmux_proto::{
     encode_attach_message, AttachFrameDecoder, AttachMessage, AttachedKeystroke, KeyDispatched,
     NewSessionRequest, Request, Response, SessionName, TerminalSize,
@@ -219,6 +219,8 @@ async fn forward_attach_emits_stop_sequence_when_processing_errors() {
         render_frame: Vec::new(),
         outer_terminal,
         cursor_style: 0,
+        active_pane_geometry: PaneGeometry::new(0, 0, 80, 24),
+        kitty_graphics_passthrough: false,
         persistent_overlay_state_id: None,
         live_pane: None,
     };
@@ -290,6 +292,8 @@ fn test_attach_target(
             OuterTerminalContext::default(),
         ),
         cursor_style: 0,
+        active_pane_geometry: PaneGeometry::new(0, 0, 80, 24),
+        kitty_graphics_passthrough: false,
         persistent_overlay_state_id,
         live_pane: None,
     }
@@ -550,6 +554,8 @@ async fn forward_attach_emits_display_panes_overlay_for_prefix_q_keystrokes() {
             OuterTerminalContext::default(),
         ),
         cursor_style: 0,
+        active_pane_geometry: PaneGeometry::new(0, 0, 80, 24),
+        kitty_graphics_passthrough: false,
         persistent_overlay_state_id: None,
         live_pane: None,
     };

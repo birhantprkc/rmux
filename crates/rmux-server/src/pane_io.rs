@@ -18,6 +18,7 @@ use tokio::sync::watch;
 const READ_BUFFER_SIZE: usize = 8192;
 mod control;
 mod live_render;
+mod passthrough;
 mod persistent_overlay;
 mod reader;
 mod refresh_scheduler;
@@ -33,6 +34,8 @@ use control::{
     PendingAttachAction,
 };
 pub(crate) use live_render::LivePaneRender;
+#[cfg(any(unix, windows))]
+use passthrough::render_passthroughs;
 #[cfg(any(unix, windows))]
 use persistent_overlay::{
     accept_persistent_overlay_state, advance_persistent_overlay_state, clear_then_base_frame,
@@ -526,8 +529,8 @@ pub(crate) async fn forward_attach(
                         current_target.pane_output = None;
                         continue;
                     };
-                    let bytes = match item {
-                        OutputCursorItem::Event(event) => event.into_bytes(),
+                    let (bytes, passthroughs) = match item {
+                        OutputCursorItem::Event(event) => event.into_parts(),
                         OutputCursorItem::Gap(_) => {
                             pane_refresh.schedule_now();
                             continue;
@@ -580,6 +583,8 @@ pub(crate) async fn forward_attach(
                                 pane_refresh.schedule_now();
                                 continue;
                             }
+                            let passthrough_frame =
+                                render_passthroughs(&current_target, &passthroughs);
                             match current_target
                                 .live_pane
                                 .as_mut()
@@ -605,9 +610,11 @@ pub(crate) async fn forward_attach(
                                         delta.frame(),
                                     )
                                     .await?;
+                                    emit_attach_bytes(&stream, &passthrough_frame).await?;
                                 }
                                 Some(PaneRenderDelta::RequiresFullRefresh) | None => {
                                     pane_refresh.schedule_now();
+                                    emit_attach_bytes(&stream, &passthrough_frame).await?;
                                 }
                             }
                         }

@@ -24,6 +24,8 @@ pub(super) fn open_attach_target(target: AttachTarget) -> io::Result<OpenAttachT
         render_frame,
         outer_terminal,
         cursor_style,
+        active_pane_geometry,
+        kitty_graphics_passthrough,
         persistent_overlay_state_id,
         live_pane,
     } = target;
@@ -34,6 +36,8 @@ pub(super) fn open_attach_target(target: AttachTarget) -> io::Result<OpenAttachT
         render_frame,
         outer_terminal,
         cursor_style,
+        active_pane_geometry,
+        kitty_graphics_passthrough,
         persistent_overlay_state_id,
         live_pane,
     })

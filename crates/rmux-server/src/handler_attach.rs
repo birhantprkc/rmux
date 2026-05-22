@@ -7,7 +7,9 @@ use std::time::Duration;
 
 #[cfg(test)]
 use rmux_os::identity::UserIdentity;
-use rmux_proto::{AttachShellCommand, AttachedKeystroke, KeyDispatched, PaneTarget, TerminalSize};
+use rmux_proto::{
+    AttachShellCommand, AttachedKeystroke, KeyDispatched, OptionName, PaneTarget, TerminalSize,
+};
 #[cfg(test)]
 use tokio::sync::mpsc;
 use tokio::time::sleep;
@@ -494,6 +496,7 @@ fn attach_target_for_session_with_prompt(
         Some(session_name),
         terminal_context.clone(),
     );
+    let active_pane = session.window().active_pane().cloned();
     let pane_state = session
         .active_pane_id()
         .and_then(|pane_id| state.pane_screen_state(session_name, pane_id));
@@ -555,7 +558,7 @@ fn attach_target_for_session_with_prompt(
     let live_pane =
         live_pane_render_for_target(state, session, &state.options, session_name, prompt);
     if prompt.is_none() {
-        if let Some(active_pane) = session.window().active_pane().cloned() {
+        if let Some(active_pane) = active_pane.clone() {
             let active_screen = state
                 .pane_copy_mode_render_screen(session_name, active_pane.id())
                 .or_else(|| state.pane_render_screen(session_name, active_pane.id()));
@@ -568,6 +571,14 @@ fn attach_target_for_session_with_prompt(
         }
     }
 
+    let active_pane_geometry = active_pane.as_ref().map_or_else(
+        || rmux_core::PaneGeometry::new(0, 0, 0, 0),
+        |pane| pane.geometry(),
+    );
+    let kitty_graphics_passthrough = active_pane.as_ref().is_some_and(|pane| {
+        kitty_graphics_passthrough_enabled(session, &state.options, pane, &outer_terminal)
+    });
+
     Ok(AttachTarget {
         session_name: session_name.clone(),
         pane_master: state.active_pane_master(session_name)?,
@@ -575,9 +586,29 @@ fn attach_target_for_session_with_prompt(
         render_frame,
         outer_terminal,
         cursor_style,
+        active_pane_geometry,
+        kitty_graphics_passthrough,
         persistent_overlay_state_id: None,
         live_pane,
     })
+}
+
+fn kitty_graphics_passthrough_enabled(
+    session: &rmux_core::Session,
+    options: &rmux_core::OptionStore,
+    pane: &rmux_core::Pane,
+    outer_terminal: &OuterTerminal,
+) -> bool {
+    outer_terminal.supports_kitty_graphics()
+        && matches!(
+            options.resolve_for_pane(
+                session.name(),
+                session.active_window_index(),
+                pane.index(),
+                OptionName::AllowPassthrough,
+            ),
+            Some("on" | "all")
+        )
 }
 
 fn live_pane_render_for_target(

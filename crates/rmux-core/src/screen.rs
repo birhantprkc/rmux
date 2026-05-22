@@ -4,6 +4,7 @@ use crate::grid::{Grid, GridCell, GridCellFlags, GridLine};
 use crate::hyperlinks::Hyperlinks;
 use crate::input::mode;
 use crate::input::{CellState, SavedState, ScreenWriter, COLOUR_DEFAULT};
+use crate::terminal_passthrough::TerminalPassthrough;
 use crate::utf8::{combine_char as utf8_combine_char, CombineResult, Utf8Config};
 use rmux_proto::TerminalSize;
 
@@ -51,6 +52,7 @@ pub struct Screen {
     hyperlinks: Hyperlinks,
     active_hyperlink: u32,
     bell_count: u64,
+    terminal_passthrough: Vec<TerminalPassthrough>,
     utf8_config: Utf8Config,
 }
 
@@ -81,6 +83,7 @@ impl Screen {
             hyperlinks: Hyperlinks::new(),
             active_hyperlink: 0,
             bell_count: 0,
+            terminal_passthrough: Vec::new(),
             utf8_config: Utf8Config::default(),
         };
         screen.reset_tabs();
@@ -228,6 +231,11 @@ impl Screen {
         let bell_count = self.bell_count;
         self.bell_count = 0;
         bell_count
+    }
+
+    /// Drains terminal passthrough events observed since the last drain.
+    pub fn take_terminal_passthrough(&mut self) -> Vec<TerminalPassthrough> {
+        std::mem::take(&mut self.terminal_passthrough)
     }
 
     /// Returns the stored OSC 8 URI for a hyperlink inner ID.

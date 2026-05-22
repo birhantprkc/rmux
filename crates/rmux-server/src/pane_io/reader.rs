@@ -218,20 +218,23 @@ fn publish_pane_bytes(
     if !pane_output.accepts_generation(generation) {
         return;
     }
-    let bell_count = {
+    let append_result = {
         let mut transcript = transcript
             .lock()
             .expect("pane transcript mutex must not be poisoned");
-        transcript.append_bytes(&bytes)
+        transcript.append_bytes_with_effects(&bytes)
     };
-    if pane_output.send_for_generation(generation, bytes).is_none() {
+    if pane_output
+        .send_for_generation_with_passthroughs(generation, bytes, append_result.passthroughs)
+        .is_none()
+    {
         return;
     }
     if let Some(callback) = pane_alert_callback {
         callback(PaneAlertEvent {
             session_name: session_name.clone(),
             pane_id,
-            bell_count,
+            bell_count: append_result.bell_count,
             generation,
         });
     }
