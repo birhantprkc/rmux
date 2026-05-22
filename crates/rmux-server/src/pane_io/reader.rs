@@ -227,11 +227,20 @@ fn publish_pane_bytes(
         transcript.append_bytes_with_effects(&bytes)
     };
     let replies = append_result.replies;
+    let dropped_passthrough_count = append_result.dropped_passthrough_count;
     if pane_output
         .send_for_generation_with_passthroughs(generation, bytes, append_result.passthroughs)
         .is_none()
     {
         return Vec::new();
+    }
+    if dropped_passthrough_count > 0 {
+        warn!(
+            session = %session_name,
+            pane_id = pane_id.as_u32(),
+            dropped = dropped_passthrough_count,
+            "dropped terminal passthrough events due to parser safety limits"
+        );
     }
     if let Some(callback) = pane_alert_callback {
         callback(PaneAlertEvent {

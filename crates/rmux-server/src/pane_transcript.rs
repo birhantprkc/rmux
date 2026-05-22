@@ -30,6 +30,7 @@ pub(crate) struct PaneTranscript {
 pub(crate) struct PaneAppendResult {
     pub(crate) bell_count: u64,
     pub(crate) passthroughs: Vec<TerminalPassthrough>,
+    pub(crate) dropped_passthrough_count: u64,
     pub(crate) replies: Vec<u8>,
 }
 
@@ -73,10 +74,12 @@ impl PaneTranscript {
         }
         self.terminal.feed(bytes);
         let passthroughs = self.terminal.take_terminal_passthrough();
+        let dropped_passthrough_count = self.terminal.take_terminal_passthrough_dropped_count();
         let replies = self.terminal.take_replies();
         PaneAppendResult {
             bell_count: self.terminal.screen_mut().take_bell_count(),
             passthroughs,
+            dropped_passthrough_count,
             replies,
         }
     }
@@ -381,6 +384,29 @@ mod tests {
         )
         .expect("capture is utf8");
         assert!(!capture.contains("Gf=100"));
+    }
+
+    #[test]
+    fn append_bytes_reports_dropped_oversized_kitty_passthroughs() {
+        let mut transcript = transcript(40, 4, 10);
+        assert_eq!(
+            transcript
+                .append_bytes_with_effects(b"\x1b_G")
+                .dropped_passthrough_count,
+            0
+        );
+
+        let chunk = vec![b'A'; 1_048_577];
+        let result = transcript.append_bytes_with_effects(&chunk);
+
+        assert!(result.passthroughs.is_empty());
+        assert_eq!(result.dropped_passthrough_count, 1);
+        assert_eq!(
+            transcript
+                .append_bytes_with_effects(b"\x1b\\")
+                .dropped_passthrough_count,
+            0
+        );
     }
 
     #[test]

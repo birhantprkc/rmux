@@ -67,6 +67,11 @@ impl TerminalScreen {
         self.parser.take_terminal_passthrough()
     }
 
+    /// Returns and drains passthrough events dropped by parser safety limits.
+    pub fn take_terminal_passthrough_dropped_count(&mut self) -> u64 {
+        self.parser.take_terminal_passthrough_dropped_count()
+    }
+
     /// Returns and drains terminal replies generated while parsing PTY output.
     pub fn take_replies(&mut self) -> Vec<u8> {
         self.parser.take_replies()

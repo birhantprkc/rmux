@@ -137,6 +137,13 @@ impl TerminalParser {
         self.screen.take_terminal_passthrough()
     }
 
+    /// Returns and drains terminal passthrough events dropped by parser limits.
+    pub(crate) fn take_terminal_passthrough_dropped_count(&mut self) -> u64 {
+        self.parser
+            .take_terminal_passthrough_dropped_count()
+            .saturating_add(self.screen.take_terminal_passthrough_dropped_count())
+    }
+
     /// Returns any bytes still buffered inside an incomplete parser state.
     #[must_use]
     pub(crate) fn pending_bytes(&self) -> Vec<u8> {

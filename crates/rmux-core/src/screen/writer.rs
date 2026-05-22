@@ -479,12 +479,7 @@ impl ScreenWriter for Screen {
     }
 
     fn apc_passthrough(&mut self, data: &[u8]) {
-        self.terminal_passthrough
-            .push(crate::TerminalPassthrough::kitty_graphics(
-                self.cursor_x,
-                self.cursor_y,
-                data.to_vec(),
-            ));
+        self.push_terminal_passthrough(self.cursor_x, self.cursor_y, data);
     }
 
     fn screen_size_x(&self) -> u32 {

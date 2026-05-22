@@ -10,10 +10,16 @@ use rmux_core::TerminalPassthrough;
 use rmux_ipc::LocalStream;
 #[cfg(any(unix, windows))]
 use std::io;
+#[cfg(any(unix, windows))]
+use tracing::warn;
 
 #[cfg(any(unix, windows))]
 const DEFERRED_PASSTHROUGH_LIMIT: usize = 16;
 
+// Kitty graphics are forwarded live to attached clients; they are not part of
+// the text grid and are not replayed on later attaches. This queue only delays
+// passthroughs while rmux-owned overlays are visible, and stays bounded so a
+// busy image-producing app cannot grow server memory through the overlay path.
 #[cfg(any(unix, windows))]
 pub(super) fn defer_passthroughs(
     deferred_passthroughs: &mut Vec<TerminalPassthrough>,
@@ -28,6 +34,11 @@ pub(super) fn defer_passthroughs(
         .saturating_sub(DEFERRED_PASSTHROUGH_LIMIT);
     if overflow > 0 {
         deferred_passthroughs.drain(..overflow);
+        warn!(
+            dropped = overflow,
+            retained = DEFERRED_PASSTHROUGH_LIMIT,
+            "dropped deferred terminal passthrough events due to overlay safety limit"
+        );
     }
 }
 
