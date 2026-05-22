@@ -158,6 +158,7 @@ pub(super) fn parse_split_window(
     let mut before = false;
     let mut environment = Vec::new();
     let mut target = None;
+    let mut start_directory: Option<std::path::PathBuf> = None;
 
     while let Some(token) = args.peek() {
         match token {
@@ -189,6 +190,12 @@ pub(super) fn parse_split_window(
                 let _ = args.optional();
                 before = true;
             }
+            "-c" => {
+                let _ = args.optional();
+                start_directory = Some(std::path::PathBuf::from(
+                    args.required("-c start-directory")?,
+                ));
+            }
             "-t" => {
                 let _ = args.optional();
                 target = Some(parse_split_window_target(args.required("-t target")?)?);
@@ -207,7 +214,7 @@ pub(super) fn parse_split_window(
         "split-window",
     )?);
 
-    if command.is_some() {
+    if command.is_some() || start_directory.is_some() {
         return Ok(Request::SplitWindowExt(SplitWindowExtRequest {
             target,
             direction,
@@ -215,7 +222,7 @@ pub(super) fn parse_split_window(
             environment: (!environment.is_empty()).then_some(environment),
             command,
             process_command: None,
-            start_directory: None,
+            start_directory,
             keep_alive_on_exit: None,
         }));
     }
