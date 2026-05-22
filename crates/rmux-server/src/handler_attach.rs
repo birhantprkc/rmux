@@ -581,7 +581,10 @@ fn attach_target_for_session_with_prompt(
 
     let active_pane_geometry = active_pane.as_ref().map_or_else(
         || rmux_core::PaneGeometry::new(0, 0, 0, 0),
-        |pane| pane.geometry(),
+        |pane| {
+            renderer::visible_pane_terminal_geometry(session, &state.options, pane)
+                .unwrap_or_else(|| rmux_core::PaneGeometry::new(0, 0, 0, 0))
+        },
     );
     let kitty_graphics_passthrough = active_pane.as_ref().is_some_and(|pane| {
         kitty_graphics_passthrough_enabled(session, &state.options, pane, &outer_terminal)
