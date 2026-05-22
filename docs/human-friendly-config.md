@@ -2,11 +2,11 @@
 
 RMUX supports native local runtime backends on Linux, macOS, and Windows. It provides tmux-style commands and many tmux-compatible defaults, but it is not a byte-for-byte tmux clone.
 
-This guide shows an ergonomic interactive profile for people who want normal terminal selection by default, easier split bindings, optional cwd-friendly shell helpers, and explicit clipboard hooks.
+This guide shows an ergonomic interactive profile for people who want normal terminal selection by default, easier cwd-preserving split bindings, and explicit clipboard hooks.
 
 ## Starter config
 
-See [`docs/examples/human-friendly.conf`](examples/human-friendly.conf) for the full file and [`docs/examples/rmux-pane-shell`](examples/rmux-pane-shell) for the small Unix-style shell helper used by the optional cwd-preserving pane split bindings.
+See [`docs/examples/human-friendly.conf`](examples/human-friendly.conf) for the full file.
 
 ```tmux
 # Safer prefix for heavy shell work.
@@ -27,17 +27,11 @@ setw -g mode-keys vi
 set -g status-keys vi
 
 # Easier split bindings for keyboard layouts where %, ", or | are awkward.
-bind % split-window -h
-bind '"' split-window -v
-bind v split-window -h
-bind b split-window -v
+bind % split-window -h -c "#{pane_current_path}"
+bind '"' split-window -v -c "#{pane_current_path}"
+bind v split-window -h -c "#{pane_current_path}"
+bind b split-window -v -c "#{pane_current_path}"
 bind c new-window -c "#{pane_current_path}"
-
-# Optional Unix-style cwd-preserving pane splits.
-# If you install docs/examples/rmux-pane-shell, you can replace the two
-# split-window bindings above with:
-# bind % split-window -h 'exec "$HOME/.local/bin/rmux-pane-shell" "#{pane_current_path}"'
-# bind '"' split-window -v 'exec "$HOME/.local/bin/rmux-pane-shell" "#{pane_current_path}"'
 
 # Pick one clipboard command for your platform, then uncomment it.
 # set -s copy-command 'clip.exe'
@@ -63,28 +57,7 @@ Many terminals also offer a modifier such as `Shift` plus drag to force native s
 
 ## Cwd-preserving splits
 
-`new-window -c "#{pane_current_path}"` is supported. The current `split-window` CLI does not expose `-c`, so a direct tmux-style `split-window -c "#{pane_current_path}"` is not the right portable RMUX recipe today.
-
-For Unix-style shells, the sample config includes commented helper bindings. The helper `cd`s into the requested path and then `exec`s the shell:
-
-```bash
-#!/usr/bin/env bash
-set -e
-TARGET_DIR="${1:-$HOME}"
-if [ ! -d "$TARGET_DIR" ]; then
-  TARGET_DIR="$HOME"
-fi
-cd "$TARGET_DIR"
-exec "${SHELL:-/bin/bash}" -i
-```
-
-Install it locally with:
-
-```sh
-install -m 755 docs/examples/rmux-pane-shell ~/.local/bin/rmux-pane-shell
-```
-
-On native Windows, RMUX uses ConPTY and named pipes. Keep the simple split bindings from the starter config unless you add a Windows-specific helper for your shell.
+`new-window -c "#{pane_current_path}"` and `split-window -c "#{pane_current_path}"` start new shells in the active pane's current directory. The starter config applies this to both the classic tmux-compatible split bindings and the keyboard-layout friendly alternatives.
 
 ## Keyboard-layout friendly splits
 

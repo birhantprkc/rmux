@@ -1,8 +1,0 @@
-#!/usr/bin/env bash
-set -e
-TARGET_DIR="${1:-$HOME}"
-if [ ! -d "$TARGET_DIR" ]; then
-  TARGET_DIR="$HOME"
-fi
-cd "$TARGET_DIR"
-exec "${SHELL:-/bin/bash}" -i
