@@ -95,6 +95,26 @@ async fn show_options_without_a_omits_inherited_values() {
 }
 
 #[tokio::test]
+async fn show_options_global_scope_resolves_named_defaults_without_a_marker() {
+    let handler = RequestHandler::new();
+    create_session(&handler, "alpha").await;
+
+    let response = handler
+        .handle(Request::ShowOptions(ShowOptionsRequest {
+            scope: rmux_proto::OptionScopeSelector::SessionGlobal,
+            name: Some("status".to_owned()),
+            value_only: true,
+            include_inherited: false,
+        }))
+        .await;
+    let output = response
+        .command_output()
+        .expect("show-options -gqv should return command output");
+
+    assert_eq!(output.stdout(), b"on\n");
+}
+
+#[tokio::test]
 async fn show_options_a_marks_inherited_values() {
     let handler = RequestHandler::new();
     create_session(&handler, "alpha").await;
