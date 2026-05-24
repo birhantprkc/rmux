@@ -9,6 +9,16 @@ fn session_name(value: &str) -> SessionName {
     SessionName::new(value).expect("valid session name")
 }
 
+#[cfg(windows)]
+fn successful_exit_command() -> Vec<String> {
+    vec!["exit 0".to_owned()]
+}
+
+#[cfg(not(windows))]
+fn successful_exit_command() -> Vec<String> {
+    vec!["true".to_owned()]
+}
+
 #[tokio::test]
 async fn display_message_pane_dead_observes_exited_child_promptly() {
     let handler = RequestHandler::new();
@@ -41,7 +51,7 @@ async fn display_message_pane_dead_observes_exited_child_promptly() {
             kill: true,
             start_directory: None,
             environment: None,
-            command: Some(vec!["true".to_owned()]),
+            command: Some(successful_exit_command()),
             process_command: None,
         }))
         .await;
