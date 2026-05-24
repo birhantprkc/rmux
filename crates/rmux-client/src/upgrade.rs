@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::path::Path;
 
 use rmux_proto::{
@@ -5,9 +6,14 @@ use rmux_proto::{
     RMUX_WIRE_VERSION,
 };
 
+use crate::shell_quote::shell_quote_path;
 use crate::{ClientError, Connection};
 
 const CLIENT_VERSION: &str = env!("CARGO_PKG_VERSION");
+#[cfg(debug_assertions)]
+const CLIENT_VERSION_OVERRIDE_ENV: &str = "RMUX_INTERNAL_CLIENT_VERSION";
+#[cfg(debug_assertions)]
+const INTERNAL_TEST_OPT_IN_ENV: &str = "RMUX_ALLOW_INTERNAL_BINARY_OVERRIDE";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum DaemonFreshness {
@@ -81,10 +87,11 @@ pub(crate) fn warn_stale_active_daemon(stale: &StaleDaemon, socket_path: &Path) 
         .daemon_version
         .as_deref()
         .unwrap_or("an older release");
-    eprintln!("rmux: daemon is {daemon}, client is v{CLIENT_VERSION}.");
+    let client_version = client_version();
+    eprintln!("rmux: daemon is {daemon}, client is v{client_version}.");
     eprintln!("rmux: Existing sessions or clients are still running on the old daemon.");
     eprintln!(
-        "rmux: Run `{}` when you are ready to restart them with v{CLIENT_VERSION}.",
+        "rmux: Run `{}` when you are ready to restart them with v{client_version}.",
         kill_server_command(socket_path)
     );
 }
@@ -106,7 +113,7 @@ fn inspect_current_daemon(connection: &mut Connection) -> Result<DaemonFreshness
                 daemon_wire_version: Some(status.wire_version),
             }))
         }
-        Response::DaemonStatus(status) if status.rmux_version == CLIENT_VERSION => {
+        Response::DaemonStatus(status) if status.rmux_version == client_version().as_ref() => {
             Ok(DaemonFreshness::Current)
         }
         Response::DaemonStatus(status) => Ok(classify_stale_daemon(StaleDaemon {
@@ -180,14 +187,31 @@ pub(crate) fn incompatible_daemon_message(incompatible: &IncompatibleDaemon) -> 
         .daemon_version
         .as_deref()
         .unwrap_or("an older release");
+    let client_version = client_version();
     match incompatible.daemon_wire_version {
         Some(wire_version) => format!(
-            "daemon {daemon} uses wire protocol {wire_version}, but this client v{CLIENT_VERSION} requires wire protocol {RMUX_WIRE_VERSION}"
+            "daemon {daemon} is not compatible with this client v{client_version} (daemon protocol {wire_version}, client protocol {RMUX_WIRE_VERSION})"
         ),
         None => format!(
-            "daemon {daemon} uses an incompatible wire protocol; this client is v{CLIENT_VERSION} and requires wire protocol {RMUX_WIRE_VERSION}"
+            "daemon {daemon} is not compatible with this client v{client_version} (client protocol {RMUX_WIRE_VERSION})"
         ),
     }
+}
+
+fn client_version() -> Cow<'static, str> {
+    #[cfg(debug_assertions)]
+    {
+        if std::env::var_os(INTERNAL_TEST_OPT_IN_ENV).is_some_and(|value| value == "1") {
+            if let Some(version) = std::env::var_os(CLIENT_VERSION_OVERRIDE_ENV)
+                .and_then(|value| value.into_string().ok())
+                .filter(|value| !value.is_empty())
+            {
+                return Cow::Owned(version);
+            }
+        }
+    }
+
+    Cow::Borrowed(CLIENT_VERSION)
 }
 
 fn is_unsupported_wire_version(error: &ClientError) -> bool {
@@ -198,20 +222,7 @@ fn is_unsupported_wire_version(error: &ClientError) -> bool {
 }
 
 fn kill_server_command(socket_path: &Path) -> String {
-    format!("rmux -S {} kill-server", shell_quote(socket_path))
-}
-
-fn shell_quote(path: &Path) -> String {
-    let text = path.display().to_string();
-    if !text.is_empty()
-        && text
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || b"/._-+=:@".contains(&byte))
-    {
-        return text;
-    }
-
-    format!("'{}'", text.replace('\'', "'\\''"))
+    format!("rmux -S {} kill-server", shell_quote_path(socket_path))
 }
 
 #[cfg(test)]

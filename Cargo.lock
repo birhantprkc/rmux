@@ -686,6 +686,7 @@ dependencies = [
  "rustix",
  "signal-hook",
  "tokio",
+ "tracing",
  "windows-sys",
 ]
 

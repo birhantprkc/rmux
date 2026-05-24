@@ -1,5 +1,7 @@
+use std::collections::HashSet;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::Mutex as StdMutex;
 
 use rmux_proto::OptionName;
 
@@ -7,7 +9,7 @@ use crate::diagnostic_log::{record_shutdown_queued, record_shutdown_request};
 
 use super::{PendingShutdownReason, RequestHandler};
 
-const SHUTDOWN_RETRY_DELAY: std::time::Duration = std::time::Duration::from_millis(1);
+const SHUTDOWN_RETRY_DELAY: std::time::Duration = std::time::Duration::from_millis(50);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum IdleShutdownState {
@@ -27,6 +29,17 @@ impl PendingShutdownReason {
 }
 
 impl RequestHandler {
+    pub(crate) fn begin_detached_connection(&self, connection_id: u64) -> DetachedConnectionGuard {
+        self.active_detached_connections
+            .lock()
+            .expect("active detached connection mutex must not be poisoned")
+            .insert(connection_id);
+        DetachedConnectionGuard {
+            connection_id,
+            active_detached_connections: self.active_detached_connections.clone(),
+        }
+    }
+
     pub(crate) fn begin_detached_request(&self) -> DetachedRequestGuard {
         self.active_detached_requests.fetch_add(1, Ordering::SeqCst);
         DetachedRequestGuard {
@@ -35,6 +48,13 @@ impl RequestHandler {
     }
 
     pub(crate) fn request_shutdown_if_pending(&self) -> bool {
+        self.request_shutdown_if_pending_excluding_detached_connection(None)
+    }
+
+    pub(crate) fn request_shutdown_if_pending_excluding_detached_connection(
+        &self,
+        excluded_connection_id: Option<u64>,
+    ) -> bool {
         if !self.shutdown_requested.load(Ordering::SeqCst) {
             return false;
         }
@@ -42,11 +62,12 @@ impl RequestHandler {
             .shutdown_reason
             .lock()
             .expect("shutdown reason mutex must not be poisoned");
-        if matches!(
-            reason,
-            Some(PendingShutdownReason::ExitEmpty | PendingShutdownReason::SeamlessUpgradeIdle)
-        ) {
-            match self.pending_idle_shutdown_state(reason.expect("reason checked")) {
+        if let Some(
+            reason
+            @ (PendingShutdownReason::ExitEmpty | PendingShutdownReason::SeamlessUpgradeIdle),
+        ) = reason
+        {
+            match self.pending_idle_shutdown_state(reason, excluded_connection_id) {
                 IdleShutdownState::StillApplies => {}
                 IdleShutdownState::Stale => {
                     self.shutdown_requested.store(false, Ordering::SeqCst);
@@ -54,7 +75,8 @@ impl RequestHandler {
                         .shutdown_reason
                         .lock()
                         .expect("shutdown reason mutex must not be poisoned") = None;
-                    record_shutdown_request("stale-idle-shutdown-cancelled");
+                    let stale_reason = format!("stale-{}-cancelled", reason.as_str());
+                    record_shutdown_request(&stale_reason);
                     return false;
                 }
                 IdleShutdownState::Unknown => {
@@ -147,7 +169,11 @@ impl RequestHandler {
         self.shutdown_requested.store(true, Ordering::SeqCst);
     }
 
-    fn pending_idle_shutdown_state(&self, reason: PendingShutdownReason) -> IdleShutdownState {
+    fn pending_idle_shutdown_state(
+        &self,
+        reason: PendingShutdownReason,
+        excluded_connection_id: Option<u64>,
+    ) -> IdleShutdownState {
         let Ok(state) = self.state.try_lock() else {
             return IdleShutdownState::Unknown;
         };
@@ -176,6 +202,17 @@ impl RequestHandler {
             return IdleShutdownState::Stale;
         }
 
+        let Ok(active_detached_connections) = self.active_detached_connections.try_lock() else {
+            return IdleShutdownState::Unknown;
+        };
+        if active_detached_connections
+            .iter()
+            .any(|connection_id| Some(*connection_id) != excluded_connection_id)
+        {
+            return IdleShutdownState::Stale;
+        }
+        drop(active_detached_connections);
+
         let Ok(active_control) = self.active_control.try_lock() else {
             return IdleShutdownState::Unknown;
         };
@@ -184,6 +221,20 @@ impl RequestHandler {
         } else {
             IdleShutdownState::Stale
         }
+    }
+}
+
+pub(crate) struct DetachedConnectionGuard {
+    connection_id: u64,
+    active_detached_connections: Arc<StdMutex<HashSet<u64>>>,
+}
+
+impl Drop for DetachedConnectionGuard {
+    fn drop(&mut self) {
+        self.active_detached_connections
+            .lock()
+            .expect("active detached connection mutex must not be poisoned")
+            .remove(&self.connection_id);
     }
 }
 

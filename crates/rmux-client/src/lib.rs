@@ -18,6 +18,7 @@ pub(crate) mod commands;
 pub mod connection;
 pub mod control;
 pub mod nested;
+pub(crate) mod shell_quote;
 pub(crate) mod upgrade;
 
 #[cfg(unix)]

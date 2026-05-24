@@ -122,6 +122,7 @@ async fn serve_connection(
         return Ok(());
     };
     let mut conn = Connection::new(stream);
+    let detached_connection_guard = handler.begin_detached_connection(connection_id);
 
     loop {
         tokio::select! {
@@ -182,6 +183,7 @@ async fn serve_connection(
                             },
                         )
                         .await;
+                    drop(detached_connection_guard);
                     drop(detached_request_guard);
                     handler.emit_client_attached(requester.pid, session_name).await;
                     let (stream, buffered_bytes) = conn.into_raw_parts();
@@ -224,6 +226,7 @@ async fn serve_connection(
                             },
                         )
                         .await;
+                    drop(detached_connection_guard);
                     drop(detached_request_guard);
                     let (stream, buffered_bytes) = conn.into_raw_parts();
                     let result = control::forward_control(
@@ -244,7 +247,9 @@ async fn serve_connection(
                 }
 
                 drop(detached_request_guard);
-                if handler.request_shutdown_if_pending() {
+                if handler
+                    .request_shutdown_if_pending_excluding_detached_connection(Some(connection_id))
+                {
                     return Ok(());
                 }
             }
@@ -341,8 +346,8 @@ impl Connection {
 mod tests {
     use super::*;
     use rmux_proto::{
-        ErrorResponse, HandshakeRequest, RmuxError, WaitForMode, WaitForRequest, WaitForResponse,
-        RMUX_WIRE_VERSION,
+        DaemonStatusRequest, ErrorResponse, HandshakeRequest, RmuxError, ShutdownIfIdleRequest,
+        ShutdownIfIdleResponse, WaitForMode, WaitForRequest, WaitForResponse, RMUX_WIRE_VERSION,
     };
 
     #[tokio::test]
@@ -392,6 +397,71 @@ mod tests {
                 error: RmuxError::Message(_),
             })
         ));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn shutdown_if_idle_counts_other_open_detached_connections() -> io::Result<()> {
+        let handler = Arc::new(RequestHandler::new());
+        let (mut idle_client, _idle_shutdown_tx, idle_task) = spawn_test_connection(&handler)?;
+        let (mut upgrade_client, _upgrade_shutdown_tx, upgrade_task) =
+            spawn_test_connection(&handler)?;
+
+        write_test_request(
+            &mut idle_client,
+            Request::Handshake(HandshakeRequest::current()),
+        )
+        .await?;
+        assert!(matches!(
+            read_test_response(&mut idle_client).await?,
+            Response::Handshake(_)
+        ));
+
+        write_test_request(
+            &mut upgrade_client,
+            Request::DaemonStatus(DaemonStatusRequest),
+        )
+        .await?;
+        let Response::DaemonStatus(status) = read_test_response(&mut upgrade_client).await? else {
+            panic!("expected daemon status response");
+        };
+        assert_eq!(status.session_count, 0);
+        assert_eq!(
+            status.client_count, 1,
+            "daemon-status must exclude its own detached connection but count another idle SDK connection"
+        );
+
+        write_test_request(
+            &mut upgrade_client,
+            Request::ShutdownIfIdle(ShutdownIfIdleRequest),
+        )
+        .await?;
+        assert_eq!(
+            read_test_response(&mut upgrade_client).await?,
+            Response::ShutdownIfIdle(ShutdownIfIdleResponse {
+                shutdown: false,
+                session_count: 0,
+                client_count: 1,
+            })
+        );
+
+        drop(idle_client);
+        idle_task.await.expect("idle connection task")?;
+
+        write_test_request(
+            &mut upgrade_client,
+            Request::ShutdownIfIdle(ShutdownIfIdleRequest),
+        )
+        .await?;
+        assert_eq!(
+            read_test_response(&mut upgrade_client).await?,
+            Response::ShutdownIfIdle(ShutdownIfIdleResponse {
+                shutdown: true,
+                session_count: 0,
+                client_count: 0,
+            })
+        );
+        upgrade_task.await.expect("upgrade connection task")?;
         Ok(())
     }
 

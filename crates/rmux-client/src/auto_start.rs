@@ -22,6 +22,7 @@ use rmux_sdk::bootstrap::startup_windows::{
     STARTUP_POLL_INTERVAL,
 };
 
+use crate::shell_quote::shell_quote_path;
 #[cfg(any(all(test, unix), not(any(unix, windows))))]
 use crate::ConnectResult;
 use crate::{ClientError, Connection};
@@ -417,7 +418,7 @@ impl fmt::Display for AutoStartError {
                 formatter,
                 "{message} on '{}'; detach existing clients, then run `rmux -S {} kill-server` before retrying",
                 socket_path.display(),
-                shell_quote(socket_path)
+                shell_quote_path(socket_path)
             ),
             Self::TimedOut {
                 socket_path,
@@ -626,19 +627,6 @@ fn spawn_hidden_daemon(mut command: Command) -> io::Result<()> {
     // short-lived client process that launched it.
     drop(child);
     Ok(())
-}
-
-fn shell_quote(path: &Path) -> String {
-    let text = path.display().to_string();
-    if !text.is_empty()
-        && text
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || b"/._-+=:@".contains(&byte))
-    {
-        return text;
-    }
-
-    format!("'{}'", text.replace('\'', "'\\''"))
 }
 
 fn rmux_binary_path() -> io::Result<PathBuf> {

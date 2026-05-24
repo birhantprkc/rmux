@@ -3,6 +3,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use crate::{connect_or_absent, upgrade, ConnectResult, Connection};
+use tracing::debug;
 
 use super::{
     is_transient_connect_error, probe_connected_server, spawn_hidden_daemon_for, AutoStartConfig,
@@ -20,7 +21,13 @@ pub(super) fn ensure_daemon_fresh_or_restart(
 ) -> Result<Connection, AutoStartError> {
     let freshness = match upgrade::inspect_daemon(&mut connection) {
         Ok(freshness) => freshness,
-        Err(_error) => return Ok(connection),
+        Err(error) => {
+            debug!(
+                error = ?error,
+                "daemon freshness inspection failed; assuming current daemon"
+            );
+            return Ok(connection);
+        }
     };
 
     match freshness {
