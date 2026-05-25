@@ -80,7 +80,7 @@ impl RequestHandler {
                     return false;
                 }
                 IdleShutdownState::Unknown => {
-                    self.schedule_shutdown_retry();
+                    self.schedule_shutdown_retry(excluded_connection_id);
                     return false;
                 }
             }
@@ -123,7 +123,7 @@ impl RequestHandler {
         true
     }
 
-    fn schedule_shutdown_retry(&self) {
+    fn schedule_shutdown_retry(&self, excluded_connection_id: Option<u64>) {
         if self
             .shutdown_retry_scheduled
             .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
@@ -146,7 +146,8 @@ impl RequestHandler {
             handler
                 .shutdown_retry_scheduled
                 .store(false, Ordering::SeqCst);
-            let _ = handler.request_shutdown_if_pending();
+            let _ = handler
+                .request_shutdown_if_pending_excluding_detached_connection(excluded_connection_id);
         });
     }
 
@@ -245,5 +246,38 @@ pub(crate) struct DetachedRequestGuard {
 impl Drop for DetachedRequestGuard {
     fn drop(&mut self) {
         self.active_detached_requests.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::daemon::ShutdownHandle;
+
+    #[tokio::test]
+    async fn idle_shutdown_retry_preserves_excluded_detached_connection() {
+        let handler = RequestHandler::new();
+        let (shutdown_handle, shutdown_rx) = ShutdownHandle::new();
+        handler.install_shutdown_handle(shutdown_handle);
+
+        let requester_connection_id = 7;
+        let _requester_connection = handler.begin_detached_connection(requester_connection_id);
+        handler.queue_shutdown_request(PendingShutdownReason::SeamlessUpgradeIdle);
+
+        let active_connections = handler
+            .active_detached_connections
+            .lock()
+            .expect("active detached connection mutex must not be poisoned");
+        assert!(
+            !handler.request_shutdown_if_pending_excluding_detached_connection(Some(
+                requester_connection_id
+            ))
+        );
+        drop(active_connections);
+
+        tokio::time::timeout(std::time::Duration::from_millis(500), shutdown_rx)
+            .await
+            .expect("retry should preserve requester exclusion and request shutdown")
+            .expect("shutdown receiver should complete cleanly");
     }
 }
