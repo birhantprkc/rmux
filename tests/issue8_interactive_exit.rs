@@ -7,12 +7,12 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use common::{
-    assert_success, drain_attach_output, read_until_contains, terminate_child, AttachedSession,
-    CliHarness,
+    assert_success, drain_attach_output_bytes, read_until_contains, terminate_child,
+    AttachedSession, CliHarness,
 };
 use rmux_pty::TerminalSize;
 
-const IO_TIMEOUT: Duration = Duration::from_secs(5);
+const IO_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[test]
 fn issue_8_prompt_created_window_exit_removes_dead_pane() -> Result<(), Box<dyn Error>> {
@@ -114,7 +114,7 @@ fn rapid_confirm_before_accept_after_split_reaches_prompt() -> Result<(), Box<dy
 
     attach.send_bytes(b"\x02%")?;
     wait_for_panes(&harness, &["0:0", "0:1"], &[])?;
-    wait_for_attach_repaint(&mut attach)?;
+    drain_attach_output_until_quiet(&mut attach)?;
 
     attach.send_bytes(b"\x02xy")?;
     wait_for_panes(&harness, &["0:0"], &["0:1"])?;
@@ -138,8 +138,29 @@ fn send_prompt_command(attach: &mut AttachedSession, command: &str) -> Result<()
 }
 
 fn wait_for_attach_repaint(attach: &mut AttachedSession) -> Result<(), Box<dyn Error>> {
-    thread::sleep(Duration::from_millis(200));
-    drain_attach_output(attach.master_mut())
+    drain_attach_output_until_quiet(attach)
+}
+
+fn drain_attach_output_until_quiet(attach: &mut AttachedSession) -> Result<(), Box<dyn Error>> {
+    let deadline = Instant::now() + IO_TIMEOUT;
+    let quiet_period = Duration::from_millis(100);
+    let mut quiet_since = Instant::now();
+
+    loop {
+        let output = drain_attach_output_bytes(attach.master_mut())?;
+        if output.is_empty() {
+            if Instant::now().duration_since(quiet_since) >= quiet_period {
+                return Ok(());
+            }
+            if Instant::now() >= deadline {
+                return Err("attach repaint did not quiesce".into());
+            }
+            thread::sleep(Duration::from_millis(10));
+            continue;
+        }
+
+        quiet_since = Instant::now();
+    }
 }
 
 fn wait_for_panes(

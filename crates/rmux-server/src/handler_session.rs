@@ -7,7 +7,7 @@ use rmux_core::{
 use rmux_proto::request::NewSessionExtRequest;
 use rmux_proto::{
     ErrorResponse, HasSessionResponse, KillSessionResponse, ListSessionsResponse,
-    NewSessionResponse, OptionName, Response, RmuxError,
+    NewSessionResponse, OptionName, Response, RmuxError, SessionId, SessionName,
 };
 
 use crate::format_runtime::{render_runtime_template, RuntimeFormatContext};
@@ -357,10 +357,11 @@ impl RequestHandler {
             self.cancel_session_silence_timers(session_name).await;
         }
 
-        let (response, queued_session_closed, removed_pane_ids) = {
+        let (response, queued_session_closed, removed_pane_ids, removed_sessions) = {
             let mut state = self.state.lock().await;
             let mut queued_events = Vec::new();
             let mut removed_pane_ids = Vec::new();
+            let mut removed_sessions: Vec<(SessionName, SessionId)> = Vec::new();
 
             for session_name in &sessions_to_remove {
                 if !state.sessions.contains_session(session_name) {
@@ -386,6 +387,7 @@ impl RequestHandler {
                 match state.sessions.remove_session(session_name) {
                     Ok(removed_session) => {
                         removed_pane_ids.extend(session_pane_ids(&removed_session));
+                        removed_sessions.push((session_name.clone(), removed_session.id()));
                         queued_events.push(prepare_lifecycle_event(
                             &mut state,
                             &LifecycleEvent::SessionClosed {
@@ -415,9 +417,15 @@ impl RequestHandler {
                 Response::KillSession(KillSessionResponse { existed: true }),
                 queued_events,
                 removed_pane_ids,
+                removed_sessions,
             )
         };
 
+        #[cfg(all(any(unix, windows), feature = "web"))]
+        self.web_shares
+            .remove_targets_for_sessions(&removed_sessions);
+        #[cfg(not(all(any(unix, windows), feature = "web")))]
+        let _ = &removed_sessions;
         if !removed_pane_ids.is_empty() {
             self.forget_pane_snapshot_coalescers(&removed_pane_ids);
         }

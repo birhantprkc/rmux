@@ -1,6 +1,7 @@
 use rmux_core::LifecycleEvent;
 use rmux_proto::{
-    CommandOutput, ErrorResponse, HookName, Response, ScopeSelector, Target, WindowTarget,
+    CommandOutput, ErrorResponse, HookName, Response, ScopeSelector, SessionId, Target,
+    WindowTarget,
 };
 
 use super::super::{
@@ -392,6 +393,7 @@ impl RequestHandler {
             queued_pane_exited,
             queued_session_closed,
             session_destroyed,
+            removed_session,
             removed_subscription_keys,
             removed_pane_ids,
         ) = {
@@ -436,6 +438,9 @@ impl RequestHandler {
                         Some(queued_pane),
                         queued_session,
                         result.session_destroyed,
+                        result
+                            .removed_session_id
+                            .map(|session_id| (session_name.clone(), SessionId::new(session_id))),
                         removed_subscription_keys,
                         result.removed_pane_ids,
                     )
@@ -445,11 +450,14 @@ impl RequestHandler {
                     None,
                     None,
                     false,
+                    None,
                     Vec::new(),
                     Vec::new(),
                 ),
             }
         };
+
+        self.prune_web_session(removed_session);
 
         if !removed_pane_ids.is_empty() {
             self.forget_pane_snapshot_coalescers(&removed_pane_ids);

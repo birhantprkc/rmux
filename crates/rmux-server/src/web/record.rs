@@ -1,0 +1,363 @@
+use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
+
+use rmux_proto::{
+    PaneTargetRef, RmuxError, SessionId, SessionName, WebShareScope, WebShareSummary,
+    WebShareUrlOptions, WebTerminalPalette,
+};
+use serde::Serialize;
+use tokio::sync::watch;
+
+use super::leases::{LeaseBook, OperatorLease, ReadLease};
+use super::origin::origin_allowed;
+use super::secrets::{secret_eq, SecretHash};
+
+const DEFAULT_LOCAL_WEBSOCKET_ENDPOINT: &str = "ws://127.0.0.1:9777/share";
+
+#[derive(Debug)]
+pub(super) struct WebShareRecord {
+    pub(super) allow_loopback_development_origins: bool,
+    pub(super) endpoint_origin: String,
+    pub(super) expires_at: Option<SystemTime>,
+    pub(super) frontend_origin: String,
+    pub(super) frontend_url: String,
+    pub(super) kill_session_on_expire: bool,
+    pub(super) lease_book: Arc<LeaseBook>,
+    pub(super) max_readers: u16,
+    pub(super) operator_token_hash: Option<SecretHash>,
+    pub(super) pairing_code: Option<String>,
+    pub(super) revoke_tx: watch::Sender<Option<WebShareRevokeReason>>,
+    pub(super) controls: bool,
+    pub(super) share_id: String,
+    pub(super) target: WebShareTarget,
+    pub(super) terminal_palette: Option<WebTerminalPalette>,
+    pub(super) url_options: WebShareUrlOptions,
+    pub(super) read_token_hash: SecretHash,
+    pub(super) writable: bool,
+}
+
+impl WebShareRecord {
+    pub(super) fn read_url(&self, token: &str) -> String {
+        share_url(self, Some(token))
+    }
+
+    pub(super) fn redacted_read_url(&self) -> String {
+        share_url(self, None)
+    }
+
+    pub(super) fn operator_url(&self, token: Option<&str>) -> Option<String> {
+        self.operator_token_hash
+            .is_some()
+            .then(|| share_url(self, token))
+    }
+
+    pub(super) fn summary(&self) -> WebShareSummary {
+        WebShareSummary {
+            share_id: self.share_id.clone(),
+            scope: self.target.scope(),
+            read_url: Some(self.redacted_read_url()),
+            writable: self.writable,
+            controls: self.controls,
+            active_readers: u16::try_from(self.lease_book.reader_count()).unwrap_or(u16::MAX),
+            max_readers: self.max_readers,
+            operator_connected: self.lease_book.operator_connected(),
+            expires_at_unix: self.expires_at.and_then(system_time_to_unix),
+            kill_session_on_expire: self.kill_session_on_expire,
+        }
+    }
+
+    pub(super) fn origin_allowed(&self, received: &str) -> bool {
+        origin_allowed(
+            received,
+            &self.frontend_origin,
+            self.allow_loopback_development_origins,
+        )
+    }
+
+    pub(super) fn connect(
+        &self,
+        pin: Option<&str>,
+        role: WebShareConnectRole,
+    ) -> Result<WebShareAccess, RmuxError> {
+        match role {
+            WebShareConnectRole::Read => {
+                self.check_pairing_code(pin)?;
+                let lease = self
+                    .lease_book
+                    .try_read()
+                    .ok_or_else(|| RmuxError::Server("web-share read limit reached".to_owned()))?;
+                Ok(self.access(Some(lease), None, WebShareRole::Read))
+            }
+            WebShareConnectRole::Operator => {
+                if self.operator_token_hash.is_none() {
+                    return Err(RmuxError::Server(
+                        "web-share is not writable for operator role".to_owned(),
+                    ));
+                };
+                self.check_pairing_code(pin)?;
+                let lease = self.lease_book.try_operator().ok_or_else(|| {
+                    RmuxError::Server("web-share operator is already connected".to_owned())
+                })?;
+                Ok(self.access(None, Some(lease), WebShareRole::Operator))
+            }
+        }
+    }
+
+    pub(super) fn revoke(self, reason: WebShareRevokeReason) {
+        let _ = self.revoke_tx.send(Some(reason));
+    }
+
+    fn check_pairing_code(&self, pin: Option<&str>) -> Result<(), RmuxError> {
+        let Some(expected) = self.pairing_code.as_deref() else {
+            return Ok(());
+        };
+        if pin.is_some_and(|provided| secret_eq(provided, expected)) {
+            return Ok(());
+        }
+        let message = if pin.is_some() {
+            "invalid web-share pairing code"
+        } else {
+            "missing web-share pairing code"
+        };
+        Err(RmuxError::Server(message.to_owned()))
+    }
+
+    fn access(
+        &self,
+        read_lease: Option<ReadLease>,
+        operator_lease: Option<OperatorLease>,
+        role: WebShareRole,
+    ) -> WebShareAccess {
+        WebShareAccess {
+            allow_loopback_development_origins: self.allow_loopback_development_origins,
+            expected_origin: self.frontend_origin.clone(),
+            expires_at: self.expires_at,
+            _read_lease: read_lease,
+            _operator_lease: operator_lease,
+            lease_book: Arc::clone(&self.lease_book),
+            max_readers: self.max_readers,
+            role,
+            share_id: self.share_id.clone(),
+            revoke_rx: self.revoke_tx.subscribe(),
+            target: self.target.clone(),
+            controls: self.controls,
+            terminal_palette: self.terminal_palette.clone(),
+            show_viewers: self.url_options.show_viewers,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum WebShareTarget {
+    Pane(PaneTargetRef),
+    Session(WebSessionTarget),
+}
+
+impl WebShareTarget {
+    pub(crate) fn pane(target: PaneTargetRef) -> Self {
+        Self::Pane(target)
+    }
+
+    pub(crate) fn session(name: SessionName, id: SessionId) -> Self {
+        Self::Session(WebSessionTarget::new(name, id))
+    }
+
+    pub(crate) fn scope(&self) -> WebShareScope {
+        match self {
+            Self::Pane(target) => WebShareScope::Pane(target.clone()),
+            Self::Session(target) => WebShareScope::Session(target.name.clone()),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct WebSessionTarget {
+    name: SessionName,
+    id: SessionId,
+}
+
+impl WebSessionTarget {
+    pub(crate) fn new(name: SessionName, id: SessionId) -> Self {
+        Self { name, id }
+    }
+
+    pub(crate) fn name(&self) -> &SessionName {
+        &self.name
+    }
+
+    pub(crate) const fn id(&self) -> SessionId {
+        self.id
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum WebShareConnectRole {
+    Operator,
+    Read,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum WebShareRevokeReason {
+    PaneGone,
+    SessionGone,
+    StoppedByOwner,
+    TtlExpired,
+}
+
+impl WebShareRevokeReason {
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::PaneGone => "pane_gone",
+            Self::SessionGone => "session_gone",
+            Self::StoppedByOwner => "stopped_by_owner",
+            Self::TtlExpired => "ttl_expired",
+        }
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct WebShareAccess {
+    allow_loopback_development_origins: bool,
+    expected_origin: String,
+    expires_at: Option<SystemTime>,
+    _read_lease: Option<ReadLease>,
+    _operator_lease: Option<OperatorLease>,
+    lease_book: Arc<LeaseBook>,
+    max_readers: u16,
+    revoke_rx: watch::Receiver<Option<WebShareRevokeReason>>,
+    role: WebShareRole,
+    share_id: String,
+    target: WebShareTarget,
+    controls: bool,
+    terminal_palette: Option<WebTerminalPalette>,
+    show_viewers: bool,
+}
+
+impl WebShareAccess {
+    pub(crate) fn origin_allowed(&self, received: &str) -> bool {
+        origin_allowed(
+            received,
+            &self.expected_origin,
+            self.allow_loopback_development_origins,
+        )
+    }
+
+    pub(crate) fn is_operator(&self) -> bool {
+        matches!(self.role, WebShareRole::Operator)
+    }
+
+    pub(crate) fn connect_role(&self) -> WebShareConnectRole {
+        match self.role {
+            WebShareRole::Operator => WebShareConnectRole::Operator,
+            WebShareRole::Read => WebShareConnectRole::Read,
+        }
+    }
+
+    pub(crate) fn controls(&self) -> bool {
+        self.controls && self.is_operator()
+    }
+
+    pub(crate) fn share_id(&self) -> &str {
+        &self.share_id
+    }
+
+    pub(crate) fn expires_at(&self) -> Option<SystemTime> {
+        self.expires_at
+    }
+
+    pub(crate) fn connection_counts(&self) -> WebShareConnectionCounts {
+        WebShareConnectionCounts::new(
+            u16::try_from(self.lease_book.reader_count()).unwrap_or(u16::MAX),
+            self.max_readers,
+            self.lease_book.operator_connected(),
+        )
+    }
+
+    pub(crate) fn target(&self) -> &WebShareTarget {
+        &self.target
+    }
+
+    pub(crate) fn terminal_palette(&self) -> Option<&WebTerminalPalette> {
+        self.terminal_palette.as_ref()
+    }
+
+    pub(crate) const fn show_viewers(&self) -> bool {
+        self.show_viewers
+    }
+
+    pub(crate) fn revoke_receiver(&self) -> watch::Receiver<Option<WebShareRevokeReason>> {
+        self.revoke_rx.clone()
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub(crate) struct WebShareConnectionCounts {
+    pub(crate) readers_active: u16,
+    pub(crate) readers_max: u16,
+    pub(crate) operator_connected: bool,
+    pub(crate) viewers_connected: u16,
+}
+
+impl WebShareConnectionCounts {
+    pub(crate) fn new(readers_active: u16, readers_max: u16, operator_connected: bool) -> Self {
+        Self {
+            readers_active,
+            readers_max,
+            operator_connected,
+            viewers_connected: readers_active.saturating_add(if operator_connected {
+                1
+            } else {
+                0
+            }),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WebShareRole {
+    Operator,
+    Read,
+}
+
+pub(super) fn websocket_endpoint(base_url: &str) -> String {
+    let (scheme, authority) = base_url
+        .split_once("://")
+        .expect("validated web-share base URL must include scheme");
+    let ws_scheme = if scheme.eq_ignore_ascii_case("https") {
+        "wss"
+    } else {
+        "ws"
+    };
+    format!("{ws_scheme}://{authority}/share")
+}
+
+pub(super) fn system_time_to_unix(value: SystemTime) -> Option<u64> {
+    value
+        .duration_since(UNIX_EPOCH)
+        .ok()
+        .map(|duration| duration.as_secs())
+}
+
+fn share_url(record: &WebShareRecord, token: Option<&str>) -> String {
+    let endpoint = websocket_endpoint(&record.endpoint_origin);
+    let token = token.unwrap_or("[REDACTED]");
+    debug_assert!(
+        record.frontend_url.starts_with(&record.frontend_origin),
+        "frontend URL must belong to its expected origin"
+    );
+    let mut params = Vec::with_capacity(7);
+    if endpoint != DEFAULT_LOCAL_WEBSOCKET_ENDPOINT {
+        params.push(format!("e={endpoint}"));
+    }
+    params.push(format!("t={token}"));
+    if record.url_options.no_navbar {
+        params.push("navbar=off".to_owned());
+    }
+    if record.url_options.no_disclaimer {
+        params.push("disclaimer=off".to_owned());
+    }
+    if let Some(theme) = record.url_options.terminal_theme {
+        params.push(format!("theme={}", theme.as_url_value()));
+    }
+    format!("{}/#{}", record.frontend_url, params.join("&"))
+}

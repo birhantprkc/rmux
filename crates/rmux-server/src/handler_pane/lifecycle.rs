@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use rmux_core::events::{OutputCursorItem, PaneOutputSubscriptionKey};
 use rmux_core::LifecycleEvent;
-use rmux_proto::{OptionName, PaneTarget, RmuxError, Target, WindowTarget};
+use rmux_proto::{OptionName, PaneTarget, RmuxError, SessionId, Target, WindowTarget};
 
 use super::super::{
     prepare_lifecycle_event, scripting_support::format_context_for_target, RequestHandler,
@@ -34,6 +34,7 @@ enum PaneExitPlan {
     },
     RemoveSession {
         session_name: rmux_proto::SessionName,
+        session_id: SessionId,
         target: PaneTarget,
         removed_pane_ids: Vec<rmux_core::PaneId>,
         pane_event: super::super::QueuedLifecycleEvent,
@@ -196,6 +197,7 @@ impl RequestHandler {
                             }
                             Some(PaneExitPlan::RemoveSession {
                                 session_name: target.session_name().clone(),
+                                session_id: removed_session.id(),
                                 target,
                                 removed_pane_ids: vec![event.pane_id],
                                 pane_event,
@@ -310,12 +312,14 @@ impl RequestHandler {
             }
             PaneExitPlan::RemoveSession {
                 session_name,
+                session_id,
                 target,
                 removed_pane_ids,
                 pane_event,
                 session_event,
                 output,
             } => {
+                self.prune_web_session(Some((session_name.clone(), session_id)));
                 self.retain_removed_pane_output(&event, &target, &output);
                 self.remove_session_leases(std::slice::from_ref(&session_name));
                 output.ensure_eof(event.generation).await;

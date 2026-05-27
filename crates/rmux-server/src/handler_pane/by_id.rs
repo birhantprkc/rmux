@@ -1,7 +1,7 @@
 use rmux_core::LifecycleEvent;
 use rmux_proto::{
     ErrorResponse, HookName, OptionName, PaneTarget, PaneTargetRef, ResizePaneResponse, Response,
-    RmuxError, ScopeSelector, SelectPaneResponse, SetOptionMode, Target, WindowTarget,
+    RmuxError, ScopeSelector, SelectPaneResponse, SessionId, SetOptionMode, Target, WindowTarget,
 };
 
 use super::super::{prepare_lifecycle_event, RequestHandler};
@@ -95,6 +95,7 @@ impl RequestHandler {
             queued_pane_exited,
             queued_session_closed,
             session_destroyed,
+            removed_session,
             removed_subscription_keys,
             removed_pane_ids,
             layout_window,
@@ -147,6 +148,9 @@ impl RequestHandler {
                         Some(queued_pane),
                         queued_session,
                         result.session_destroyed,
+                        result
+                            .removed_session_id
+                            .map(|session_id| (session_name.clone(), SessionId::new(session_id))),
                         removed_subscription_keys,
                         result.removed_pane_ids,
                         layout_window,
@@ -157,12 +161,15 @@ impl RequestHandler {
                     None,
                     None,
                     false,
+                    None,
                     Vec::new(),
                     Vec::new(),
                     layout_window,
                 ),
             }
         };
+
+        self.prune_web_session(removed_session);
 
         if !removed_pane_ids.is_empty() {
             self.forget_pane_snapshot_coalescers(&removed_pane_ids);
