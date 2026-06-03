@@ -28,6 +28,8 @@ use templates::{
     render_string_template, render_sync_template, sync_toggle,
 };
 
+const ATTACH_SCREEN_RESET_SEQUENCE: &[u8] = b"\x1b[0m\x1b[?25l\x1b[H\x1b[2J";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum CursorScope {
     Pane,
@@ -170,6 +172,7 @@ impl OuterTerminal {
     pub(crate) fn attach_start_sequence(&self) -> Vec<u8> {
         let mut bytes = Vec::new();
         bytes.extend_from_slice(alternate_screen_enter_sequence(self.context.term_name()));
+        bytes.extend_from_slice(ATTACH_SCREEN_RESET_SEQUENCE);
         if let Some(sequence) = &self.enable_bpaste {
             bytes.extend_from_slice(sequence.as_bytes());
         }
@@ -375,13 +378,23 @@ impl OuterTerminal {
     }
 
     fn mouse_sequence(&self) -> Option<String> {
+        // Enable in the same order tmux uses in tty_mouse_mode():
+        //   ?1006h  SGR extended coordinates
+        //   ?1000h  normal button tracking   ← must come before ?1002h
+        //   ?1002h  button-event tracking
+        //
+        // Some terminals (e.g. Termius) require ?1000h to be set before
+        // ?1002h; reversing the order causes them to fall back to sending
+        // cursor keys (ESC [ A / ESC [ B) for scroll instead of SGR mouse
+        // events, so WheelUpPane / WheelDownPane bindings never fire.
         (self.supports_mouse && self.mouse_reporting_enabled)
-            .then_some("\x1b[?1006h\x1b[?1002h\x1b[?1000h".to_owned())
+            .then_some("\x1b[?1006h\x1b[?1000h\x1b[?1002h".to_owned())
     }
 
     fn disable_mouse_sequence(&self) -> Option<String> {
+        // Disable in reverse order.
         self.supports_mouse
-            .then_some("\x1b[?1000l\x1b[?1002l\x1b[?1006l".to_owned())
+            .then_some("\x1b[?1002l\x1b[?1000l\x1b[?1006l".to_owned())
     }
 
     fn extkeys_sequence(&self) -> Option<String> {

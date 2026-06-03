@@ -3,6 +3,8 @@
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
+#[path = "cli/alias_fallback.rs"]
+mod alias_fallback;
 #[path = "cli/capture_pane.rs"]
 mod capture_pane;
 #[path = "cli/client_commands.rs"]
@@ -39,8 +41,14 @@ mod startup;
 mod target_resolution;
 #[path = "cli/terminal_size.rs"]
 mod terminal_size;
+#[path = "cli/terminal_theme.rs"]
+mod terminal_theme;
 #[path = "cli/top_level.rs"]
 mod top_level;
+#[path = "cli/web_commands.rs"]
+mod web_commands;
+#[path = "cli/web_share_display.rs"]
+mod web_share_display;
 #[path = "cli/window_commands.rs"]
 mod window_commands;
 
@@ -154,6 +162,9 @@ fn parse_failure_or_absent_server(
         .map_err(ExitFailure::from_client)?;
 
     match connect(&resolved) {
+        Ok(_) if error.kind() == clap::error::ErrorKind::InvalidSubcommand => {
+            alias_fallback::run_unknown_command_through_server_aliases(args, &resolved)
+        }
         Ok(_) => Err(ExitFailure::from_clap(error)),
         Err(connect_error) => Err(ExitFailure::from_client_connect(&resolved, connect_error)),
     }
@@ -267,7 +278,7 @@ mod tests {
     };
     use crate::cli_args::{
         parse as parse_cli, parse_target_spec, AttachSessionArgs, Command, ListSessionsArgs,
-        NewWindowArgs,
+        NewWindowArgs, StartServerArgs,
     };
     use std::ffi::OsString;
     use std::fs;
@@ -346,7 +357,9 @@ mod tests {
     #[test]
     fn start_server_inventory_matches_supported_frozen_commands() {
         assert!(command_has_start_server_flag(&default_client_command()));
-        assert!(command_has_start_server_flag(&Command::StartServer));
+        assert!(command_has_start_server_flag(&Command::StartServer(
+            StartServerArgs::default()
+        )));
         assert!(command_has_start_server_flag(&Command::AttachSession(
             AttachSessionArgs {
                 detach_other_clients: false,
@@ -381,6 +394,25 @@ mod tests {
                 command: Vec::new(),
             }
         )));
+        let web_create = parse_cli(["rmux", "web-share", "-t", "alpha"])
+            .expect("web-share create parses")
+            .command
+            .expect("parsed command");
+        assert!(command_has_start_server_flag(&web_create));
+        for args in [
+            &["rmux", "web-share", "-l"][..],
+            &["rmux", "web-share", "-K", "abc12345"][..],
+            &["rmux", "web-share", "disconnect", "abc12345"][..],
+            &["rmux", "web-share", "-X"][..],
+            &["rmux", "web-share", "--lookup", "abc12345"][..],
+            &["rmux", "web-share", "--config"][..],
+        ] {
+            let command = parse_cli(args.iter().copied())
+                .expect("web-share lifecycle command parses")
+                .command
+                .expect("parsed command");
+            assert!(!command_has_start_server_flag(&command));
+        }
     }
 
     #[test]
@@ -398,6 +430,11 @@ mod tests {
             }
             ServerStartupConfig::Default { .. } => panic!("expected explicit config files"),
         }
+    }
+
+    #[test]
+    fn start_server_rejects_zero_web_port() {
+        assert!(parse_cli(["rmux", "start-server", "--web-port", "0"]).is_err());
     }
 
     #[cfg(unix)]

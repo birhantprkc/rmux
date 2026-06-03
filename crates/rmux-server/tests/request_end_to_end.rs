@@ -19,14 +19,15 @@ use rmux_proto::{
 };
 use tokio::time::sleep;
 
-const COMMAND_SURFACE_COUNT: usize = 78;
-const INTERNAL_REQUEST_COMMANDS: [&str; 37] = [
+const COMMAND_SURFACE_COUNT: usize = 79;
+const INTERNAL_REQUEST_COMMANDS: [&str; 39] = [
     "attach-session-ext",
     "attach-session-ext2",
     "cancel-sdk-wait",
     "control-mode",
     "daemon-status",
     "detach-client-ext",
+    "display-message-ext",
     "handshake",
     "new-session-ext",
     "create-session-lease",
@@ -46,6 +47,7 @@ const INTERNAL_REQUEST_COMMANDS: [&str; 37] = [
     "select-pane-adjacent",
     "select-old-layout",
     "send-keys-ext",
+    "send-keys-ext2",
     "spread-layout",
     "shutdown-if-idle",
     "sdk-wait-output",
@@ -138,6 +140,7 @@ const COMMAND_SURFACE: [&str; COMMAND_SURFACE_COUNT] = [
     "rename-session",
     "list-sessions",
     "list-panes",
+    "web-share",
 ];
 
 #[test]
@@ -805,7 +808,7 @@ fn extract_braced_block<'a>(contents: &'a str, anchor: &str) -> Result<&'a str, 
 fn extract_variant_name(line: &str) -> Option<String> {
     let variant: String = line
         .chars()
-        .take_while(|character| character.is_ascii_alphabetic())
+        .take_while(|character| character.is_ascii_alphanumeric())
         .collect();
     (!variant.is_empty()).then_some(variant)
 }

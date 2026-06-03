@@ -15,6 +15,45 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  source-gates:
+    name: Release source gates
+    runs-on: ubuntu-latest
+    env:
+      RELEASE_REF: ${{ github.event_name == 'workflow_dispatch' && inputs.ref || github.ref_name }}
+      RUSTDOCFLAGS: -D warnings
+      RUST_MIN_STACK: "8388608"
+      RUST_TEST_THREADS: "1"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_REF }}
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Fetch locked dependencies
+        run: cargo fetch --locked
+
+      - name: cargo fmt
+        run: cargo fmt --all -- --check
+
+      - name: cargo clippy
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+
+      - name: cargo test
+        run: cargo test --workspace --locked --no-fail-fast
+
+      - name: rustdoc with warnings denied
+        run: cargo doc --workspace --locked --no-deps
+
+      - name: Source boundary gates
+        shell: bash
+        run: |
+          scripts/no-network-in-runtime.sh
+          scripts/check-platform-neutrality.sh
+          scripts/no-debug-assert-side-effects.sh
+
   build:
     name: Build ${{ matrix.target }}
     runs-on: ${{ matrix.os }}
@@ -24,23 +63,28 @@ jobs:
         include:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
+            platform-label: linux-x86_64
             binary: rmux
             archive: tar.gz
           - os: macos-15-intel
             target: x86_64-apple-darwin
+            platform-label: macos-x86_64
             binary: rmux
             archive: tar.gz
           - os: macos-15
             target: aarch64-apple-darwin
+            platform-label: macos-aarch64
             binary: rmux
             archive: tar.gz
           - os: windows-latest
             target: x86_64-pc-windows-msvc
+            platform-label: windows-x86_64
             binary: rmux.exe
             archive: zip
     env:
       RELEASE_REF: ${{ github.event_name == 'workflow_dispatch' && inputs.ref || github.ref_name }}
       TARGET: ${{ matrix.target }}
+      PLATFORM_LABEL: ${{ matrix.platform-label }}
       BINARY: ${{ matrix.binary }}
       BUILD_PROFILE: release
       PROFILE_DIR: release
@@ -95,26 +139,75 @@ jobs:
           "$bin" -V | tee version.txt
           grep -F "rmux $VERSION" version.txt
 
+      - name: Install Linux package tooling
+        if: matrix.target == 'x86_64-unknown-linux-gnu'
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cpio rpm createrepo-c
+
+      - name: Windows runtime smoke
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          RUST_TEST_THREADS: "1"
+        run: cargo test --workspace --locked --target $env:TARGET --no-fail-fast -- --test-threads=1
+
       - name: Create Unix archive
         if: matrix.archive == 'tar.gz'
         shell: bash
         run: |
-          package="rmux-$TAG-$TARGET"
-          mkdir -p "dist/$package"
-          cp "target/$TARGET/$PROFILE_DIR/$BINARY" "dist/$package/rmux"
-          cp README.md LICENSE-APACHE LICENSE-MIT rmux.1 "dist/$package/"
-          chmod +x "dist/$package/rmux"
-          tar -czf "dist/$package.tar.gz" -C dist "$package"
+          rm -rf dist
+          if [[ "$RUNNER_OS" == "macOS" ]]; then
+            export RMUX_PACKAGE_CODESIGN_ADHOC=1
+          fi
+          scripts/package-unix.sh \
+            --configuration "$BUILD_PROFILE" \
+            --target "$TARGET" \
+            --output-dir dist
+          archive="$(ls dist/rmux-*.tar.gz | head -n 1)"
+          scripts/verify-package.sh "$archive" --checksums dist/SHA256SUMS.txt --run-binary
+
+      - name: Create Linux distro packages
+        if: matrix.target == 'x86_64-unknown-linux-gnu'
+        shell: bash
+        run: |
+          scripts/package-debian.sh \
+            --configuration "$BUILD_PROFILE" \
+            --target "$TARGET" \
+            --output-dir dist \
+            --skip-build \
+            --reuse-release-binary
+          deb="$(ls dist/rmux_*.deb | head -n 1)"
+          scripts/verify-debian-package.sh "$deb" --checksums dist/SHA256SUMS.txt --run-binary --require-release-artifact
+
+          scripts/package-rpm.sh \
+            --configuration "$BUILD_PROFILE" \
+            --target "$TARGET" \
+            --output-dir dist \
+            --skip-build \
+            --reuse-release-binary
+          rpm="$(ls dist/rmux-*.rpm | head -n 1)"
+          scripts/verify-rpm-package.sh "$rpm" --checksums dist/SHA256SUMS.txt --run-binary --require-release-artifact
 
       - name: Create Windows archive
         if: matrix.archive == 'zip'
         shell: pwsh
         run: |
-          $package = "rmux-$env:TAG-$env:TARGET"
-          New-Item -ItemType Directory -Force -Path "dist/$package" | Out-Null
-          Copy-Item "target/$env:TARGET/$env:PROFILE_DIR/$env:BINARY" "dist/$package/rmux.exe"
-          Copy-Item README.md, LICENSE-APACHE, LICENSE-MIT, rmux.1 "dist/$package/"
-          Compress-Archive -Path "dist/$package" -DestinationPath "dist/$package.zip" -Force
+          ./scripts/package-windows.ps1 `
+            -Configuration "$env:BUILD_PROFILE" `
+            -Target "$env:TARGET" `
+            -OutputDir dist `
+            -PlatformLabel "$env:PLATFORM_LABEL"
+          $archive = Get-ChildItem -Path dist -Filter "rmux-*.zip" | Select-Object -First 1
+          if ($null -eq $archive) {
+            throw "Windows package archive was not generated"
+          }
+          ./scripts/verify-package-windows.ps1 `
+            $archive.FullName `
+            -Checksums dist/SHA256SUMS.txt `
+            -RunBinary `
+            -RunDaemonSmoke
 
       - uses: actions/upload-artifact@v4
         with:
@@ -122,16 +215,24 @@ jobs:
           path: |
             dist/*.tar.gz
             dist/*.zip
+            dist/*.deb
+            dist/*.rpm
           if-no-files-found: error
 
   publish:
     name: Publish GitHub release assets
     runs-on: ubuntu-latest
-    needs: build
+    needs:
+      - source-gates
+      - build
     env:
       RELEASE_REF: ${{ github.event_name == 'workflow_dispatch' && inputs.ref || github.ref_name }}
       GH_TOKEN: ${{ github.token }}
     steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_REF }}
+
       - uses: actions/download-artifact@v4
         with:
           path: release-assets
@@ -142,12 +243,141 @@ jobs:
         run: |
           cd release-assets
           shopt -s nullglob
-          assets=( *.tar.gz *.zip )
+          assets=( *.tar.gz *.zip *.deb *.rpm )
           if (( ${#assets[@]} == 0 )); then
             echo "No release archives found" >&2
             exit 1
           fi
           printf '%s\0' "${assets[@]}" | sort -z | xargs -0 sha256sum > SHA256SUMS
+
+      - name: Install repository metadata tooling
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y createrepo-c gnupg rpm
+
+      - name: Import Linux repository signing keys
+        shell: bash
+        env:
+          RMUX_APT_GPG_PRIVATE_KEY: ${{ secrets.RMUX_APT_GPG_PRIVATE_KEY }}
+          RMUX_APT_GPG_KEY: ${{ secrets.RMUX_APT_GPG_KEY }}
+          RMUX_RPM_GPG_PRIVATE_KEY: ${{ secrets.RMUX_RPM_GPG_PRIVATE_KEY }}
+          RMUX_RPM_GPG_KEY: ${{ secrets.RMUX_RPM_GPG_KEY }}
+          RMUX_RPM_REPO_GPG_PRIVATE_KEY: ${{ secrets.RMUX_RPM_REPO_GPG_PRIVATE_KEY }}
+          RMUX_RPM_REPO_GPG_KEY: ${{ secrets.RMUX_RPM_REPO_GPG_KEY }}
+        run: |
+          missing=0
+          for name in RMUX_APT_GPG_PRIVATE_KEY RMUX_APT_GPG_KEY RMUX_RPM_GPG_PRIVATE_KEY RMUX_RPM_GPG_KEY; do
+            if [ -z "${!name:-}" ]; then
+              echo "Missing required secret: $name" >&2
+              missing=1
+            fi
+          done
+          rpm_repo_key="${RMUX_RPM_REPO_GPG_KEY:-$RMUX_RPM_GPG_KEY}"
+          if [ "$rpm_repo_key" != "$RMUX_RPM_GPG_KEY" ] && [ -z "${RMUX_RPM_REPO_GPG_PRIVATE_KEY:-}" ]; then
+            echo "Missing required secret: RMUX_RPM_REPO_GPG_PRIVATE_KEY" >&2
+            missing=1
+          fi
+          [ "$missing" -eq 0 ] || exit 1
+
+          install -m 700 -d ~/.gnupg
+          printf '%s\n' "$RMUX_APT_GPG_PRIVATE_KEY" | gpg --batch --import
+          printf '%s\n' "$RMUX_RPM_GPG_PRIVATE_KEY" | gpg --batch --import
+          if [ -n "${RMUX_RPM_REPO_GPG_PRIVATE_KEY:-}" ]; then
+            printf '%s\n' "$RMUX_RPM_REPO_GPG_PRIVATE_KEY" | gpg --batch --import
+          fi
+          gpg --batch --list-secret-keys "$RMUX_APT_GPG_KEY" >/dev/null
+          gpg --batch --list-secret-keys "$RMUX_RPM_GPG_KEY" >/dev/null
+          gpg --batch --list-secret-keys "$rpm_repo_key" >/dev/null
+
+      - name: Generate Homebrew formula
+        shell: bash
+        run: |
+          version="${RELEASE_REF#v}"
+          mkdir -p target/homebrew/Formula
+          scripts/generate-homebrew-formula.sh \
+            --version "$version" \
+            --checksums release-assets/SHA256SUMS \
+            --output target/homebrew/Formula/rmux.rb
+          if command -v ruby >/dev/null 2>&1; then
+            ruby -c target/homebrew/Formula/rmux.rb
+          fi
+
+      - name: Generate package manager metadata
+        shell: bash
+        run: |
+          version="${RELEASE_REF#v}"
+          mkdir -p \
+            target/package-managers/homebrew/Formula \
+            target/package-managers/winget \
+            target/package-managers/scoop \
+            target/package-managers/chocolatey
+          cp target/homebrew/Formula/rmux.rb target/package-managers/homebrew/Formula/rmux.rb
+          scripts/generate-winget-manifest.sh \
+            --version "$version" \
+            --checksums release-assets/SHA256SUMS \
+            --output target/package-managers/winget/Helvesec.RMUX.yaml
+          scripts/generate-scoop-manifest.sh \
+            --version "$version" \
+            --checksums release-assets/SHA256SUMS \
+            --output target/package-managers/scoop/rmux.json
+          scripts/generate-chocolatey-package.sh \
+            --version "$version" \
+            --checksums release-assets/SHA256SUMS \
+            --output-dir target/package-managers/chocolatey/rmux
+          if command -v ruby >/dev/null 2>&1; then
+            ruby -rjson -e 'JSON.parse(File.read(ARGV.fetch(0)))' target/package-managers/scoop/rmux.json
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: package-manager-metadata-${{ env.RELEASE_REF }}
+          path: target/package-managers
+          if-no-files-found: error
+
+      - name: Generate Linux package repositories
+        shell: bash
+        env:
+          RMUX_APT_GPG_KEY: ${{ secrets.RMUX_APT_GPG_KEY }}
+          RMUX_RPM_GPG_KEY: ${{ secrets.RMUX_RPM_GPG_KEY }}
+          RMUX_RPM_REPO_GPG_KEY: ${{ secrets.RMUX_RPM_REPO_GPG_KEY }}
+        run: |
+          : "${RMUX_APT_GPG_KEY:?missing RMUX_APT_GPG_KEY}"
+          : "${RMUX_RPM_GPG_KEY:?missing RMUX_RPM_GPG_KEY}"
+          rpm_repo_key="${RMUX_RPM_REPO_GPG_KEY:-$RMUX_RPM_GPG_KEY}"
+          mkdir -p target/package-repositories
+          scripts/generate-apt-repository.sh \
+            --input-dir release-assets \
+            --output-dir target/package-repositories/debian \
+            --suite stable \
+            --component main \
+            --architecture amd64 \
+            --signing-key "$RMUX_APT_GPG_KEY"
+          scripts/generate-rpm-repository.sh \
+            --input-dir release-assets \
+            --output-dir target/package-repositories/rpm \
+            --baseurl https://packages.rmux.io/rpm \
+            --rpm-signing-key "$RMUX_RPM_GPG_KEY" \
+            --repo-signing-key "$rpm_repo_key"
+          gpg --armor --export "$RMUX_APT_GPG_KEY" > target/package-repositories/debian/rmux.asc
+          gpg --armor --export "$RMUX_RPM_GPG_KEY" > target/package-repositories/rpm/RPM-GPG-KEY-rmux
+          test -f target/package-repositories/debian/rmux.asc
+          test -f target/package-repositories/debian/dists/stable/Release
+          test -f target/package-repositories/debian/dists/stable/InRelease
+          test -f target/package-repositories/debian/dists/stable/Release.gpg
+          test -f target/package-repositories/debian/dists/stable/main/binary-amd64/Packages.gz
+          test -f target/package-repositories/rpm/RPM-GPG-KEY-rmux
+          test -f target/package-repositories/rpm/repodata/repomd.xml
+          test -f target/package-repositories/rpm/repodata/repomd.xml.asc
+          test -f target/package-repositories/rpm/rmux.repo
+          grep -qx 'gpgcheck=1' target/package-repositories/rpm/rmux.repo
+          grep -qx 'repo_gpgcheck=1' target/package-repositories/rpm/rmux.repo
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-package-repositories-${{ env.RELEASE_REF }}
+          path: target/package-repositories
+          if-no-files-found: error
 
       - name: Create or update release
         shell: bash
@@ -158,6 +388,8 @@ jobs:
             gh release create "$tag" \
               --repo "$GITHUB_REPOSITORY" \
               --title "$tag" \
+              --draft \
               --notes "RMUX $version binary release."
           fi
           gh release upload "$tag" --repo "$GITHUB_REPOSITORY" release-assets/* --clobber
+          gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --draft=false

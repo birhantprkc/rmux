@@ -13,6 +13,7 @@ use rmux_pty::PtyPair;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::{mpsc, watch};
 
+use super::attach_transport::AttachTransport;
 use super::control::{apply_pending_attach_controls, PendingAttachAction};
 use super::wire::open_attach_target;
 use super::wire::recv_pane_output;
@@ -109,6 +110,7 @@ async fn typed_keystroke_wire_reaches_stub_and_acknowledges() {
         .await;
 
     let (stream, mut peer) = tokio::net::UnixStream::pair().expect("attach stream pair");
+    let stream = AttachTransport::from(stream);
     let keystroke = AttachedKeystroke::new(b"\x1b[A".to_vec());
     let encoded = encode_attach_message(&AttachMessage::Keystroke(keystroke))
         .expect("encode typed keystroke");
@@ -168,6 +170,7 @@ async fn mouse_keystroke_wire_does_not_error_or_drop_the_attach() {
         .await;
 
     let (stream, mut peer) = tokio::net::UnixStream::pair().expect("attach stream pair");
+    let stream = AttachTransport::from(stream);
     let keystroke = AttachedKeystroke::new(b"\x1b[<0;10;10M".to_vec());
     let encoded = encode_attach_message(&AttachMessage::Keystroke(keystroke))
         .expect("encode mouse keystroke");
@@ -340,6 +343,7 @@ async fn pending_switch_action_reports_target_change_for_status_reschedule() {
     let alpha = SessionName::new("alpha").expect("valid session name");
     let beta = SessionName::new("beta").expect("valid session name");
     let (stream, mut peer) = tokio::net::UnixStream::pair().expect("attach stream pair");
+    let stream = AttachTransport::from(stream);
     let (control_tx, mut control_rx) = mpsc::unbounded_channel();
     let mut current_target =
         open_attach_target(test_attach_target(&alpha, b"BASE-A", None)).expect("open target");
@@ -619,6 +623,22 @@ async fn forward_attach_emits_display_panes_overlay_for_prefix_q_keystrokes() {
         .await
     });
 
+    let mut frame_bytes = [0_u8; 4096];
+    let mut decoder = AttachFrameDecoder::new();
+    while let Ok(Ok(bytes_read)) =
+        tokio::time::timeout(Duration::from_millis(25), peer.read(&mut frame_bytes)).await
+    {
+        if bytes_read == 0 {
+            break;
+        }
+        decoder.push_bytes(&frame_bytes[..bytes_read]);
+        while decoder
+            .next_message()
+            .expect("decode initial attach frame")
+            .is_some()
+        {}
+    }
+
     let encoded = encode_attach_message(&AttachMessage::Keystroke(AttachedKeystroke::new(
         b"\x02q".to_vec(),
     )))
@@ -627,10 +647,9 @@ async fn forward_attach_emits_display_panes_overlay_for_prefix_q_keystrokes() {
         .await
         .expect("send prefix q");
 
+    let overlay_marker = b"\x1b[s\x1b[?25l";
     let mut collected = Vec::new();
     let mut saw_ack = false;
-    let mut frame_bytes = [0_u8; 4096];
-    let mut decoder = AttachFrameDecoder::new();
     while let Ok(Ok(bytes_read)) =
         tokio::time::timeout(Duration::from_millis(250), peer.read(&mut frame_bytes)).await
     {
@@ -646,8 +665,9 @@ async fn forward_attach_emits_display_panes_overlay_for_prefix_q_keystrokes() {
             }
         }
         if collected
-            .windows(b"\x1b[?25l".len())
-            .any(|window| window == b"\x1b[?25l")
+            .windows(overlay_marker.len())
+            .any(|window| window == overlay_marker)
+            && saw_ack
         {
             break;
         }
@@ -659,8 +679,8 @@ async fn forward_attach_emits_display_panes_overlay_for_prefix_q_keystrokes() {
     );
     assert!(
         collected
-            .windows(b"\x1b[?25l".len())
-            .any(|window| window == b"\x1b[?25l"),
+            .windows(overlay_marker.len())
+            .any(|window| window == overlay_marker),
         "prefix q should emit a display-panes overlay frame, got: {:?}",
         String::from_utf8_lossy(&collected)
     );

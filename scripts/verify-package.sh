@@ -102,7 +102,7 @@ if [ -z "$checksums" ]; then
 fi
 [ -f "$checksums" ] || die "checksum manifest not found: $checksums"
 
-expected_hash="$(awk -v name="$archive_name" '$2 == name { print $1 }' "$checksums")"
+expected_hash="$(awk -v name="$archive_name" '{ hash = $1; file = $2; sub(/\r$/, "", hash); sub(/\r$/, "", file); if (file == name) { print hash; exit } }' "$checksums")"
 [ -n "$expected_hash" ] || die "archive is missing from checksum manifest: $archive_name"
 actual_hash="$(sha256_file "$archive_abs")"
 [ "$expected_hash" = "$actual_hash" ] || die "checksum mismatch for $archive_name"
@@ -114,7 +114,7 @@ tar -xzf "$archive_abs" -C "$tmpdir"
 package_root="$tmpdir/${archive_name%.tar.gz}"
 [ -d "$package_root" ] || die "archive root directory is missing: ${archive_name%.tar.gz}"
 
-for required in bin/rmux SHA256SUMS.txt share/rmux/artifact-metadata.json share/man/man1/rmux.1; do
+for required in bin/rmux LICENSE-APACHE LICENSE-MIT SHA256SUMS.txt share/rmux/artifact-metadata.json share/man/man1/rmux.1; do
   [ -e "$package_root/$required" ] || die "missing package file: $required"
 done
 [ -x "$package_root/bin/rmux" ] || die "packaged rmux is not executable"

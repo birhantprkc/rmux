@@ -75,6 +75,8 @@ pub mod spec;
 pub mod trace;
 pub mod types;
 pub mod wait;
+#[cfg(feature = "web")]
+pub mod web_share;
 
 #[allow(dead_code)]
 pub(crate) mod transport;
@@ -119,6 +121,8 @@ pub use pane_set::{
     PaneSet, PaneSetAny, PaneSetBatch, PaneSetExpectation, PaneSetFailure, PaneSetSuccess,
     PaneSetVisibleTextOutcome, PaneSetVisibleTextWait,
 };
+#[cfg(feature = "web")]
+pub use rmux_proto::{WebTerminalPalette, WebTerminalTheme};
 pub use snapshot::{
     PaneAttributes, PaneCell, PaneColor, PaneCursor, PaneGlyph, PaneSnapshot,
     PaneSnapshotShapeError,
@@ -134,3 +138,7 @@ pub use types::{
     WindowRef,
 };
 pub use wait::{ArmedWait, VisibleTextExpectation, VisibleTextWait, WaitTimeoutError};
+#[cfg(feature = "web")]
+pub use web_share::{
+    WebConfigInfo, WebShareBuilder, WebShareHandle, WebShareLookup, WebShareSummary,
+};

@@ -31,9 +31,10 @@ pub use pane::{
     PaneOutputCursorRequest, PaneOutputSubscriptionStart, PaneResizeRequest, PaneRespawnRequest,
     PaneSelectRequest, PaneSnapshotRefRequest, PaneSnapshotRequest, PaneSplitSize, PipePaneRequest,
     ResizePaneRequest, RespawnPaneRequest, SelectPaneAdjacentRequest, SelectPaneDirection,
-    SelectPaneMarkRequest, SelectPaneRequest, SendKeysExtRequest, SendKeysRequest,
-    SplitWindowExtRequest, SplitWindowRequest, SplitWindowTarget, SubscribePaneOutputRefRequest,
-    SubscribePaneOutputRequest, SwapPaneDirection, SwapPaneRequest, UnsubscribePaneOutputRequest,
+    SelectPaneMarkRequest, SelectPaneRequest, SendKeysExt2Request, SendKeysExtRequest,
+    SendKeysRequest, SplitWindowExtRequest, SplitWindowRequest, SplitWindowTarget,
+    SubscribePaneOutputRefRequest, SubscribePaneOutputRequest, SwapPaneDirection, SwapPaneRequest,
+    UnsubscribePaneOutputRequest,
 };
 
 #[path = "request/window.rs"]
@@ -92,6 +93,14 @@ mod buffer;
 pub use buffer::{
     CapturePaneRequest, ClearHistoryRequest, DeleteBufferRequest, ListBuffersRequest,
     LoadBufferRequest, PasteBufferRequest, SaveBufferRequest, SetBufferRequest, ShowBufferRequest,
+};
+
+#[path = "request/web.rs"]
+mod web;
+pub use web::{
+    CreateWebShareRequest, ListWebSharesRequest, LookupWebShareRequest, StopAllWebSharesRequest,
+    StopWebShareRequest, WebShareConfigRequest, WebShareRequest, WebShareScope, WebShareUrlOptions,
+    WebTerminalPalette, WebTerminalTheme,
 };
 
 /// All detached public command and internal RPC requests supported by the wire
@@ -326,6 +335,12 @@ pub enum Request {
     DaemonStatus(DaemonStatusRequest),
     /// Internal idle-only shutdown endpoint used by seamless upgrades.
     ShutdownIfIdle(ShutdownIfIdleRequest),
+    /// Browser-visible pane sharing command family.
+    WebShare(WebShareRequest),
+    /// `display-message` extension with target-client context.
+    DisplayMessageExt(DisplayMessageExtRequest),
+    /// `send-keys` extension with target-client context.
+    SendKeysExt2(SendKeysExt2Request),
 }
 
 impl Request {
@@ -360,7 +375,7 @@ impl Request {
             Self::SelectPane(_) | Self::SelectPaneAdjacent(_) | Self::SelectPaneMark(_) => {
                 "select-pane"
             }
-            Self::SendKeys(_) => "send-keys",
+            Self::SendKeys(_) | Self::SendKeysExt2(_) => "send-keys",
             Self::AttachSession(_) => "attach-session",
             Self::SwitchClient(_) => "switch-client",
             Self::DetachClient(_) => "detach-client",
@@ -397,7 +412,7 @@ impl Request {
             Self::PaneRespawn(_) => "respawn-pane",
             Self::PaneSnapshotRef(_) => "pane-snapshot",
             Self::PaneSelect(_) => "select-pane",
-            Self::DisplayMessage(_) => "display-message",
+            Self::DisplayMessage(_) | Self::DisplayMessageExt(_) => "display-message",
             Self::ResolveTarget(_) => "resolve-target",
             Self::RunShell(_) => "run-shell",
             Self::IfShell(_) => "if-shell",
@@ -446,6 +461,7 @@ impl Request {
             Self::Handshake(_) => "handshake",
             Self::DaemonStatus(_) => "daemon-status",
             Self::ShutdownIfIdle(_) => "shutdown-if-idle",
+            Self::WebShare(_) => "web-share",
         }
     }
 }
@@ -459,6 +475,22 @@ pub struct DisplayMessageRequest {
     pub print: bool,
     /// The optional format string. When omitted, the tmux-compatible default is used.
     pub message: Option<String>,
+}
+
+/// Extended request payload for `display-message -c`.
+///
+/// This stays separate from [`DisplayMessageRequest`] so the original bincode
+/// field order remains wire-compatible with older clients and daemons.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DisplayMessageExtRequest {
+    /// The optional exact session, window, or pane target used as format context.
+    pub target: Option<Target>,
+    /// Whether to print the expanded message to stdout instead of displaying it.
+    pub print: bool,
+    /// The optional format string. When omitted, the tmux-compatible default is used.
+    pub message: Option<String>,
+    /// Optional target client used for client formats and overlay delivery.
+    pub target_client: Option<String>,
 }
 
 /// Request payload for `show-messages`.
@@ -699,6 +731,9 @@ mod tests {
                 process_command: None,
                 start_directory: None,
                 keep_alive_on_exit: None,
+                detached: false,
+                size: None,
+                preserve_zoom: false,
             })
             .command_name(),
             "split-window"

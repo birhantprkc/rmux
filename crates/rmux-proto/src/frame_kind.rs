@@ -111,6 +111,8 @@ pub enum FrameFeature {
     SdkWaits,
     /// Error envelopes.
     Errors,
+    /// Browser-visible pane sharing.
+    Web,
     /// Reserved for future extensions.
     Reserved,
 }
@@ -1198,6 +1200,33 @@ pub const V1_FRAME_LEDGER: &[FrameLedgerEntry] = &[
         None,
         "Internal idle-only daemon shutdown endpoint for seamless upgrades; pinned bincode tag 113.",
     ),
+    entry(
+        c2s(114),
+        FrameDirection::ClientToServer,
+        ACTIVE,
+        "WebShareRequest",
+        FrameFeature::Web,
+        None,
+        "Browser-visible pane sharing command family; pinned bincode tag 114.",
+    ),
+    entry(
+        c2s(115),
+        FrameDirection::ClientToServer,
+        ACTIVE,
+        "DisplayMessageExtRequest",
+        FrameFeature::Formats,
+        None,
+        "Target-client aware display-message extension; pinned bincode tag 115.",
+    ),
+    entry(
+        c2s(116),
+        FrameDirection::ClientToServer,
+        ACTIVE,
+        "SendKeysExt2Request",
+        FrameFeature::Panes,
+        None,
+        "Target-client aware send-keys extension; pinned bincode tag 116.",
+    ),
     // Reserved client→server slot. Removed values must be listed and never reused.
     entry(
         c2s(0x7FFE),
@@ -2055,6 +2084,15 @@ pub const V1_FRAME_LEDGER: &[FrameLedgerEntry] = &[
         None,
         "Internal idle-only daemon shutdown response for seamless upgrades; pinned bincode tag 92.",
     ),
+    entry(
+        s2c(93),
+        FrameDirection::ServerToClient,
+        ACTIVE,
+        "WebShareResponse",
+        FrameFeature::Web,
+        None,
+        "Browser-visible pane sharing command response; pinned bincode tag 93.",
+    ),
     // Reserved server→client slot. Removed values must be listed and never reused.
     entry(
         s2c(0x7FFE),
@@ -2198,6 +2236,9 @@ pub const fn frame_kind_for_request(request: &Request) -> FrameKind {
         Request::SdkWaitForOutputRef(_) => c2s(111),
         Request::DaemonStatus(_) => c2s(112),
         Request::ShutdownIfIdle(_) => c2s(113),
+        Request::WebShare(_) => c2s(114),
+        Request::DisplayMessageExt(_) => c2s(115),
+        Request::SendKeysExt2(_) => c2s(116),
     }
 }
 
@@ -2298,6 +2339,7 @@ pub const fn frame_kind_for_response(response: &Response) -> FrameKind {
         Response::ReleaseSessionLease(_) => s2c(90),
         Response::DaemonStatus(_) => s2c(91),
         Response::ShutdownIfIdle(_) => s2c(92),
+        Response::WebShare(_) => s2c(93),
     }
 }
 

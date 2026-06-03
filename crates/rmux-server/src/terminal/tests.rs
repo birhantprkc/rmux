@@ -1,6 +1,7 @@
+#[cfg(unix)]
+use super::environment_from_os_pairs;
 use super::{
-    environment_from_os_pairs, parse_environment_assignments, spawn_hook_command,
-    validate_process_command, TerminalProfile,
+    parse_environment_assignments, spawn_hook_command, validate_process_command, TerminalProfile,
 };
 use rmux_core::{EnvironmentStore, OptionStore};
 use rmux_proto::{OptionName, ProcessCommand, ScopeSelector, SessionName, SetOptionMode};
@@ -8,6 +9,7 @@ use rmux_proto::{OptionName, ProcessCommand, ScopeSelector, SessionName, SetOpti
 use rmux_pty::TerminalSize as PtyTerminalSize;
 use std::collections::HashMap;
 use std::error::Error;
+#[cfg(unix)]
 use std::ffi::OsString;
 use std::fs;
 use std::io;
@@ -179,6 +181,35 @@ fn terminal_profile_applies_spawn_environment_before_explicit_overrides() {
         profile.environment_value("RMUX_CLIENT_ONLY"),
         Some("override")
     );
+}
+
+#[cfg(unix)]
+#[test]
+fn terminal_profile_uses_client_shell_when_default_shell_is_unset() {
+    let environment = EnvironmentStore::new();
+    let options = OptionStore::new();
+    let session_name = SessionName::new("alpha").expect("valid session name");
+    let spawn_environment = HashMap::from([
+        ("SHELL".to_owned(), "/usr/bin/fish".to_owned()),
+        ("PATH".to_owned(), "/usr/bin:/bin".to_owned()),
+    ]);
+
+    let profile = TerminalProfile::for_session(
+        &environment,
+        &options,
+        &session_name,
+        7,
+        temp_socket_path().as_path(),
+        Some(&spawn_environment),
+        true,
+        None,
+        None,
+        None,
+    )
+    .expect("profile");
+
+    assert_eq!(profile.shell(), Path::new("/usr/bin/fish"));
+    assert_eq!(profile.environment_value("SHELL"), Some("/usr/bin/fish"));
 }
 
 #[test]

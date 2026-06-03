@@ -5,6 +5,9 @@
 
 #[cfg(any(unix, windows))]
 #[cfg_attr(windows, allow(dead_code))]
+mod automatic_rename;
+#[cfg(any(unix, windows))]
+#[cfg_attr(windows, allow(dead_code))]
 mod client_flags;
 #[cfg(any(unix, windows))]
 #[cfg_attr(windows, allow(dead_code))]
@@ -65,6 +68,9 @@ mod mouse;
 mod outer_terminal;
 #[cfg(any(unix, windows))]
 #[cfg_attr(windows, allow(dead_code))]
+mod pane_indices;
+#[cfg(any(unix, windows))]
+#[cfg_attr(windows, allow(dead_code))]
 mod pane_io;
 #[cfg(unix)]
 mod pane_reader_runtime;
@@ -108,6 +114,19 @@ mod unix_socket;
 #[cfg(any(unix, windows))]
 #[cfg_attr(windows, allow(dead_code))]
 mod wait_for;
+#[cfg(all(any(unix, windows), feature = "web"))]
+mod web;
+
+/// Fuzzing entry points for protocol parsers.
+#[cfg(all(any(unix, windows), feature = "web", feature = "fuzzing"))]
+#[doc(hidden)]
+pub mod fuzzing {
+    /// Feeds arbitrary bytes into the server-side share client-frame parser.
+    pub fn websocket_client_frame(data: &[u8]) {
+        crate::web::fuzz_client_frame(data);
+    }
+}
+
 pub use daemon::{
     default_socket_path, ConfigFileSelection, ConfigLoadOptions, DaemonConfig, ServerDaemon,
     ServerHandle,

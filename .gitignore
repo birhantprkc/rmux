@@ -1,4 +1,6 @@
 /target
+/dist/
+fuzz/target/
 tests/reference/screenshots/*/*/
 SDK demo/node_modules/
 SDK demo/.astro/
@@ -10,3 +12,4 @@ SDK demo/playwright-report/
 
 # Local release orchestrator. Kept in the repo working directory, not tracked.
 /rmux-release.sh
+/.release-deployment/

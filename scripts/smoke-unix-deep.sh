@@ -121,6 +121,11 @@ assert_no_rmux_processes_for_root() {
     fi
 }
 
+no_rmux_processes_for_root() {
+    command -v pgrep >/dev/null 2>&1 || return 0
+    ! pgrep -af -- "$RMUX" | grep -Fq "$SMOKE_ROOT"
+}
+
 attach_mode_tree_smoke() {
     command -v expect >/dev/null 2>&1 || {
         log 'SKIP interactive deep smoke: expect not found'
@@ -206,6 +211,7 @@ attach_mode_tree_smoke
 
 run "$RMUX" kill-server
 wait_until 'default socket shutdown' 5 expect_failure 'list-sessions after kill-server' "$RMUX" list-sessions
+wait_until 'default daemon process cleanup' 5 no_rmux_processes_for_root
 assert_no_rmux_processes_for_root
 
 run "$RMUX" -L deep-label new-session -d -s label_socket
@@ -219,5 +225,6 @@ custom_sessions="$("$RMUX" -S "$custom_socket" list-sessions)"
 assert_contains "$custom_sessions" 'custom_socket' '-S list-sessions output'
 run "$RMUX" -S "$custom_socket" kill-server
 
+wait_until 'all daemon process cleanup' 5 no_rmux_processes_for_root
 assert_no_rmux_processes_for_root
 log 'deep unix smoke passed'

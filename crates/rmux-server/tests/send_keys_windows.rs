@@ -7,15 +7,19 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
+#[path = "../../../tests/support/windows_cli_serial.rs"]
+mod windows_cli_serial;
+
 type TestResult<T = ()> = Result<T, Box<dyn Error>>;
 
-const STEP_TIMEOUT: Duration = Duration::from_secs(5);
+const STEP_TIMEOUT: Duration = Duration::from_secs(60);
 static UNIQUE_ID: AtomicUsize = AtomicUsize::new(0);
 
 #[test]
 fn send_keys_writes_to_the_correct_pane_through_the_windows_pipe() -> TestResult {
     let harness = CliHarness::new("sendkeysone")?;
-    harness.success_quiet(&["new-session", "-d", "-s", "alpha", "cmd.exe", "/d"])?;
+    let cmd = cmd_exe();
+    harness.success_quiet(&["new-session", "-d", "-s", "alpha", cmd.as_str(), "/d", "/q"])?;
 
     harness.success_quiet(&["send-keys", "-t", "alpha:0.0", "echo send-keys-ok", "Enter"])?;
     let capture = harness.capture_until_contains("alpha:0.0", "send-keys-ok")?;
@@ -28,8 +32,17 @@ fn send_keys_writes_to_the_correct_pane_through_the_windows_pipe() -> TestResult
 #[test]
 fn send_keys_targets_the_correct_pane_in_a_multi_pane_session_windows() -> TestResult {
     let harness = CliHarness::new("sendkeysmulti")?;
-    harness.success_quiet(&["new-session", "-d", "-s", "beta", "cmd.exe", "/d"])?;
-    harness.success_quiet(&["split-window", "-h", "-t", "beta:0", "cmd.exe", "/d"])?;
+    let cmd = cmd_exe();
+    harness.success_quiet(&["new-session", "-d", "-s", "beta", cmd.as_str(), "/d", "/q"])?;
+    harness.success_quiet(&[
+        "split-window",
+        "-h",
+        "-t",
+        "beta:0",
+        cmd.as_str(),
+        "/d",
+        "/q",
+    ])?;
 
     harness.success_quiet(&["send-keys", "-t", "beta:0.0", "echo pane-zero", "Enter"])?;
     assert!(harness
@@ -44,13 +57,16 @@ fn send_keys_targets_the_correct_pane_in_a_multi_pane_session_windows() -> TestR
 }
 
 struct CliHarness {
+    _serial_guard: windows_cli_serial::WindowsCliSerialGuard,
     label: String,
     armed: bool,
 }
 
 impl CliHarness {
     fn new(label: &str) -> TestResult<Self> {
+        let serial_guard = windows_cli_serial::acquire(label)?;
         Ok(Self {
+            _serial_guard: serial_guard,
             label: format!("win{}{}", std::process::id(), unique_id(label)),
             armed: true,
         })
@@ -72,16 +88,16 @@ impl CliHarness {
     }
 
     fn success_quiet(&self, args: &[&str]) -> TestResult {
-        let status = Command::new(rmux_binary()?)
-            .arg("-L")
-            .arg(&self.label)
-            .args(args)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()?;
-        if !status.success() {
-            return Err(format!("rmux {:?} failed with {:?}", args, status.code()).into());
+        let output = self.run(args)?;
+        if !output.status.success() {
+            return Err(format!(
+                "rmux {:?} failed with {:?}\nstdout:\n{}\nstderr:\n{}",
+                args,
+                output.status.code(),
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            )
+            .into());
         }
         Ok(())
     }
@@ -160,11 +176,15 @@ fn rmux_binary() -> TestResult<&'static Path> {
 }
 
 fn resolve_rmux_binary() -> TestResult<PathBuf> {
+    if let Some(path) = option_env!("CARGO_BIN_EXE_rmux") {
+        let path = PathBuf::from(path);
+        if path.is_file() {
+            return Ok(path);
+        }
+    }
+
     let target_dir = target_dir()?;
     let candidate = target_dir.join("debug").join("rmux.exe");
-    if candidate.is_file() {
-        return Ok(candidate);
-    }
     let status = Command::new(std::env::var_os("CARGO").unwrap_or_else(|| "cargo".into()))
         .arg("build")
         .arg("--bin")
@@ -179,12 +199,19 @@ fn resolve_rmux_binary() -> TestResult<PathBuf> {
             format!("failed to build rmux binary for Windows send-keys smoke: {status}").into(),
         );
     }
+    if !candidate.is_file() {
+        return Err(format!(
+            "rmux binary build succeeded but '{}' was not created",
+            candidate.display()
+        )
+        .into());
+    }
     Ok(candidate)
 }
 
 fn target_dir() -> TestResult<PathBuf> {
     if let Some(target_dir) = std::env::var_os("CARGO_TARGET_DIR") {
-        return Ok(PathBuf::from(target_dir));
+        return Ok(absolutize_target_dir(PathBuf::from(target_dir)));
     }
     let current = std::env::current_exe()?;
     current
@@ -195,10 +222,28 @@ fn target_dir() -> TestResult<PathBuf> {
         .ok_or_else(|| "test executable is not under a target directory".into())
 }
 
+fn absolutize_target_dir(target_dir: PathBuf) -> PathBuf {
+    if target_dir.is_absolute() {
+        target_dir
+    } else {
+        workspace_root().join(target_dir)
+    }
+}
+
 fn workspace_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .and_then(Path::parent)
         .expect("rmux-server manifest lives under crates/rmux-server")
         .to_path_buf()
+}
+
+fn cmd_exe() -> String {
+    std::env::var_os("SystemRoot")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(r"C:\Windows"))
+        .join("System32")
+        .join("cmd.exe")
+        .to_string_lossy()
+        .into_owned()
 }
