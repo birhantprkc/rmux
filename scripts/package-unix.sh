@@ -14,6 +14,7 @@ Options:
   --platform-label <label>        Artifact label override (default: inferred)
   --skip-build                    Repackage an existing binary
   --allow-stale-binary            Allow --skip-build for local-only packaging
+  RMUX_PACKAGE_CODESIGN_ADHOC=1   Ad-hoc sign the binary before hashing (macOS)
   -h, --help                      Show this help
 USAGE
 }
@@ -185,6 +186,11 @@ target_dir="${CARGO_TARGET_DIR:-target}"
 binary="$target_dir/$target/$profile_dir/rmux"
 [ -f "$binary" ] || die "expected binary was not found: $binary"
 [ -x "$binary" ] || die "expected binary is not executable: $binary"
+if [ "${RMUX_PACKAGE_CODESIGN_ADHOC:-0}" = "1" ]; then
+  command -v codesign >/dev/null 2>&1 || die "RMUX_PACKAGE_CODESIGN_ADHOC=1 requires codesign"
+  codesign --force --sign - "$binary"
+  codesign --verify --verbose=2 "$binary"
+fi
 
 dist_dir="$(mkdir -p "$output_dir" && cd "$output_dir" && pwd)"
 package_name="rmux-$version-$platform_label"
@@ -198,11 +204,13 @@ mkdir -p "$stage_dir/bin" "$stage_dir/share/man/man1" "$stage_dir/share/rmux"
 
 cp "$binary" "$stage_dir/bin/rmux"
 cp rmux.1 "$stage_dir/share/man/man1/rmux.1"
-if [ -f LICENSE ]; then
-  cp LICENSE "$stage_dir/LICENSE"
-elif ls LICENSE.* >/dev/null 2>&1; then
-  cp LICENSE.* "$stage_dir/"
-fi
+license_copied=false
+for license_file in LICENSE LICENSE.* LICENSE-*; do
+  [ -f "$license_file" ] || continue
+  cp "$license_file" "$stage_dir/"
+  license_copied=true
+done
+[ "$license_copied" = true ] || die "license files are missing"
 
 binary_abs="$(cd "$(dirname "$binary")" && pwd)/$(basename "$binary")"
 binary_sha256="$(sha256_file "$binary")"

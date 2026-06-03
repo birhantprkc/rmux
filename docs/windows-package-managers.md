@@ -1,0 +1,107 @@
+# Windows Package Managers
+
+RMUX Windows package-manager support is generated from the GitHub Release
+Windows zip. Package managers must not rebuild RMUX; they pin the published
+release asset URL and SHA256.
+
+The canonical Windows release artifact is:
+
+```text
+rmux-<semver>-windows-x86_64.zip
+```
+
+The zip contains:
+
+```text
+rmux-<semver>-windows-x86_64/
+  rmux.exe
+  README.md
+  LICENSE-APACHE
+  LICENSE-MIT
+  rmux.1
+  SHA256SUMS.txt
+  share/rmux/artifact-metadata.json
+```
+
+GitHub Actions builds and verifies the zip with the same scripts that work under
+Windows PowerShell 5.1 (`powershell.exe`) and PowerShell 7 (`pwsh`):
+
+```powershell
+./scripts/package-windows.ps1 -Configuration release -Target x86_64-pc-windows-msvc -OutputDir dist -PlatformLabel windows-x86_64
+./scripts/verify-package-windows.ps1 dist/rmux-<semver>-windows-x86_64.zip -Checksums dist/SHA256SUMS.txt -RunBinary -RunDaemonSmoke
+```
+
+For a local package-manager dry run, use the `dist/SHA256SUMS.txt` produced by
+`package-windows.ps1`. After the release workflow has produced `SHA256SUMS`, use
+the downloaded release checksum file instead.
+
+```sh
+version=0.4.0
+checksums=dist/SHA256SUMS.txt
+scripts/generate-winget-manifest.sh \
+  --version "$version" \
+  --checksums "$checksums" \
+  --output target/package-managers/winget/Helvesec.RMUX.yaml
+scripts/generate-scoop-manifest.sh \
+  --version "$version" \
+  --checksums "$checksums" \
+  --output target/package-managers/scoop/rmux.json
+scripts/generate-chocolatey-package.sh \
+  --version "$version" \
+  --checksums "$checksums" \
+  --output-dir target/package-managers/chocolatey/rmux
+```
+
+## WinGet
+
+The generated WinGet manifest is a singleton manifest for `Helvesec.RMUX` using:
+
+```text
+InstallerType: zip
+NestedInstallerType: portable
+PortableCommandAlias: rmux
+```
+
+Validate and test on Windows before submission:
+
+```powershell
+winget validate target/package-managers/winget/Helvesec.RMUX.yaml
+winget install --manifest target/package-managers/winget/Helvesec.RMUX.yaml
+rmux -V
+rmux diagnose --json
+```
+
+Submit through `wingetcreate submit` or a PR to `microsoft/winget-pkgs`.
+
+## Scoop
+
+The generated Scoop manifest is `rmux.json`. Commit it to the RMUX Scoop bucket
+after validating the published URL and SHA:
+
+```powershell
+scoop install .\target\package-managers\scoop\rmux.json
+rmux -V
+```
+
+## Chocolatey
+
+The generated Chocolatey source lives in `target/package-managers/chocolatey/rmux`
+and contains:
+
+```text
+rmux.nuspec
+tools/chocolateyInstall.ps1
+tools/chocolateyUninstall.ps1
+```
+
+Validate on Windows before pushing to Chocolatey:
+
+```powershell
+cd target/package-managers/chocolatey/rmux
+choco pack
+choco install rmux --source . --version <semver>
+rmux -V
+```
+
+Never replace a published release zip silently. WinGet, Scoop, and Chocolatey
+all pin SHA256 values; a bad asset requires a new version.

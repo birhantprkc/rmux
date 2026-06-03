@@ -5,6 +5,7 @@ all-features = true
 version = 2
 yanked = "deny"
 ignore = [
+    { id = "RUSTSEC-2024-0436", reason = "paste is a transitive ratatui macro dependency with no runtime exposure; keep tracked until ratatui removes or replaces it." },
     { id = "RUSTSEC-2025-0141", reason = "RMUX detached IPC uses bincode only over local Unix sockets or Windows named pipes; no network or browser runtime is exposed." },
 ]
 
@@ -12,8 +13,10 @@ ignore = [
 version = 2
 allow = [
     "Apache-2.0",
+    "BSD-3-Clause",
     "MIT",
     "Unicode-3.0",
+    "Zlib",
 ]
 confidence-threshold = 0.8
 private = { ignore = true }

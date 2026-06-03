@@ -24,6 +24,7 @@ trap 'rm -f "$tmp_files"' EXIT HUP INT TERM
 } \
   | grep -v '/target/' \
   | grep -v '^crates/rmux-server/src/web/' \
+  | grep -v '^crates/rmux-web-crypto/src/wasm.rs$' \
   | grep -Ev '(^|/)(tests?|[^/]*_tests)(/|\.rs$)' \
   >"$tmp_files" || true
 

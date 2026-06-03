@@ -2,8 +2,15 @@ name: CI
 
 on:
   push:
+    branches:
+      - main
+      - "release/**"
     tags:
       - "v*"
+  pull_request:
+    branches:
+      - main
+      - "release/**"
   workflow_dispatch:
     inputs:
       windows_runtime_smoke:
@@ -84,6 +91,90 @@ jobs:
       - name: cargo build
         run: cargo build --workspace --locked
 
+  wasm-crypto:
+    name: WASM crypto build and supply-chain gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          # Pin the exact rustc that reproduces the shipped browser blob (mirrored
+          # in rmux-web-share PROVENANCE.json toolchain.rustc). A floating "stable"
+          # changes codegen and would break byte-for-byte reproducibility — the
+          # property rmux-web-share's verify-wasm-from-source.mjs gate enforces.
+          toolchain: "1.94.1"
+          targets: wasm32-unknown-unknown
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/git
+            ~/.cargo/registry
+            target
+          key: cargo-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            cargo-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-
+            cargo-${{ runner.os }}-${{ runner.arch }}-
+
+      - name: Fetch locked dependencies
+        run: cargo fetch --locked
+
+      # The browser bundle must NOT carry x25519-dalek/curve25519-dalek; the
+      # WebCrypto path replaces them. cargo tree -i exits non-zero when the
+      # package is absent, so success here means it leaked — fail closed.
+      - name: Assert x25519-dalek is excluded from the WASM build
+        run: |
+          if cargo tree -p rmux-web-crypto --no-default-features --features wasm --target wasm32-unknown-unknown -i x25519-dalek >/dev/null 2>&1; then
+            echo "::error::x25519-dalek must not enter the WASM crypto build"
+            exit 1
+          fi
+          echo "x25519-dalek correctly excluded from the WASM crypto build"
+
+      # Regression guard for the browser test gate: the wasm-test feature set must
+      # compile its test targets (tests/handshake.rs is x25519-gated out).
+      - name: Compile the wasm-test gate
+        run: cargo test -p rmux-web-crypto --no-default-features --features wasm-test --no-run --locked
+
+      - name: Install pinned wasm-pack
+        run: cargo install wasm-pack --version 0.13.1 --locked
+
+      # Rebuild the exact blobs rmux-web-share ships, via the canonical recipe and
+      # pinned toolchain, and publish them as an artifact for manual auditors. The
+      # authoritative byte-equality-to-shipped check is cross-repo, in
+      # rmux-web-share's verify-wasm-from-source.mjs (which rebuilds from this
+      # source at the pinned commit); here we prove the recipe still produces the
+      # browser primitive and expose the canonical bytes + their hashes.
+      - name: Build and publish the browser WASM blobs
+        env:
+          RUSTUP_TOOLCHAIN: "1.94.1"
+        run: |
+          set -euo pipefail
+          scripts/build-web-crypto-wasm.sh wasm
+          mkdir -p "$RUNNER_TEMP/wasm-pkg"
+          cp crates/rmux-web-crypto/pkg/rmux_web_crypto_wasm_bg.wasm \
+             crates/rmux-web-crypto/pkg/rmux_web_crypto_wasm.js \
+             "$RUNNER_TEMP/wasm-pkg/"
+          # The Playwright-only blob shares the recipe; build it too so a break in
+          # the test feature set is caught here, not in rmux-web-share CI.
+          scripts/build-web-crypto-wasm.sh wasm-test
+          {
+            echo "### Browser WASM crypto blob (production)"
+            echo ""
+            echo "rustc 1.94.1 · wasm-bindgen 0.2.118 · wasm-opt off"
+            echo ""
+            echo '```'
+            ( cd "$RUNNER_TEMP/wasm-pkg" && sha256sum rmux_web_crypto_wasm_bg.wasm rmux_web_crypto_wasm.js )
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rmux-web-crypto-wasm
+          path: ${{ runner.temp }}/wasm-pkg
+          if-no-files-found: error
+
   linux-tests:
     name: Linux tests (${{ matrix.group }})
     runs-on: ubuntu-latest
@@ -92,7 +183,7 @@ jobs:
       matrix:
         include:
           - group: core
-            packages: -p rmux-types -p rmux-os -p rmux-proto -p rmux-ipc -p rmux-core -p rmux-client -p rmux-render-core
+            packages: -p rmux-types -p rmux-os -p rmux-proto -p rmux-ipc -p rmux-core -p rmux-client -p rmux-render-core -p rmux-web-crypto
           - group: pty-sdk
             packages: -p rmux-pty -p rmux-sdk
           - group: server
@@ -137,6 +228,9 @@ jobs:
 
       - name: Platform neutrality source scan
         run: scripts/check-platform-neutrality.sh
+
+      - name: No side effects in debug assertions
+        run: scripts/no-debug-assert-side-effects.sh
 
   linux-sdk-smoke:
     name: Linux SDK v1 daemon smoke
@@ -260,7 +354,12 @@ jobs:
         run: cargo build --workspace --locked
 
       - name: cargo test portable crates
+        if: runner.os != 'Windows'
         run: cargo test --locked --no-fail-fast -p rmux-types -p rmux-os -p rmux-proto -p rmux-ipc -p rmux-core -p rmux-client
+
+      - name: cargo test workspace on Windows
+        if: runner.os == 'Windows'
+        run: cargo test --workspace --locked --no-fail-fast -- --test-threads=1
 
       - name: rmux binary smoke
         run: cargo run --package rmux --locked -- -V
