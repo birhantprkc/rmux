@@ -2,7 +2,9 @@ use std::io;
 use std::os::windows::io::{AsRawHandle, OwnedHandle};
 use std::sync::{Mutex, RwLock};
 
-use windows_sys::Win32::Foundation::{GetLastError, ERROR_BROKEN_PIPE, E_HANDLE, HANDLE, S_OK};
+use windows_sys::Win32::Foundation::{
+    GetLastError, ERROR_BROKEN_PIPE, ERROR_INVALID_PARAMETER, E_HANDLE, HANDLE, S_OK,
+};
 use windows_sys::Win32::System::Console::{
     ClosePseudoConsole, CreatePseudoConsole, ResizePseudoConsole, COORD, HPCON,
 };
@@ -345,7 +347,9 @@ fn hresult_error(hr: i32) -> io::Error {
 }
 
 fn is_benign_resize_after_exit(hr: i32) -> bool {
-    hr == E_HANDLE || hr == hresult_from_win32(ERROR_BROKEN_PIPE)
+    hr == E_HANDLE
+        || hr == hresult_from_win32(ERROR_BROKEN_PIPE)
+        || hr == hresult_from_win32(ERROR_INVALID_PARAMETER)
 }
 
 fn hresult_from_win32(error: u32) -> i32 {
@@ -370,6 +374,13 @@ mod tests {
     use std::sync::{mpsc, Arc};
     use std::thread;
     use std::time::Duration;
+
+    #[test]
+    fn resize_after_exit_invalid_parameter_is_benign() {
+        assert!(is_benign_resize_after_exit(hresult_from_win32(
+            ERROR_INVALID_PARAMETER
+        )));
+    }
 
     #[test]
     fn idle_blocking_read_does_not_block_conpty_recreate() {
