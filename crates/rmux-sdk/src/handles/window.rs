@@ -13,6 +13,11 @@ use rmux_proto::{
     KillWindowRequest, ListPanesRequest, ListSessionsRequest, ListWindowsRequest, Request, Response,
 };
 
+#[path = "window/new_builder.rs"]
+mod new_builder;
+
+pub use new_builder::NewWindowBuilder;
+
 const SESSION_INFO_FORMAT: &str = "#{session_name}\t#{session_id}";
 const PANE_INFO_FORMAT: &str = "#{window_index}:#{pane_index}:#{pane_id}:#{pane_active}";
 

@@ -14,7 +14,7 @@
 
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](LICENSE-MIT)
 [![Release validation](https://github.com/Helvesec/rmux/actions/workflows/ci.yml/badge.svg)](https://github.com/Helvesec/rmux/actions/workflows/ci.yml)
-[![rmux 0.4.3](https://img.shields.io/badge/rmux-0.4.3-informational.svg)](#install)
+[![rmux 0.5.0](https://img.shields.io/badge/rmux-0.5.0-informational.svg)](#install)
 [![Platform: Linux | macOS | Windows](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-lightgrey.svg)](#platform-support)
 [![Unsafe policy](https://img.shields.io/badge/unsafe-restricted-success.svg)](#verification)
 
@@ -25,16 +25,18 @@
 
 </div>
 
-> [!IMPORTANT]
-> 現在のリリースは **v0.4.1**、公開日は **2026年6月3日**。tmux 互換の 90 コマンドはすべて実装済みですが、まだ新しい公開プレビューのため不具合が残る可能性があります。問題は [issues](https://github.com/helvesec/rmux/issues) へ報告できます。
+> [!NOTE]
+> RMUX はサーバーレス、ハイブリッド・ポスト量子、エンドツーエンド暗号化の Web 多重化に対応しました。詳しくは[リポジトリの Web Share ドキュメント](docs/web-share.md)を参照してください。
+>
+> RMUX はまだ速いペースで進化しています。機能要望や問題報告は [issues](https://github.com/Helvesec/rmux/issues) へ送れます。
 
-## RMUX を選ぶ理由
+## RMUX
 
-RMUX は、tmux の使い道にはまだ十分に掘り下げられていない部分がある、という考えから生まれました。最初の動機は単純でした。SSH 越しに長時間動くエージェントを実行し、そのターミナルを失わずに、周囲の状態を検査し、スクリプト化し、編成したかったのです。
+RMUX は、モダンで非同期、型付きの Rust <strong>マルチプレクサエンジン</strong>です。macOS、Linux、Windows で 90 以上の tmux コマンドをネイティブにサポートし、WSL は不要です。
 
-そこで、その考えを Rust でゼロから作り直しました。超高速な tmux 互換マルチプレクサ、型付き SDK、永続セッション、構造化スナップショット、そして Linux、macOS、Windows のネイティブなローカルトランスポートを備えています。Windows Named Pipes も含みます。
+永続的な AI ワークフローや美しい Ratatui TUI を構築するための公開 Rust SDK を提供します。
 
-RMUX はエージェント、ヘッドレス CLI ワークフロー、人間のどれにも使えます。ターミナルアプリにデタッチ可能な実行を与え、あとから再接続し、状態を検査し、コードから操作できます。あるいは、普通の tmux 風ターミナル作業にもそのまま使えます。
+日常的なターミナルツールとして使えるほか、セッションをブラウザに共有したり、<strong>永続的なエージェント型 TUI ツール</strong>の基盤としてスクリプト化したりできます。
 
 ## デモ
 
@@ -49,6 +51,37 @@ RMUX を何に使えるかを示す短い実例です。
     <td align="center" width="20%"><a href="https://rmux.io/#demo-playwright"><img src="https://rmux.io/demos/demo-playwright.png" width="150" alt="Playwright テストデモのプレビュー"></a><br><sub><a href="https://github.com/Helvesec/rmux-demos/tree/main/terminal-playwright-demo"><strong>Playwright テスト</strong></a></sub><br><sub>約 1,495 行</sub></td>
   </tr>
 </table>
+
+## Web Multiplex (Web Share)
+
+<p align="center">
+<a href="https://rmux.io/docs/web-share/">
+  <img src="https://rmux.io/web-share-browser.png" width="500" alt="RMUX Web Share" />
+</a>
+</p>
+
+RMUX は Web 多重化に対応しています。RMUX の pane や session を Web に共有し、新しい pane を作成し、マウスで区切り線を動かし、より豊かなブラウザインターフェイスから RMUX を使えます。
+
+```sh
+# loopback 上でローカル Web Share を開始
+rmux web-share
+
+# 名前付き session を共有
+rmux new-session -d -s work
+rmux web-share -t work
+
+# localhost の外へ共有
+rmux web-share --tunnel-provider localhost-run
+```
+
+tunnel provider を使う、自分の ingress を持ち込む、静的 frontend を自分のドメインでホストする、いずれも可能です。
+
+便利な入口：
+
+- [リポジトリの Web Share 概要](docs/web-share.md)
+- [Web Share ドキュメント](https://rmux.io/docs/web-share/)
+- [セキュリティモデル](https://rmux.io/docs/web-share/#/security)
+- [Tunnel providers](https://rmux.io/docs/web-share/#/tunnels)
 
 <a id="install"></a>
 
@@ -66,7 +99,7 @@ Windows PowerShell のビルド済みバイナリ：
 irm https://rmux.io/install.ps1 | iex
 ```
 
-直接ダウンロードと SHA256 チェックサムは [v0.4.3 GitHub Release](https://github.com/helvesec/rmux/releases/tag/v0.4.3) で確認できます。
+直接ダウンロードと SHA256 チェックサムは [v0.5.0 GitHub Release](https://github.com/helvesec/rmux/releases/tag/v0.5.0) で確認できます。
 
 Cargo で crates.io から：
 
@@ -114,7 +147,7 @@ rmux split-window --help
 
 ```toml
 [dependencies]
-rmux-sdk = "0.4"
+rmux-sdk = "0.5"
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 ```
 
@@ -171,14 +204,14 @@ fn render(snapshot: PaneSnapshot, area: Rect, buffer: &mut Buffer) {
 <div align="center">
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="https://rmux.io/rmux-architecture-dark.png">
-  <source media="(prefers-color-scheme: light)" srcset="https://rmux.io/rmux-architecture-light.png">
-  <img src="https://rmux.io/rmux-architecture-dark.png" alt="RMUX ランタイムアーキテクチャ" width="800">
+  <source media="(prefers-color-scheme: dark)" srcset="https://rmux.io/rmux-architecture-dark.png?v=0.5.0-web-share">
+  <source media="(prefers-color-scheme: light)" srcset="https://rmux.io/rmux-architecture-light.png?v=0.5.0-web-share">
+  <img src="https://rmux.io/rmux-architecture-dark.png?v=0.5.0-web-share" alt="RMUX ランタイムアーキテクチャ" width="800">
 </picture>
 
 </div>
 
-3つの公開インターフェイス — `rmux` CLI、`rmux-sdk` Rust crate、`ratatui-rmux` ウィジェット — は、デーモンと通信するための単一のローカルプロトコルを共有します。1つのインターフェイスでできることは、他のインターフェイスでもできます。
+`rmux` は shell、session、window、pane、PTY process をローカル daemon に残します。ローカル client は IPC を使います。Web Share は明示的なブラウザアクセスです。daemon は選択された pane または session を end-to-end encrypted WebSocket で公開し、実行はあなたのマシン上に残ります。
 
 ## ワークスペース
 

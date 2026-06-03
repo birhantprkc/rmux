@@ -454,6 +454,7 @@ impl RequestHandler {
                     detached: false,
                     environment: None,
                     command: None,
+                    process_command: None,
                     start_directory: None,
                     target_window_index: None,
                     insert_at_target: false,

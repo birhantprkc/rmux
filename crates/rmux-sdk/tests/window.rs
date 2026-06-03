@@ -3,6 +3,7 @@
 mod common;
 
 use std::error::Error;
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -14,7 +15,8 @@ use rmux_proto::{
     ListWindowsRequest, NewWindowRequest, Request, Response, WindowListEntry, WindowTarget,
 };
 use rmux_sdk::{
-    EnsureSession, RmuxBuilder, SessionName, SplitDirection, WindowCloseOutcome, WindowRef,
+    EnsureSession, RmuxBuilder, RmuxError, SessionName, SplitDirection, WindowCloseOutcome,
+    WindowRef,
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::UnixStream;
@@ -25,6 +27,191 @@ type TestResult<T = ()> = Result<T, Box<dyn Error>>;
 static LIVE_DAEMON_LOCK: common::unix_smoke::LiveDaemonLock =
     common::unix_smoke::LiveDaemonLock::new();
 static UNIQUE_ID: AtomicUsize = AtomicUsize::new(0);
+
+#[tokio::test]
+async fn session_new_window_creates_live_window_and_selects_it_by_default() -> TestResult {
+    let _lock = LIVE_DAEMON_LOCK.lock().await;
+    let harness = Harness::start("window-new-default").await?;
+    let rmux = harness.rmux();
+    let alpha = session_name("sdkwinnewdefault");
+    let session = EnsureSession::named(alpha.clone())
+        .create_only()
+        .ensure(&rmux)
+        .await?;
+
+    let window = session.new_window().await?;
+
+    assert_eq!(window.target(), &WindowRef::new(alpha.clone(), 1));
+    assert!(window.exists().await?);
+    let panes = window.panes().await?;
+    assert_eq!(panes.len(), 1);
+    assert_eq!(panes[0].target, rmux_sdk::PaneRef::new(alpha.clone(), 1, 0));
+    let windows = raw_list_windows(harness.socket_path(), alpha).await?;
+    assert!(windows
+        .iter()
+        .any(|entry| entry.target.window_index() == 1 && entry.active));
+    assert!(windows
+        .iter()
+        .any(|entry| entry.target.window_index() == 0 && !entry.active));
+
+    harness.finish().await
+}
+
+#[tokio::test]
+async fn session_new_window_builder_names_places_detaches_and_inserts() -> TestResult {
+    let _lock = LIVE_DAEMON_LOCK.lock().await;
+    let harness = Harness::start("window-new-options").await?;
+    let rmux = harness.rmux();
+    let alpha = session_name("sdkwinnewopts");
+    let session = EnsureSession::named(alpha.clone())
+        .create_only()
+        .ensure(&rmux)
+        .await?;
+
+    let logs = session
+        .new_window_with()
+        .name("logs")
+        .detached(true)
+        .at_index(3)
+        .await?;
+
+    assert_eq!(logs.target(), &WindowRef::new(alpha.clone(), 3));
+    let windows = raw_list_windows(harness.socket_path(), alpha.clone()).await?;
+    assert!(windows
+        .iter()
+        .any(|entry| entry.target.window_index() == 0 && entry.active));
+    assert!(windows.iter().any(|entry| {
+        entry.target.window_index() == 3 && entry.name.as_deref() == Some("logs") && !entry.active
+    }));
+
+    let inserted = session
+        .new_window_with()
+        .name("inserted")
+        .detached(true)
+        .at_index(3)
+        .insert(true)
+        .await?;
+
+    assert_eq!(inserted.target(), &WindowRef::new(alpha.clone(), 3));
+    let windows = raw_list_windows(harness.socket_path(), alpha).await?;
+    assert!(windows.iter().any(|entry| {
+        entry.target.window_index() == 3
+            && entry.name.as_deref() == Some("inserted")
+            && !entry.active
+    }));
+    assert!(windows.iter().any(|entry| {
+        entry.target.window_index() == 4 && entry.name.as_deref() == Some("logs") && !entry.active
+    }));
+
+    harness.finish().await
+}
+
+#[tokio::test]
+async fn session_new_window_builder_runs_shell_and_spawn_commands() -> TestResult {
+    let _lock = LIVE_DAEMON_LOCK.lock().await;
+    let harness = Harness::start("window-new-command").await?;
+    let rmux = harness.rmux();
+    let alpha = session_name("sdkwinnewcmd");
+    let session = EnsureSession::named(alpha.clone())
+        .create_only()
+        .ensure(&rmux)
+        .await?;
+
+    let workdir = harness
+        .socket_path()
+        .parent()
+        .expect("socket path has parent")
+        .join("window-command-cwd");
+    std::fs::create_dir_all(&workdir)?;
+    let workdir_text = workdir.to_string_lossy();
+    let shell_marker = "sdk_new_window_shell_ready";
+    let cwd_marker = "sdk_new_window_cwd_ready";
+    let env_marker = "sdk_new_window_env_ready";
+    let shell_window = session
+        .new_window_with()
+        .detached(true)
+        .cwd(workdir.clone())
+        .env("SDK_WINDOW_ENV", "env-ok")
+        .shell(format!(
+            "printf '{shell_marker}\\n'; \
+             if [ \"$PWD\" = \"{workdir_text}\" ]; then printf '{cwd_marker}\\n'; fi; \
+             printf '{env_marker}:%s\\n' \"$SDK_WINDOW_ENV\"; cat"
+        ))
+        .await?;
+    let shell_pane = session.pane(shell_window.target().window_index, 0);
+    shell_pane.wait_for_text(shell_marker).await?;
+    shell_pane.wait_for_text(cwd_marker).await?;
+    shell_pane
+        .wait_for_text(format!("{env_marker}:env-ok"))
+        .await?;
+
+    let spawn_marker = "sdk_new_window_spawn_ready";
+    let spawn_window = session
+        .new_window_with()
+        .detached(true)
+        .spawn([
+            "sh".to_owned(),
+            "-c".to_owned(),
+            format!("printf '{spawn_marker}\\n'; cat"),
+        ])
+        .await?;
+    session
+        .pane(spawn_window.target().window_index, 0)
+        .wait_for_text(spawn_marker)
+        .await?;
+
+    let direct_marker = "sdk_new_window_direct_single_argv_ready";
+    let direct_script = workdir.join("single argv script");
+    std::fs::write(
+        &direct_script,
+        format!("#!/bin/sh\nprintf '{direct_marker}\\n'\ncat\n"),
+    )?;
+    let mut permissions = std::fs::metadata(&direct_script)?.permissions();
+    permissions.set_mode(0o755);
+    std::fs::set_permissions(&direct_script, permissions)?;
+    let direct_window = session
+        .new_window_with()
+        .detached(true)
+        .spawn([direct_script.to_string_lossy().to_string()])
+        .await?;
+    session
+        .pane(direct_window.target().window_index, 0)
+        .wait_for_text(direct_marker)
+        .await?;
+
+    harness.finish().await
+}
+
+#[tokio::test]
+async fn session_new_window_builder_rejects_empty_process_before_daemon_request() -> TestResult {
+    let _lock = LIVE_DAEMON_LOCK.lock().await;
+    let harness = Harness::start("window-new-empty").await?;
+    let rmux = harness.rmux();
+    let alpha = session_name("sdkwinnewempty");
+    let session = EnsureSession::named(alpha.clone())
+        .create_only()
+        .ensure(&rmux)
+        .await?;
+
+    let error = session
+        .new_window_with()
+        .shell("")
+        .await
+        .expect_err("empty shell command must be rejected");
+
+    assert!(matches!(
+        error,
+        RmuxError::SpawnFailed { ref message, .. }
+            if message == rmux_proto::PROCESS_COMMAND_EMPTY_MESSAGE
+    ));
+    assert_eq!(
+        raw_list_window_indices(harness.socket_path(), alpha).await?,
+        vec![0],
+        "empty process validation should happen before new-window reaches the daemon"
+    );
+
+    harness.finish().await
+}
 
 #[tokio::test]
 async fn window_split_info_pane_listing_ids_and_idempotent_close_use_daemon_paths() -> TestResult {
@@ -344,6 +531,7 @@ async fn raw_new_window(socket_path: &Path, target: SessionName, index: u32) -> 
             detached: true,
             environment: None,
             command: None,
+            process_command: None,
             start_directory: None,
             target_window_index: Some(index),
             insert_at_target: false,

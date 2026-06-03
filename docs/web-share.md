@@ -7,39 +7,57 @@
   </picture>
 </a>
 
-**Web sharing for RMUX terminal panes and sessions.**
+**Browser sharing for RMUX terminal panes and sessions.**
 
-[![rmux 0.4.1](https://img.shields.io/badge/rmux-0.4.1-informational.svg)](https://github.com/Helvesec/rmux/releases/tag/v0.4.1)
+[![rmux 0.5.0](https://img.shields.io/badge/rmux-0.5.0-informational.svg)](https://github.com/Helvesec/rmux/releases/tag/v0.5.0)
 [![E2EE](https://img.shields.io/badge/E2EE-ChaCha20--Poly1305-success.svg)](#cryptography)
-[![Post-quantum](https://img.shields.io/badge/PQ-X25519%20%2B%20ML--KEM--768-blue.svg)](#cryptography)
-[![Frontend](https://img.shields.io/badge/frontend-static-lightgrey.svg)](#key-features)
+[![Hybrid Post-Quantum](https://img.shields.io/badge/Hybrid%20Post--Quantum-X25519%20%2B%20ML--KEM--768-blue.svg)](#cryptography)
+[![Frontend](https://img.shields.io/badge/frontend-decoupled-lightgrey.svg)](#architecture)
 
 </div>
 
 ## Web Multiplex
 
-`rmux web-share` shares any active terminal pane or session directly to a browser client.
+<p align="center">
+  <img src="https://rmux.io/web-share-browser.png" width="700" alt="RMUX browser terminal">
+</p>
 
-Execution stays on your machine. The browser only shows the terminal screen and sends keystrokes back to your local daemon. The web app is static and serverless; terminal traffic stays end-to-end encrypted, including when you use a tunnel.
+`rmux web-share` opens an existing RMUX pane or session in a browser.
+
+Execution stays local. The daemon keeps running the PTY, panes, windows, and process lifecycle on your machine. The browser receives encrypted terminal frames and sends encrypted input back to the daemon.
+
+The frontend is a static HTML/JS/WASM application. It can be loaded from `share.rmux.io`, from your own CDN, or from any static host you choose with `--frontend-url`. The daemon does not need to serve web assets.
 
 ```sh
-# Share current pane over loopback
+# Share the current pane over loopback
 rmux web-share
 
 # Share a named session
 rmux web-share -t work
 
-# Share globally using a public tunnel provider
+# Share through a public tunnel provider
 rmux web-share --tunnel-provider localhost-run
 ```
 
+## Architecture
+
+RMUX separates three responsibilities that are often bundled together:
+
+- **Local execution**: shells and PTYs stay under the local RMUX daemon.
+- **Decoupled frontend**: the browser app is CDN-hosted or self-hosted static content.
+- **Encrypted transport**: tunnels and relays only forward ciphertext.
+
+That split keeps deployment flexible. You can use the public frontend, pin your own static build, or route traffic through a tunnel provider without giving that provider terminal plaintext.
+
 ## Key Features
 
-- **PTY execution remains local**: The local daemon manages all processes; nothing runs in the cloud.
-- **E2E Encrypted**: A hybrid X25519 + ML-KEM-768 key exchange encrypts traffic directly between browser and daemon.
-- **Static Frontend**: The web client is pure HTML/JS/WASM, with no backend server. You can self-host it on any CDN or serve it directly from the daemon.
-- **Access Control**: Scoped links separate read-only Spectators from read-write Operators, gated by 6-digit pairing PINs.
-- **Tunnel-safe traffic**: Tunnel providers forward encrypted frames and cannot read terminal traffic.
+- **Multiplexer first**: share an existing RMUX pane or session instead of launching a one-off shell wrapper.
+- **Blind relay model**: tunnel providers forward encrypted frames and cannot read terminal payloads.
+- **Authenticated encryption**: terminal traffic uses ChaCha20-Poly1305, so tampering is detected.
+- **Fresh session keys**: each share negotiates new browser-to-daemon keys.
+- **Hybrid post-quantum handshake**: X25519 and ML-KEM-768 are combined for key agreement.
+- **Decoupled frontend**: `share.rmux.io` is just the default static client; `--frontend-url` lets you bring your own.
+- **Scoped access**: Operator links can send input; Spectator links are read-only.
 
 ## Cryptography
 
@@ -48,23 +66,43 @@ rmux web-share --tunnel-provider localhost-run
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="rmux-web-share-crypto-dark.png">
   <source media="(prefers-color-scheme: light)" srcset="rmux-web-share-crypto-light.png">
-  <img src="rmux-web-share-crypto-dark.png" alt="RMUX Web Share encryption key schedule" width="850">
+  <img src="rmux-web-share-crypto-dark.png" alt="RMUX web-share encryption key schedule" width="850">
 </picture>
 
 </div>
 
-Each session negotiates fresh symmetric keys using a hybrid key exchange:
-- Ephemeral **X25519** and **ML-KEM-768** (post-quantum) key agreement.
-- Handshake binding to the URL token and exact session transcript.
+Each browser session negotiates fresh symmetric keys using a hybrid key exchange:
 
-All terminal frames are encrypted using **ChaCha20-Poly1305** directly between the browser and the local daemon.
+- Ephemeral **X25519** key agreement.
+- **ML-KEM-768** post-quantum key encapsulation.
+- Transcript binding to the URL token and session handshake.
+
+All terminal frames are encrypted with **ChaCha20-Poly1305** directly between the browser and the local daemon.
+
+## Comparison
+
+RMUX combines blind relay, authenticated encryption, forward secrecy, Hybrid Post-Quantum key agreement, a decoupled frontend, and a real terminal multiplexer.
+
+| Tool | Browser | Blind relay¹ | Authenticated² | Forward secrecy | Hybrid Post-Quantum | Decoupled frontend³ | Multiplexer | Self-host | No account | Mobile |
+| :--- | :---: | :---: | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| **RMUX** | ✅ | ✅ | ✅ ChaCha20-Poly1305 | ✅ X25519 eph. | ✅ X25519 + ML-KEM-768 | ✅ | ✅ | ✅ | ✅ | ✅ |
+| sshx | ✅ | ✅ | ❌ AES-CTR, no MAC | ❌ URL key | ❌ | ❌ served by relay | ❌ | △ | ✅ | △ |
+| tmate | △ | ❌ relay sees plaintext | — | — | ❌ | ❌ | ✅ | △ | ✅ | ❌ |
+| ttyd / GoTTY | ✅ | ❌ server runs shell | — | — | ❌ | ❌ embedded in binary/server | ❌ | ✅ | ✅ | △ |
+| Upterm | ❌ | △ SSH to relay | — | — | ❌ | ❌ | ❌ | ✅ | ✅ | ❌ |
+| VS Code Tunnels | ✅ | ❌ vendor server | — | — | ❌ | ❌ | ❌ | ❌ | ❌ | △ |
+| Warp sharing | △ | ❌ vendor server | — | — | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ |
+
+¹ Blind relay means the relay or host does not receive terminal plaintext. ² Authenticated means tampering is detected by an AEAD or equivalent authenticated transport. ³ Decoupled frontend means the browser client is separate from the daemon and can be hosted on a CDN or static origin.
+
+References for the non-RMUX rows: [sshx](https://github.com/ekzhang/sshx), [sshx-server](https://docs.rs/crate/sshx-server/latest), [tmate](https://github.com/tmate-io/tmate), [ttyd](https://github.com/tsl0922/ttyd), [GoTTY](https://github.com/sorenisanerd/gotty), and [Upterm](https://upterm.dev/docs/upterm.html).
 
 ## Access Control
 
 | Role | Keyboard Input | Default Use Case |
 | :--- | :---: | :--- |
 | **Operator** | ✅ Enabled | Full interactive shell control |
-| **Spectator** | ❌ Disabled | Read-only stream view |
+| **Spectator** | ❌ Disabled | Read-only terminal view |
 
 ```sh
 # Restrict sharing to read-only spectators
@@ -79,36 +117,21 @@ rmux web-share --max-spectators 10 --ttl 3600
 
 ## Tunnels & Custom Domains
 
-You can share over local loopback, a private network, or the public internet:
+You can share over loopback, a private network, or the public internet:
 
 ```sh
-# Private sharing over your VPN (Tailscale Serve)
+# Private sharing over your VPN
 rmux web-share --tunnel-provider tailscale-serve
 
-# Public sharing using built-in SSH tunnel presets
+# Public sharing using a built-in SSH tunnel preset
 rmux web-share --tunnel-provider localhost-run
 
 # Custom external tunnel address
 rmux web-share --tunnel-url https://my-tunnel.example.com
 
-# Custom web client domain (for self-hosting static assets)
+# Custom static frontend
 rmux web-share --frontend-url https://share.example.com
 ```
-
-## Comparison
-
-| Tool | Browser | Static frontend | E2EE | PQ | Multiplexer | Self-host | No account | Mobile |
-| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
-| **RMUX Web Share** | ✅ | ✅ | ✅ ChaCha20 | ✅ X25519 + ML-KEM | ✅ | ✅ | ✅ | ✅ |
-| sshx | ✅ | ❌ | ✅ AES | ❌ | ❌ | △ | ✅ | △ |
-| tmate | △ | ❌ | ❌ | ❌ | ✅ | △ | ✅ | ❌ |
-| ttyd / GoTTY | ✅ | ❌ | ❌ | ❌ | ❌ | ✅ | ✅ | △ |
-| Upterm | ❌ | ❌ | ✅ SSH | ❌ | ❌ | ✅ | ✅ | ❌ |
-| VS Code Tunnels | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | △ |
-| Warp sharing | △ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ |
-| Pocketmux / pmux | ✅ | ❌ | ✅ DTLS | ❌ | ✅ | △ | ✅ | ✅ |
-
-`△` means partial, indirect, or not the default path.
 
 ## CLI Commands
 
@@ -131,7 +154,11 @@ rmux web-share config
 
 ## Security Model & Threat Boundaries
 
-- **End-to-End Encryption**: Hosts and tunnel providers cannot read terminal payloads.
-- **Credential Protection**: Access tokens are stored in the URL fragment (`#t=...`), which browsers do not transmit to the hosting server in HTTP requests.
-- **Auditability**: Builds are public and reproducible. If you require absolute supply-chain sovereignty, host the static frontend assets on your own infrastructure and pass `--frontend-url`.
-- **Operator Security**: Treat operator URLs as highly sensitive credentials; they grant active input control over your local shell.
+- **End-to-end encryption**: hosts and tunnel providers cannot read terminal payloads.
+- **URL fragment tokens**: access tokens live in the URL fragment (`#t=...`), which browsers do not send to the static frontend host in HTTP requests.
+- **Supply-chain control**: if you want full ownership of the browser asset path, self-host the static frontend and pass `--frontend-url`.
+- **Operator safety**: treat operator URLs as shell credentials; they grant active input control over your local terminal.
+
+## GitHub Docs
+
+[Read the full Web Share documentation](https://rmux.io/docs/web-share/).

@@ -7,9 +7,33 @@ use rmux_proto::WebShareCreatedResponse;
 use super::{DEFAULT_WIDTH, OSC8_URL_LABEL_WIDTH};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum OutputStyle {
+    Ansi,
+    Plain,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum LinkMode {
     Osc8,
     PlainUrl,
+}
+
+impl OutputStyle {
+    pub(super) fn detect() -> Self {
+        if env::var_os("NO_COLOR").is_some() {
+            return Self::Plain;
+        }
+
+        if env::var("TERM").is_ok_and(|term| term.eq_ignore_ascii_case("dumb")) {
+            return Self::Plain;
+        }
+
+        if rmux_os::terminal::enable_virtual_terminal_output() {
+            Self::Ansi
+        } else {
+            Self::Plain
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -59,6 +83,17 @@ pub(super) fn terminal_width() -> u16 {
                 .and_then(|value| value.parse().ok())
         })
         .unwrap_or(DEFAULT_WIDTH)
+}
+
+pub(super) fn terminal_needs_qr_fallback() -> bool {
+    terminal_program_needs_qr_fallback(&env::var("TERM_PROGRAM").unwrap_or_default())
+}
+
+fn terminal_program_needs_qr_fallback(term_program: &str) -> bool {
+    matches!(
+        term_program.to_ascii_lowercase().as_str(),
+        "apple_terminal" | "terminal.app"
+    )
 }
 
 pub(super) fn provider_label(created: &WebShareCreatedResponse) -> String {

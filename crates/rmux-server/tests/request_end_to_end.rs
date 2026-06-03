@@ -525,6 +525,7 @@ async fn rename_listing_and_wait_for_requests_round_trip_over_real_socket(
                 start_directory: None,
                 environment: None,
                 command: None,
+                process_command: None,
                 target_window_index: None,
                 insert_at_target: false,
             }),

@@ -404,6 +404,7 @@ async fn attached_prefix_q_inside_choose_tree_restores_the_tree_overlay_without_
                 start_directory: None,
                 environment: None,
                 command: None,
+                process_command: None,
                 target_window_index: None,
                 insert_at_target: false,
             }))

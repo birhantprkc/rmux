@@ -8,9 +8,24 @@ pub fn current_size() -> Option<TerminalSize> {
     current_size_impl()
 }
 
+/// Enables ANSI/VT escape processing for stdout when the platform requires it.
+///
+/// Unix terminals generally interpret ANSI directly, so this returns `true`
+/// there. On Windows this turns on `ENABLE_VIRTUAL_TERMINAL_PROCESSING` for the
+/// current stdout console handle and returns whether ANSI output can be used.
+#[must_use]
+pub fn enable_virtual_terminal_output() -> bool {
+    enable_virtual_terminal_output_impl()
+}
+
 #[cfg(unix)]
 fn current_size_impl() -> Option<TerminalSize> {
     terminal_size_from_fd(&std::io::stdin()).or_else(|| terminal_size_from_fd(&std::io::stdout()))
+}
+
+#[cfg(unix)]
+fn enable_virtual_terminal_output_impl() -> bool {
+    true
 }
 
 #[cfg(unix)]
@@ -45,6 +60,43 @@ fn current_size_impl() -> Option<TerminalSize> {
 
     terminal_size_from_std_handle(STD_OUTPUT_HANDLE)
         .or_else(|| terminal_size_from_std_handle(STD_ERROR_HANDLE))
+}
+
+#[cfg(windows)]
+fn enable_virtual_terminal_output_impl() -> bool {
+    use windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE;
+    use windows_sys::Win32::System::Console::{
+        GetConsoleMode, GetStdHandle, SetConsoleMode, ENABLE_VIRTUAL_TERMINAL_PROCESSING,
+        STD_OUTPUT_HANDLE,
+    };
+
+    let handle = unsafe {
+        // SAFETY: GetStdHandle accepts the documented STD_* constants.
+        GetStdHandle(STD_OUTPUT_HANDLE)
+    };
+    if handle.is_null() || handle == INVALID_HANDLE_VALUE {
+        return false;
+    }
+
+    let mut mode = 0;
+    let ok = unsafe {
+        // SAFETY: `mode` points to writable stack storage for the stdout handle mode.
+        GetConsoleMode(handle, &mut mode)
+    };
+    if ok == 0 {
+        return false;
+    }
+
+    if mode & ENABLE_VIRTUAL_TERMINAL_PROCESSING != 0 {
+        return true;
+    }
+
+    let ok = unsafe {
+        // SAFETY: `handle` is a console output handle and the mode only adds the
+        // documented virtual terminal processing bit.
+        SetConsoleMode(handle, mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING)
+    };
+    ok != 0
 }
 
 #[cfg(windows)]

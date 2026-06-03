@@ -146,6 +146,7 @@ async fn parsed_queue_resolves_move_window_renumber_target_as_session() {
                 start_directory: None,
                 environment: None,
                 command: None,
+                process_command: None,
                 target_window_index: None,
                 insert_at_target: false,
             }))
@@ -186,6 +187,7 @@ async fn parsed_queue_uses_current_target_for_move_window_renumber_without_t() {
                 start_directory: None,
                 environment: None,
                 command: None,
+                process_command: None,
                 target_window_index: None,
                 insert_at_target: false,
             }))

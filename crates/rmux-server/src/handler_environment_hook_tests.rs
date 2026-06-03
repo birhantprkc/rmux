@@ -432,6 +432,7 @@ async fn window_unlinked_hooks_keep_removed_window_name_and_id() {
             start_directory: None,
             environment: None,
             command: None,
+            process_command: None,
             target_window_index: None,
             insert_at_target: false,
         }))
@@ -714,6 +715,7 @@ async fn window_linked_hooks_receive_session_and_window_format_context() {
             start_directory: None,
             environment: None,
             command: None,
+            process_command: None,
             target_window_index: None,
             insert_at_target: false,
         }))
@@ -764,6 +766,7 @@ async fn hook_commands_do_not_pre_expand_set_buffer_arguments() {
                 start_directory: None,
                 environment: None,
                 command: None,
+                process_command: None,
                 target_window_index: None,
                 insert_at_target: false,
             }))

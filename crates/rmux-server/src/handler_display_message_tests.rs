@@ -153,6 +153,7 @@ async fn display_message_last_window_index_is_highest_session_window_index() {
                 start_directory: None,
                 environment: None,
                 command: None,
+                process_command: None,
                 target_window_index: None,
                 insert_at_target: false,
             }))
@@ -204,6 +205,7 @@ async fn display_message_reports_session_and_window_stack_order() {
                     start_directory: None,
                     environment: None,
                     command: None,
+                    process_command: None,
                     target_window_index: Some(index),
                     insert_at_target: false,
                 }))
@@ -704,6 +706,7 @@ async fn display_message_name_exists_modifier_checks_window_names_not_window_cou
                 detached: true,
                 environment: None,
                 command: None,
+                process_command: None,
                 start_directory: None,
                 target_window_index: None,
                 insert_at_target: false,

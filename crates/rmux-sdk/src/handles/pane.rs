@@ -323,7 +323,7 @@ impl Pane {
 
     /// Opens a minimal render stream that emits snapshots after output.
     ///
-    /// The v0.1.3 implementation is output-driven with debounce and revision
+    /// The implementation is output-driven with debounce and revision
     /// filtering. It avoids fixed-rate blind refresh loops but is not a
     /// daemon-native snapshot-diff stream.
     pub async fn render_stream(&self) -> Result<PaneRenderStream> {

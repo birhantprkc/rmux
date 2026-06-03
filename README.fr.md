@@ -14,7 +14,7 @@
 
 [![Licence : MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](LICENSE-MIT)
 [![Validation de release](https://github.com/Helvesec/rmux/actions/workflows/ci.yml/badge.svg)](https://github.com/Helvesec/rmux/actions/workflows/ci.yml)
-[![rmux 0.4.3](https://img.shields.io/badge/rmux-0.4.3-informational.svg)](#install)
+[![rmux 0.5.0](https://img.shields.io/badge/rmux-0.5.0-informational.svg)](#install)
 [![Plateformes : Linux | macOS | Windows](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-lightgrey.svg)](#platform-support)
 [![Politique unsafe](https://img.shields.io/badge/unsafe-restricted-success.svg)](#verification)
 
@@ -25,16 +25,18 @@
 
 </div>
 
-> [!IMPORTANT]
-> Version actuelle : **v0.4.1**, publiée le **3 juin 2026**. Les 90 commandes compatibles tmux sont implémentées, mais des bugs restent possibles : cette version est un aperçu public récent. [Signaler les problèmes](https://github.com/helvesec/rmux/issues) rencontrés.
+> [!NOTE]
+> RMUX intègre maintenant un multiplexage web serverless, chiffré de bout en bout, avec échange hybride post-quantique. [Voir la documentation Web Share du dépôt](docs/web-share.md).
+>
+> RMUX évolue vite. Pour une demande de fonctionnalité ou un signalement, [ouvrir une issue](https://github.com/Helvesec/rmux/issues).
 
-## Pourquoi RMUX
+## RMUX
 
-RMUX existe parce que je crois que le cas d'usage de tmux n'a été exploré qu'en partie. Mon point de départ était simple : lancer des agents longue durée via SSH sans perdre leurs terminaux, tout en pouvant inspecter, scripter et orchestrer ce qui les entoure.
+RMUX est un <strong>moteur de multiplexage</strong> Rust moderne, asynchrone et typé, avec support natif de plus de 90 commandes tmux sur macOS, Linux et Windows, sans WSL.
 
-J'ai donc reconstruit cette idée à partir de zéro en Rust : un multiplexeur ultra-rapide compatible tmux, avec SDK typé, sessions persistantes, snapshots structurés et transports locaux natifs sur Linux, macOS et Windows, y compris les Windows Named Pipes.
+Il fournit un SDK Rust public pour construire des workflows IA persistants et de belles TUI avec Ratatui.
 
-RMUX est utilisable par les agents, les workflows CLI sans interface et les humains : il permet de donner une exécution détachable aux applications terminal, de se reconnecter plus tard, d'inspecter leur état, de les piloter depuis du code, ou simplement de s'en servir pour du travail terminal classique façon tmux.
+Il peut servir d'outil terminal quotidien, partager des sessions dans un navigateur, ou devenir la base d'un <strong>outil TUI agentique persistant</strong>.
 
 ## Démos
 
@@ -49,6 +51,37 @@ Quelques exemples courts et concrets de ce que l'on peut faire avec RMUX.
     <td align="center" width="20%"><a href="https://rmux.io/#demo-playwright"><img src="https://rmux.io/demos/demo-playwright.png" width="150" alt="Aperçu de la démo tests Playwright"></a><br><sub><a href="https://github.com/Helvesec/rmux-demos/tree/main/terminal-playwright-demo"><strong>Tests Playwright</strong></a></sub><br><sub>≃ 1,495 lignes</sub></td>
   </tr>
 </table>
+
+## Web Multiplex (Web Share)
+
+<p align="center">
+<a href="https://rmux.io/docs/web-share/">
+  <img src="https://rmux.io/web-share-browser.png" width="500" alt="Partage web RMUX" />
+</a>
+</p>
+
+RMUX permet de faire du multiplexage web : partager un pane ou une session RMUX sur le web, créer de nouveaux panes, déplacer les séparateurs à la souris, et utiliser RMUX avec une interface navigateur plus riche.
+
+```sh
+# Démarrer un Web Share local sur loopback
+rmux web-share
+
+# Partager une session nommée
+rmux new-session -d -s work
+rmux web-share -t work
+
+# Partager au-delà de localhost
+rmux web-share --tunnel-provider localhost-run
+```
+
+Utiliser un tunnel provider, amener son propre ingress, ou héberger le frontend statique sur son propre domaine.
+
+Points d'entrée utiles :
+
+- [Vue d'ensemble Web Share du dépôt](docs/web-share.md)
+- [Documentation Web Share](https://rmux.io/docs/web-share/)
+- [Modèle de sécurité](https://rmux.io/docs/web-share/#/security)
+- [Tunnel providers](https://rmux.io/docs/web-share/#/tunnels)
 
 <a id="install"></a>
 
@@ -66,7 +99,7 @@ Binaire précompilé pour Windows PowerShell :
 irm https://rmux.io/install.ps1 | iex
 ```
 
-Les téléchargements directs et checksums SHA256 sont disponibles dans la [GitHub Release v0.4.3](https://github.com/helvesec/rmux/releases/tag/v0.4.3).
+Les téléchargements directs et checksums SHA256 sont disponibles dans la [GitHub Release v0.5.0](https://github.com/helvesec/rmux/releases/tag/v0.5.0).
 
 Depuis crates.io avec Cargo :
 
@@ -114,7 +147,7 @@ rmux split-window --help
 
 ```toml
 [dependencies]
-rmux-sdk = "0.4"
+rmux-sdk = "0.5"
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 ```
 
@@ -171,14 +204,14 @@ fn render(snapshot: PaneSnapshot, area: Rect, buffer: &mut Buffer) {
 <div align="center">
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="https://rmux.io/rmux-architecture-dark.png">
-  <source media="(prefers-color-scheme: light)" srcset="https://rmux.io/rmux-architecture-light.png">
-  <img src="https://rmux.io/rmux-architecture-dark.png" alt="Architecture runtime RMUX" width="800">
+  <source media="(prefers-color-scheme: dark)" srcset="https://rmux.io/rmux-architecture-dark.png?v=0.5.0-web-share">
+  <source media="(prefers-color-scheme: light)" srcset="https://rmux.io/rmux-architecture-light.png?v=0.5.0-web-share">
+  <img src="https://rmux.io/rmux-architecture-dark.png?v=0.5.0-web-share" alt="Architecture runtime RMUX" width="800">
 </picture>
 
 </div>
 
-Trois surfaces publiques — une CLI `rmux`, une crate Rust `rmux-sdk` et un widget `ratatui-rmux` — partagent un protocole local unique pour parler au daemon. Ce qu'une surface peut faire, les autres peuvent le faire aussi.
+`rmux` garde les shells, sessions, fenêtres, panes et processus PTY dans le daemon local. Les clients locaux utilisent l'IPC. Web Share est un accès navigateur explicite : le daemon expose un pane ou une session sélectionnée via un WebSocket chiffré de bout en bout, pendant que l'exécution reste sur votre machine.
 
 ## Workspace
 

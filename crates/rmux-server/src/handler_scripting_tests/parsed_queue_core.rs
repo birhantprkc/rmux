@@ -212,6 +212,7 @@ async fn parsed_queue_resolves_unresolved_window_targets_before_protocol_dispatc
                 start_directory: None,
                 environment: None,
                 command: None,
+                process_command: None,
                 target_window_index: None,
                 insert_at_target: false,
             }))

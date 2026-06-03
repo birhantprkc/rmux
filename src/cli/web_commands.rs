@@ -129,11 +129,12 @@ fn build_web_share_request(
         ));
     }
     let terminal_theme = args.terminal_theme.map(web_terminal_theme);
-    let terminal_palette = match terminal_theme {
-        Some(WebTerminalTheme::Light | WebTerminalTheme::Dark) => None,
-        Some(WebTerminalTheme::User) | None if !std::io::stdout().is_terminal() => None,
-        Some(WebTerminalTheme::User) | None => capture_terminal_palette(),
-    };
+    let terminal_palette =
+        if should_capture_terminal_palette(terminal_theme, std::io::stdout().is_terminal()) {
+            capture_terminal_palette()
+        } else {
+            None
+        };
     let controls = operator && scope.is_session();
     Ok(WebShareRequest::Create(CreateWebShareRequest {
         scope,
@@ -159,6 +160,13 @@ fn build_web_share_request(
         controls,
         kill_session_on_expire: args.kill_session_on_expire,
     }))
+}
+
+fn should_capture_terminal_palette(
+    terminal_theme: Option<WebTerminalTheme>,
+    stdout_is_terminal: bool,
+) -> bool {
+    matches!(terminal_theme, Some(WebTerminalTheme::User)) && stdout_is_terminal
 }
 
 fn validate_create_web_share_args(
@@ -356,10 +364,12 @@ fn parse_expires_at(value: Option<&str>) -> Result<Option<u64>, ExitFailure> {
 
 #[cfg(test)]
 mod tests {
+    use rmux_proto::WebTerminalTheme;
+
     use super::{
         auto_web_share_session_name, disconnect_share_output, parse_expires_at,
-        target_requests_pane_scope, validate_create_web_share_args,
-        validate_web_share_args_without_daemon,
+        should_capture_terminal_palette, target_requests_pane_scope,
+        validate_create_web_share_args, validate_web_share_args_without_daemon,
     };
     use crate::cli_args::{parse_target_spec, WebShareArgs};
 
@@ -458,6 +468,27 @@ mod tests {
             error.message(),
             "web-share --max-operators cannot be used with --spectator-only"
         );
+    }
+
+    #[test]
+    fn terminal_palette_capture_requires_explicit_user_theme_and_tty() {
+        assert!(!should_capture_terminal_palette(None, true));
+        assert!(!should_capture_terminal_palette(
+            Some(WebTerminalTheme::Light),
+            true
+        ));
+        assert!(!should_capture_terminal_palette(
+            Some(WebTerminalTheme::Dark),
+            true
+        ));
+        assert!(!should_capture_terminal_palette(
+            Some(WebTerminalTheme::User),
+            false
+        ));
+        assert!(should_capture_terminal_palette(
+            Some(WebTerminalTheme::User),
+            true
+        ));
     }
 
     fn web_share_args() -> WebShareArgs {

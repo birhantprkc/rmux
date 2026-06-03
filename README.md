@@ -13,7 +13,7 @@ English · [Français](README.fr.md) · [简体中文](README.zh-CN.md) · [日�
 
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](LICENSE-MIT)
 [![Release validation](https://github.com/Helvesec/rmux/actions/workflows/ci.yml/badge.svg)](https://github.com/Helvesec/rmux/actions/workflows/ci.yml)
-[![rmux 0.4.3](https://img.shields.io/badge/rmux-0.4.3-informational.svg)](#install)
+[![rmux 0.5.0](https://img.shields.io/badge/rmux-0.5.0-informational.svg)](#install)
 [![Platform: Linux | macOS | Windows](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-lightgrey.svg)](#platform-support)
 [![Unsafe policy](https://img.shields.io/badge/unsafe-restricted-success.svg)](#verification)
 
@@ -24,14 +24,21 @@ English · [Français](README.fr.md) · [简体中文](README.zh-CN.md) · [日�
 
 </div>
 
-> [!IMPORTANT]
-> Current release: **v0.4.1**, published on **3 June 2026**. This release brings **[Web Multiplex (Web Share)](#web-multiplex-web-share)**, RMUX's web multiplexing feature: share a pane or session in a browser with `rmux web-share`, keep the PTY local, and relay only end-to-end encrypted terminal frames.
+> [!NOTE]
+> RMUX now includes serverless, hybrid post-quantum end-to-end web multiplexing. [Learn more in the repository Web Share docs](docs/web-share.md).
 >
-> RMUX is still moving fast. If you hit a bug, a platform edge case, or have a feature request, please [file an issue](https://github.com/Helvesec/rmux/issues). Reports are welcome.
+> RMUX is still moving fast. If you have a feature request or want to report anything, please [file an issue](https://github.com/Helvesec/rmux/issues).
+
+## RMUX
+A modern, async typed Rust <strong>multiplexer engine</strong> with native support for 90+ tmux commands across macOS, Linux, and Windows, with no WSL needed.
+
+It ships with a public Rust SDK for persistent AI workflows and beautiful Ratatui TUIs.
+
+Use it as your daily driver, share sessions in a browser, or script it into a <strong>persistent agentic TUI tool</strong>.
 
 ## Demos
 
-Short, real examples of what RMUX can be used for.
+Short examples of what RMUX can be used for.
 
 <table>
   <tr>
@@ -42,15 +49,18 @@ Short, real examples of what RMUX can be used for.
   </tr>
 </table>
 
-## RMUX
 
-RMUX is a modern Rust multiplexer built on async principles with Tokio. It supports over 90 tmux commands natively across macOS, Linux, and Windows — no WSL required.
-
-Designed for the agentic AI era, it features a public Rust SDK to build and script anything you can imagine. Use it as a normal multiplexer, a daemon-backed terminal runtime, a typed automation layer, or the terminal substrate for your own tools.
-
-RMUX also enables web multiplexing: with one seamless command, `rmux web-share`, you can beam any pane or session directly to the web. Bring your own domain. Host the static frontend anywhere; terminal data stays end-to-end encrypted with a hybrid post-quantum key exchange, even through blind tunnels.
 
 ## Web Multiplex (Web Share)
+
+<p align="center">
+<a href="https://rmux.io/docs/web-share/">
+  <img src="https://rmux.io/web-share-browser.png" width="500" alt="RMUX web share" />
+</a>
+</p>
+
+RMUX lets you do web multiplexing: share your RMUX pane or session on the web, create new panes, move dividers with the mouse, and use RMUX through a richer browser interface.
+
 
 ```sh
 # Start a local Web Share over loopback
@@ -75,76 +85,85 @@ Useful entry points:
 
 ## Install
 
-Choose your platform:
+<a id="install-linux"></a>
+<details>
+<summary><strong>Linux install</strong></summary>
 
-- [Linux](#linux)
-- [macOS](#macos)
-- [Windows](#windows)
-- [Rust / Cargo](#rust--cargo)
-
-### Linux
-
-Portable installer:
+#### Portable installer
 
 ```sh
 curl -fsSL https://rmux.io/install.sh | sh
 ```
 
-Direct downloads are available from the [v0.4.3 GitHub Release](https://github.com/helvesec/rmux/releases/tag/v0.4.3):
+Direct downloads are available from the [v0.5.0 GitHub Release](https://github.com/helvesec/rmux/releases/tag/v0.5.0):
 
-- `rmux-0.4.1-linux-x86_64.tar.gz`
-- `rmux_0.4.1_amd64.deb`
-- `rmux-0.4.1-1.x86_64.rpm`
+- `rmux-0.5.0-linux-x86_64.tar.gz`
+- `rmux_0.5.0_amd64.deb`
+- `rmux-0.5.0-1.x86_64.rpm`
 
-### macOS
+</details>
 
-Portable installer:
+<a id="install-macos"></a>
+<details>
+<summary><strong>macOS install</strong></summary>
+
+#### Portable installer
 
 ```sh
 curl -fsSL https://rmux.io/install.sh | sh
 ```
 
-Direct downloads are available from the [v0.4.3 GitHub Release](https://github.com/helvesec/rmux/releases/tag/v0.4.3):
+Direct downloads are available from the [v0.5.0 GitHub Release](https://github.com/helvesec/rmux/releases/tag/v0.5.0):
 
-- `rmux-0.4.1-macos-aarch64.tar.gz`
-- `rmux-0.4.1-macos-x86_64.tar.gz`
+- `rmux-0.5.0-macos-aarch64.tar.gz`
+- `rmux-0.5.0-macos-x86_64.tar.gz`
 
-### Windows
+</details>
 
-PowerShell installer:
+<a id="install-windows"></a>
+<details>
+<summary><strong>Windows install</strong></summary>
+
+#### PowerShell installer
 
 ```powershell
 irm https://rmux.io/install.ps1 | iex
 ```
 
-Direct downloads are available from the [v0.4.3 GitHub Release](https://github.com/helvesec/rmux/releases/tag/v0.4.3):
+Direct downloads are available from the [v0.5.0 GitHub Release](https://github.com/helvesec/rmux/releases/tag/v0.5.0):
 
-- `rmux-0.4.1-windows-x86_64.zip`
+- `rmux-0.5.0-windows-x86_64.zip`
 
-SHA256 checksums are published with every GitHub Release. APT, DNF, Homebrew, WinGet, Scoop, and Chocolatey metadata is prepared for each release and published separately once the corresponding repositories are live.
+</details>
 
-### Rust / Cargo
+<a id="install-cargo"></a>
+<details>
+<summary><strong>Rust / Cargo install</strong></summary>
 
 This path works on Linux, macOS, and Windows.
 
-Install Rust if you do not already have it:
+#### Install Rust
 
 ```sh
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 ```
 
-Then install RMUX from crates.io:
+#### Install RMUX
 
 ```sh
 cargo install rmux --locked
 ```
 
-For Rust applications:
+#### Rust applications
 
 ```sh
 cargo add rmux-sdk
 cargo add ratatui-rmux
 ```
+
+</details>
+
+SHA256 checksums are published with every GitHub Release. APT, DNF, Homebrew, WinGet, Scoop, and Chocolatey metadata is prepared for each release and published separately once the corresponding repositories are live.
 
 ## Documentation
 
@@ -184,7 +203,7 @@ Use `rmux -V` for the RMUX package version. For build and support details, use `
 
 ```toml
 [dependencies]
-rmux-sdk = "0.4"
+rmux-sdk = "0.5"
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 ```
 
@@ -241,14 +260,14 @@ fn render(snapshot: PaneSnapshot, area: Rect, buffer: &mut Buffer) {
 <div align="center">
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="https://rmux.io/rmux-architecture-dark.png">
-  <source media="(prefers-color-scheme: light)" srcset="https://rmux.io/rmux-architecture-light.png">
-  <img src="https://rmux.io/rmux-architecture-dark.png" alt="RMUX runtime architecture" width="800">
+  <source media="(prefers-color-scheme: dark)" srcset="https://rmux.io/rmux-architecture-dark.png?v=0.5.0-web-share">
+  <source media="(prefers-color-scheme: light)" srcset="https://rmux.io/rmux-architecture-light.png?v=0.5.0-web-share">
+  <img src="https://rmux.io/rmux-architecture-dark.png?v=0.5.0-web-share" alt="RMUX runtime architecture" width="800">
 </picture>
 
 </div>
 
-Three public surfaces — the `rmux` CLI, the `rmux-sdk` Rust crate, and the `ratatui-rmux` widget — share one local protocol to talk to the daemon. Anything one surface can do, the others can do too.
+`rmux` keeps shells, sessions, windows, panes, and PTY processes inside the local daemon. Local clients use IPC. Web Share is explicit browser access: the daemon exposes a selected pane or session through an end-to-end encrypted WebSocket, while execution stays on your machine.
 
 ## Workspace
 
@@ -301,7 +320,7 @@ Fallback paths:
 - Linux and macOS: `/etc/tmux.conf`, `~/.tmux.conf`, `$XDG_CONFIG_HOME/tmux/tmux.conf`, `~/.config/tmux/tmux.conf`
 - Windows: `%XDG_CONFIG_HOME%\tmux\tmux.conf`, `%USERPROFILE%\.tmux.conf`, `%APPDATA%\tmux\tmux.conf`
 
-The import is intentionally narrow: RMUX keeps supported static options and key unbindings, but skips tmux key bindings, environment or terminal capability mutations, plugin user options and hooks, shell commands, command blocks, conditionals, format jobs such as `#(cmd)`, recursive `source-file` entries, and unsupported options instead of executing them. Set `RMUX_DISABLE_TMUX_FALLBACK=1` to disable it entirely.
+RMUX imports supported static options and key unbindings. It skips tmux key bindings, environment or terminal capability mutations, plugin user options and hooks, shell commands, command blocks, conditionals, format jobs such as `#(cmd)`, recursive `source-file` entries, and unsupported options. Set `RMUX_DISABLE_TMUX_FALLBACK=1` to disable the fallback.
 
 ## Terminal Compatibility Notes
 

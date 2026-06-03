@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       ref:
-        description: Git tag to release, for example v0.1.1
+        description: Git tag to release, for example v0.5.0
         required: true
         type: string
 
@@ -393,3 +393,82 @@ jobs:
           fi
           gh release upload "$tag" --repo "$GITHUB_REPOSITORY" release-assets/* --clobber
           gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --draft=false
+
+      - name: Deploy Linux package repositories
+        shell: bash
+        env:
+          RMUX_PACKAGE_REPO_TOKEN: ${{ secrets.RMUX_PACKAGE_REPO_TOKEN }}
+          RMUX_PACKAGE_REPO: Helvesec/rmux-packages
+          RMUX_PACKAGE_REPO_BRANCH: main
+        run: |
+          : "${RMUX_PACKAGE_REPO_TOKEN:?missing RMUX_PACKAGE_REPO_TOKEN}"
+          : "${RMUX_PACKAGE_REPO:?missing RMUX_PACKAGE_REPO}"
+          : "${RMUX_PACKAGE_REPO_BRANCH:?missing RMUX_PACKAGE_REPO_BRANCH}"
+
+          test -d target/package-repositories/debian
+          test -d target/package-repositories/rpm
+
+          work="$(mktemp -d)"
+          trap 'rm -rf "$work"' EXIT
+          git -c "http.extraheader=AUTHORIZATION: bearer $RMUX_PACKAGE_REPO_TOKEN" \
+            clone --depth 1 --branch "$RMUX_PACKAGE_REPO_BRANCH" \
+            "https://github.com/$RMUX_PACKAGE_REPO.git" "$work"
+
+          rm -rf "$work/debian" "$work/rpm"
+          cp -a target/package-repositories/debian "$work/debian"
+          cp -a target/package-repositories/rpm "$work/rpm"
+
+          cat > "$work/index.html" <<'EOF'
+          <!doctype html>
+          <html lang="en">
+            <head>
+              <meta charset="utf-8">
+              <meta name="viewport" content="width=device-width, initial-scale=1">
+              <title>RMUX Packages</title>
+            </head>
+            <body>
+              <h1>RMUX Packages</h1>
+              <ul>
+                <li><a href="/debian/dists/stable/InRelease">APT repository</a></li>
+                <li><a href="/rpm/rmux.repo">RPM repository</a></li>
+              </ul>
+            </body>
+          </html>
+          EOF
+
+          cat > "$work/_headers" <<'EOF'
+          /debian/dists/*
+            Cache-Control: public, max-age=300
+
+          /debian/rmux.asc
+            Cache-Control: public, max-age=3600
+
+          /debian/pool/*
+            Cache-Control: public, max-age=31536000, immutable
+
+          /rpm/repodata/*
+            Cache-Control: public, max-age=300
+
+          /rpm/RPM-GPG-KEY-rmux
+            Cache-Control: public, max-age=3600
+
+          /rpm/rmux.repo
+            Cache-Control: public, max-age=300
+
+          /rpm/*.rpm
+            Cache-Control: public, max-age=31536000, immutable
+          EOF
+
+          cd "$work"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          if [ -z "$(git status --porcelain)" ]; then
+            echo "Linux package repository already points to $RELEASE_REF."
+            exit 0
+          fi
+
+          git add _headers index.html debian rpm
+          git commit -m "packages: publish rmux $RELEASE_REF"
+          git -c "http.extraheader=AUTHORIZATION: bearer $RMUX_PACKAGE_REPO_TOKEN" \
+            push origin "HEAD:$RMUX_PACKAGE_REPO_BRANCH"

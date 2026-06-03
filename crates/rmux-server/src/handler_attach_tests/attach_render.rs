@@ -389,6 +389,7 @@ async fn attach_session_target_spec_selects_requested_window_and_pane_before_att
                 detached: true,
                 environment: None,
                 command: None,
+                process_command: None,
                 start_directory: None,
                 target_window_index: None,
                 insert_at_target: false,

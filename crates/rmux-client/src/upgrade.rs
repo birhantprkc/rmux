@@ -252,7 +252,7 @@ mod tests {
     #[test]
     fn stale_daemon_without_sessions_or_clients_is_idle() {
         let stale = StaleDaemon {
-            daemon_version: Some("v0.2.5".to_owned()),
+            daemon_version: Some("v0.5.0+stale".to_owned()),
             session_count: 0,
             client_count: 0,
             supports_shutdown_if_idle: true,
@@ -267,7 +267,7 @@ mod tests {
     #[test]
     fn stale_daemon_with_sessions_stays_active() {
         let stale = StaleDaemon {
-            daemon_version: Some("v0.2.5".to_owned()),
+            daemon_version: Some("v0.5.0+stale".to_owned()),
             session_count: 1,
             client_count: 0,
             supports_shutdown_if_idle: true,
@@ -346,19 +346,19 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn inspect_modern_stale_idle_daemon_is_idle() {
-        let mut connection = connection_with_status("0.2.5", RMUX_WIRE_VERSION, 0, 0);
+        let mut connection = connection_with_status("0.5.0+stale", RMUX_WIRE_VERSION, 0, 0);
 
         assert!(matches!(
             inspect_daemon(&mut connection).expect("inspect succeeds"),
             DaemonFreshness::StaleIdle(stale)
-                if stale.daemon_version.as_deref() == Some("v0.2.5")
+                if stale.daemon_version.as_deref() == Some("v0.5.0+stale")
         ));
     }
 
     #[cfg(unix)]
     #[test]
     fn inspect_modern_stale_daemon_with_sessions_is_active() {
-        let mut connection = connection_with_status("0.2.5", RMUX_WIRE_VERSION, 1, 0);
+        let mut connection = connection_with_status("0.5.0+stale", RMUX_WIRE_VERSION, 1, 0);
 
         assert!(matches!(
             inspect_daemon(&mut connection).expect("inspect succeeds"),
@@ -370,12 +370,12 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn inspect_modern_wire_mismatch_is_incompatible() {
-        let mut connection = connection_with_status("0.2.5", RMUX_WIRE_VERSION + 1, 1, 0);
+        let mut connection = connection_with_status("0.5.0+stale", RMUX_WIRE_VERSION + 1, 1, 0);
 
         assert!(matches!(
             inspect_daemon(&mut connection).expect("inspect succeeds"),
             DaemonFreshness::Incompatible(incompatible)
-                if incompatible.daemon_version.as_deref() == Some("v0.2.5")
+                if incompatible.daemon_version.as_deref() == Some("v0.5.0+stale")
                     && incompatible.daemon_wire_version == Some(RMUX_WIRE_VERSION + 1)
         ));
     }

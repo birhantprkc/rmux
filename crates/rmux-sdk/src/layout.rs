@@ -29,7 +29,7 @@ impl<'a> SessionLayoutBuilder<'a> {
 
     /// Selects the window index that will receive the layout.
     ///
-    /// v0.1.3 only mutates one existing window. The target window must
+    /// This layout API mutates one existing window. The target window must
     /// already exist and must contain exactly one pane when [`GridLayoutBuilder::apply`]
     /// is called.
     #[must_use]
@@ -41,7 +41,7 @@ impl<'a> SessionLayoutBuilder<'a> {
     /// Starts a grid layout.
     ///
     /// The first argument is the maximum number of columns per row, matching
-    /// the v0.1.3 roadmap example `grid(3, 2)` for "three panes on top, two
+    /// the grid example `grid(3, 2)` for "three panes on top, two
     /// panes below". The second argument is the maximum number of rows.
     #[must_use]
     pub const fn grid(self, columns: usize, rows: usize) -> GridLayoutBuilder<'a> {

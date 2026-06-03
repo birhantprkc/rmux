@@ -579,9 +579,17 @@ fn resolve_shell_path_uses_shell_env_when_default_shell_is_explicitly_empty() {
 
 #[cfg(windows)]
 #[test]
-fn resolve_shell_path_uses_powershell_family_as_windows_default() {
+fn resolve_shell_path_uses_stable_windows_default_shell() {
     let options = OptionStore::new();
-    let environment = HashMap::from([("SHELL".to_owned(), "cmd.exe".to_owned())]);
+    let environment = HashMap::from([(
+        "PATH".to_owned(),
+        std::env::var("COMSPEC")
+            .ok()
+            .and_then(|value| Path::new(&value).parent().map(Path::to_path_buf))
+            .unwrap_or_else(|| PathBuf::from(r"C:\Windows\System32"))
+            .to_string_lossy()
+            .into_owned(),
+    )]);
 
     let resolved = super::resolve_shell_path(&options, None, &environment);
     let leaf = super::executable_name(resolved.as_os_str())
@@ -589,11 +597,8 @@ fn resolve_shell_path_uses_powershell_family_as_windows_default() {
         .to_ascii_lowercase();
 
     assert!(
-        matches!(
-            leaf.as_str(),
-            "pwsh.exe" | "pwsh" | "powershell.exe" | "powershell"
-        ),
-        "expected Windows default shell to be PowerShell-family, got {resolved:?}"
+        matches!(leaf.as_str(), "pwsh.exe" | "pwsh" | "cmd.exe" | "cmd"),
+        "expected Windows default shell to prefer pwsh or cmd, got {resolved:?}"
     );
 }
 
@@ -651,18 +656,47 @@ fn resolve_shell_path_prefers_session_shell_over_global_on_windows() {
 #[cfg(windows)]
 #[test]
 fn windows_interactive_cmd_starts_in_profile_cwd_and_accepts_input() -> Result<(), Box<dyn Error>> {
+    windows_interactive_shell_starts_in_profile_cwd_and_accepts_input("cmd.exe")
+}
+
+#[cfg(windows)]
+#[test]
+fn windows_interactive_pwsh_starts_in_profile_cwd_and_accepts_input() -> Result<(), Box<dyn Error>>
+{
+    windows_interactive_shell_starts_in_profile_cwd_and_accepts_input("pwsh.exe")
+}
+
+#[cfg(windows)]
+fn reap_windows_test_child(child: &mut rmux_pty::PtyChild) -> Result<(), Box<dyn Error>> {
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while Instant::now() < deadline {
+        if child.try_wait()?.is_some() {
+            return Ok(());
+        }
+        thread::sleep(Duration::from_millis(20));
+    }
+
+    child.terminate_forcefully()?;
+    let _ = child.wait()?;
+    Ok(())
+}
+
+#[cfg(windows)]
+fn windows_interactive_shell_starts_in_profile_cwd_and_accepts_input(
+    default_shell: &str,
+) -> Result<(), Box<dyn Error>> {
     let environment = EnvironmentStore::new();
     let mut options = OptionStore::new();
     options
         .set(
             ScopeSelector::Global,
             OptionName::DefaultShell,
-            "cmd.exe".to_owned(),
+            default_shell.to_owned(),
             SetOptionMode::Replace,
         )
         .expect("default-shell succeeds");
     let session_name = SessionName::new("alpha").expect("valid session name");
-    let cwd = unique_directory("windows-interactive-cmd")?;
+    let cwd = unique_directory("windows-interactive-shell")?;
     let profile = TerminalProfile::for_session(
         &environment,
         &options,
@@ -682,7 +716,12 @@ fn windows_interactive_cmd_starts_in_profile_cwd_and_accepts_input() -> Result<(
     let cwd_marker = cwd.to_string_lossy().into_owned();
 
     let output = (|| -> Result<Vec<u8>, Box<dyn Error>> {
-        io.write_all(b"cd\r\necho RMUX_WINDOWS_INTERACTIVE_OK\r\nexit\r\n")?;
+        let lower_default_shell = default_shell.to_ascii_lowercase();
+        if lower_default_shell.contains("powershell") || lower_default_shell.contains("pwsh") {
+            io.write_all(b"Get-Location\r\necho RMUX_WINDOWS_INTERACTIVE_OK\r\nexit\r\n")?;
+        } else {
+            io.write_all(b"cd\r\necho RMUX_WINDOWS_INTERACTIVE_OK\r\nexit\r\n")?;
+        }
         read_until_io(&io, b"RMUX_WINDOWS_INTERACTIVE_OK", Duration::from_secs(5))
     })();
 
@@ -700,21 +739,6 @@ fn windows_interactive_cmd_starts_in_profile_cwd_and_accepts_input() -> Result<(
         output.contains("RMUX_WINDOWS_INTERACTIVE_OK"),
         "expected Windows interactive input marker, got {output:?}"
     );
-    Ok(())
-}
-
-#[cfg(windows)]
-fn reap_windows_test_child(child: &mut rmux_pty::PtyChild) -> Result<(), Box<dyn Error>> {
-    let deadline = Instant::now() + Duration::from_secs(2);
-    while Instant::now() < deadline {
-        if child.try_wait()?.is_some() {
-            return Ok(());
-        }
-        thread::sleep(Duration::from_millis(20));
-    }
-
-    child.terminate_forcefully()?;
-    let _ = child.wait()?;
     Ok(())
 }
 
@@ -849,6 +873,8 @@ fn read_until_io(
     let expected = String::from_utf8_lossy(needle).into_owned();
     let needle = needle.to_vec();
     let (sender, receiver) = mpsc::channel();
+    let partial_output = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let reader_partial_output = std::sync::Arc::clone(&partial_output);
 
     thread::spawn(move || {
         let mut output = Vec::new();
@@ -862,6 +888,10 @@ fn read_until_io(
                 }
                 Ok(bytes_read) => {
                     output.extend_from_slice(&buffer[..bytes_read]);
+                    if let Ok(mut partial) = reader_partial_output.lock() {
+                        partial.clear();
+                        partial.extend_from_slice(&output);
+                    }
                     if output
                         .windows(needle.len())
                         .any(|window| window == needle.as_slice())
@@ -881,11 +911,20 @@ fn read_until_io(
     match receiver.recv_timeout(timeout) {
         Ok(Ok(output)) => Ok(output),
         Ok(Err(error)) => Err(error.into()),
-        Err(mpsc::RecvTimeoutError::Timeout) => Err(io::Error::new(
-            io::ErrorKind::TimedOut,
-            format!("pty output did not contain {expected:?} within {timeout:?}"),
-        )
-        .into()),
+        Err(mpsc::RecvTimeoutError::Timeout) => {
+            let partial = partial_output
+                .lock()
+                .map(|output| output.clone())
+                .unwrap_or_default();
+            Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                format!(
+                    "pty output did not contain {expected:?} within {timeout:?}; partial output: {:?}",
+                    String::from_utf8_lossy(&partial)
+                ),
+            )
+            .into())
+        }
         Err(mpsc::RecvTimeoutError::Disconnected) => {
             Err(io::Error::other("pty reader thread stopped before sending output").into())
         }

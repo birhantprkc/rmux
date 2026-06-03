@@ -50,6 +50,7 @@ async fn window_management_requests_round_trip_through_the_socket() -> Result<()
             start_directory: None,
             environment: None,
             command: None,
+            process_command: None,
             target_window_index: None,
             insert_at_target: false,
         }))
@@ -134,6 +135,7 @@ async fn kill_window_all_others_cleans_up_removed_window_ptys() -> Result<(), Bo
                 start_directory: None,
                 environment: None,
                 command: None,
+                process_command: None,
                 target_window_index: None,
                 insert_at_target: false,
             }))
@@ -170,6 +172,7 @@ async fn kill_window_all_others_cleans_up_removed_window_ptys() -> Result<(), Bo
                 start_directory: None,
                 environment: None,
                 command: None,
+                process_command: None,
                 target_window_index: None,
                 insert_at_target: false,
             }))
@@ -240,6 +243,7 @@ async fn window_navigation_and_listing_requests_round_trip_through_the_socket(
                 start_directory: None,
                 environment: None,
                 command: None,
+                process_command: None,
                 target_window_index: None,
                 insert_at_target: false,
             }))
@@ -255,6 +259,7 @@ async fn window_navigation_and_listing_requests_round_trip_through_the_socket(
                 start_directory: None,
                 environment: None,
                 command: None,
+                process_command: None,
                 target_window_index: None,
                 insert_at_target: false,
             }))
@@ -400,6 +405,7 @@ async fn window_move_swap_and_rotate_requests_round_trip_through_the_socket(
                 start_directory: None,
                 environment: None,
                 command: None,
+                process_command: None,
                 target_window_index: None,
                 insert_at_target: false,
             }))
@@ -415,6 +421,7 @@ async fn window_move_swap_and_rotate_requests_round_trip_through_the_socket(
                 start_directory: None,
                 environment: None,
                 command: None,
+                process_command: None,
                 target_window_index: None,
                 insert_at_target: false,
             }))

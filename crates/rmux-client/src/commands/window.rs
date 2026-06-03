@@ -78,6 +78,7 @@ impl Connection {
             start_directory,
             environment,
             command,
+            process_command: None,
             target_window_index,
             insert_at_target,
         }))

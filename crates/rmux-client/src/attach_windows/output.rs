@@ -1,8 +1,11 @@
+use std::fs::{File, OpenOptions};
 use std::io::{self, Write};
+use std::os::windows::io::AsRawHandle;
 
 use windows_sys::Win32::Foundation::{HANDLE, INVALID_HANDLE_VALUE};
 use windows_sys::Win32::System::Console::{
-    GetConsoleMode, GetStdHandle, WriteConsoleW, STD_OUTPUT_HANDLE,
+    GetConsoleMode, GetStdHandle, SetConsoleMode, WriteConsoleW,
+    ENABLE_VIRTUAL_TERMINAL_PROCESSING, STD_OUTPUT_HANDLE,
 };
 
 pub(super) struct AttachStdout<W> {
@@ -44,6 +47,8 @@ where
 
 struct Utf16ConsoleWriter {
     handle: HANDLE,
+    _owned_handle: Option<File>,
+    original_mode: u32,
     pending_utf8: Vec<u8>,
 }
 
@@ -54,13 +59,21 @@ unsafe impl Send for Utf16ConsoleWriter {}
 
 impl Utf16ConsoleWriter {
     fn stdout() -> Option<Self> {
-        let handle = unsafe {
-            // SAFETY: GetStdHandle accepts the documented STD_* constants.
-            GetStdHandle(STD_OUTPUT_HANDLE)
-        };
+        std_output_handle()
+            .and_then(|handle| Self::from_handle(handle, None))
+            .or_else(Self::from_conout)
+    }
+
+    fn from_conout() -> Option<Self> {
+        let file = OpenOptions::new().write(true).open("CONOUT$").ok()?;
+        let handle = file.as_raw_handle() as HANDLE;
         if handle.is_null() || handle == INVALID_HANDLE_VALUE {
             return None;
         }
+        Self::from_handle(handle, Some(file))
+    }
+
+    fn from_handle(handle: HANDLE, owned_handle: Option<File>) -> Option<Self> {
         let mut mode = 0;
         let ok = unsafe {
             // SAFETY: handle is borrowed and mode points to writable storage.
@@ -69,8 +82,21 @@ impl Utf16ConsoleWriter {
         if ok == 0 {
             return None;
         }
+        let enabled_mode = mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING;
+        if enabled_mode != mode {
+            let ok = unsafe {
+                // SAFETY: handle is a console output handle and enabled_mode
+                // only adds the documented VT output flag.
+                SetConsoleMode(handle, enabled_mode)
+            };
+            if ok == 0 {
+                return None;
+            }
+        }
         Some(Self {
             handle,
+            _owned_handle: owned_handle,
+            original_mode: mode,
             pending_utf8: Vec::new(),
         })
     }
@@ -136,6 +162,27 @@ impl Utf16ConsoleWriter {
     }
 }
 
+impl Drop for Utf16ConsoleWriter {
+    fn drop(&mut self) {
+        let _ = unsafe {
+            // SAFETY: handle is the console output handle captured by a
+            // successful GetConsoleMode call during construction.
+            SetConsoleMode(self.handle, self.original_mode)
+        };
+    }
+}
+
+fn std_output_handle() -> Option<HANDLE> {
+    let handle = unsafe {
+        // SAFETY: GetStdHandle accepts the documented STD_* constants.
+        GetStdHandle(STD_OUTPUT_HANDLE)
+    };
+    if handle.is_null() || handle == INVALID_HANDLE_VALUE {
+        return None;
+    }
+    Some(handle)
+}
+
 fn writable_utf8_prefix_len(bytes: &[u8]) -> usize {
     match std::str::from_utf8(bytes) {
         Ok(_) => bytes.len(),
@@ -166,6 +213,8 @@ mod tests {
         let glyph = "é".as_bytes();
         let mut writer = Utf16ConsoleWriter {
             handle: std::ptr::null_mut(),
+            _owned_handle: None,
+            original_mode: 0,
             pending_utf8: glyph[..1].to_vec(),
         };
 

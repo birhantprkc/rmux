@@ -3,8 +3,8 @@
 mod common;
 
 use std::error::Error;
-use std::thread;
 use std::time::{Duration, Instant};
+use std::{fs, thread};
 
 use common::{
     assert_success, drain_attach_output_bytes, read_until_contains, terminate_child,
@@ -28,12 +28,15 @@ fn issue_8_prompt_created_window_exit_removes_dead_pane() -> Result<(), Box<dyn 
     wait_for_panes(&harness, &["0:0", "0:1"], &[])?;
     wait_for_attach_repaint(&mut attach)?;
 
-    send_prompt_command(
-        &mut attach,
-        "new-window -- 'printf ISSUE8_WINDOW_READY; sleep 0.2'",
-    )?;
-    wait_for_non_empty_window_name(&harness, "1")?;
+    let release_path = harness.tmpdir().join("issue8-release-window");
+    let command = format!(
+        "new-window -- 'printf ISSUE8_WINDOW_READY; while [ ! -e {} ]; do sleep 0.05; done'",
+        release_path.display()
+    );
+    send_prompt_command(&mut attach, &command)?;
     let _ = read_until_contains(attach.master_mut(), "ISSUE8_WINDOW_READY", IO_TIMEOUT)?;
+    wait_for_non_empty_window_name(&harness, "1")?;
+    fs::write(&release_path, "")?;
     wait_for_panes(&harness, &["0:0", "0:1"], &["1:0"])?;
 
     attach.send_bytes(b"printf STILL_ALIVE\r")?;

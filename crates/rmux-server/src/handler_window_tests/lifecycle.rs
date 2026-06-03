@@ -14,6 +14,7 @@ async fn new_window_detached_leaves_the_active_window_unchanged() {
             start_directory: None,
             environment: None,
             command: None,
+            process_command: None,
             target_window_index: None,
             insert_at_target: false,
         }))
@@ -316,6 +317,7 @@ async fn new_window_reuses_the_lowest_available_index_after_kill() {
                 start_directory: None,
                 environment: None,
                 command: None,
+                process_command: None,
                 target_window_index: None,
                 insert_at_target: false,
             }))
@@ -345,6 +347,7 @@ async fn new_window_reuses_the_lowest_available_index_after_kill() {
             start_directory: None,
             environment: None,
             command: None,
+            process_command: None,
             target_window_index: None,
             insert_at_target: false,
         }))
@@ -400,6 +403,7 @@ async fn new_window_does_not_mutate_the_session_when_existing_terminals_are_miss
             start_directory: None,
             environment: None,
             command: None,
+            process_command: None,
             target_window_index: None,
             insert_at_target: false,
         }))

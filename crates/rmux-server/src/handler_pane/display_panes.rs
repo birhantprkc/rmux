@@ -68,24 +68,11 @@ impl RequestHandler {
             }
         };
 
-        if !self
-            .send_attached_display_panes_overlay_now(
-                &session_name,
-                overlay_frame.clone(),
-                clear_frame.clone(),
-            )
-            .await
-        {
-            return Response::Error(ErrorResponse {
-                error: RmuxError::Message("no current client".to_owned()),
-            });
-        }
-
         let armed_states = if let Response::DisplayPanes(success) = &response {
             self.arm_display_panes_state(
                 &session_name,
                 success.target.clone(),
-                clear_frame,
+                clear_frame.clone(),
                 request.no_command,
                 request.template.clone(),
             )
@@ -93,6 +80,25 @@ impl RequestHandler {
         } else {
             Vec::new()
         };
+        if armed_states.is_empty() {
+            return Response::Error(ErrorResponse {
+                error: RmuxError::Message("no current client".to_owned()),
+            });
+        }
+
+        if !self
+            .send_attached_display_panes_overlay_now(&session_name, overlay_frame, clear_frame)
+            .await
+        {
+            for (attach_pid, state_id) in armed_states {
+                let _ = self
+                    .clear_display_panes_state(attach_pid, Some(state_id), false)
+                    .await;
+            }
+            return Response::Error(ErrorResponse {
+                error: RmuxError::Message("no current client".to_owned()),
+            });
+        }
 
         if let Response::DisplayPanes(success) = &response {
             let active_pane = {
@@ -156,7 +162,7 @@ impl RequestHandler {
             let mut active_attach = self.active_attach.lock().await;
             let mut scheduled = Vec::new();
             for (&attach_pid, active) in &mut active_attach.by_pid {
-                if active.session_name != *session_name {
+                if active.session_name != *session_name || active.suspended {
                     continue;
                 }
                 active.display_panes_state_id = active.display_panes_state_id.saturating_add(1);

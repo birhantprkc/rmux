@@ -52,6 +52,7 @@ fn every_request_variant_round_trips_through_the_frame_codec() {
             start_directory: None,
             environment: None,
             command: None,
+            process_command: None,
             target_window_index: None,
             insert_at_target: false,
         }),

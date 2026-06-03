@@ -56,9 +56,8 @@ impl PaneSet {
 
     /// Broadcasts text or one key token to every pane.
     ///
-    /// This delegates to the v0.1.3 client-side broadcast implementation and
-    /// returns the same partial-broadcast error when at least one pane rejects
-    /// the input.
+    /// This delegates to the client-side broadcast implementation and returns
+    /// the same partial-broadcast error when at least one pane rejects the input.
     pub async fn broadcast(&self, input: Input<'_>) -> Result<BroadcastResult> {
         crate::broadcast::broadcast(&self.panes, input).await
     }

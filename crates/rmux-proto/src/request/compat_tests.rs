@@ -3,7 +3,8 @@ use super::{
     ShowOptionsRequest, SplitWindowExtRequest, SplitWindowTarget,
 };
 use crate::{
-    OptionScopeSelector, PaneTarget, SessionName, SplitDirection, TerminalSize, WindowTarget,
+    OptionScopeSelector, PaneTarget, ProcessCommand, SessionName, SplitDirection, TerminalSize,
+    WindowTarget,
 };
 use serde::Serialize;
 use std::path::PathBuf;
@@ -89,6 +90,7 @@ fn new_window_request_deserializes_old_payloads_with_defaulted_fields() {
     assert_eq!(decoded.environment, Some(vec!["FOO=1".to_owned()]));
     assert_eq!(decoded.start_directory, None);
     assert_eq!(decoded.command, None);
+    assert_eq!(decoded.process_command, None);
     assert_eq!(decoded.target_window_index, None);
 }
 
@@ -121,6 +123,7 @@ fn new_and_respawn_window_requests_round_trip_with_spawn_fields() {
         start_directory: Some(PathBuf::from("/tmp/logs")),
         environment: Some(vec!["FOO=1".to_owned()]),
         command: Some(vec!["sleep".to_owned(), "30".to_owned()]),
+        process_command: Some(ProcessCommand::Argv(vec!["sleep".to_owned()])),
         target_window_index: Some(5),
         insert_at_target: false,
     };

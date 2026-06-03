@@ -117,6 +117,7 @@ async fn pane_transfer_commands_move_live_ptys_between_windows() -> Result<(), B
                 start_directory: None,
                 environment: None,
                 command: None,
+                process_command: None,
                 target_window_index: None,
                 insert_at_target: false,
             }))
@@ -196,6 +197,7 @@ async fn pane_transfer_commands_move_live_ptys_between_windows() -> Result<(), B
                 start_directory: None,
                 environment: None,
                 command: None,
+                process_command: None,
                 target_window_index: None,
                 insert_at_target: false,
             }))

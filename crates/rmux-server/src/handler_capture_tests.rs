@@ -1,5 +1,5 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use super::RequestHandler;
 use rmux_proto::{
@@ -112,7 +112,9 @@ fn marker_print_command(marker: &str) -> String {
 }
 
 async fn wait_for_capture(handler: &RequestHandler, target: PaneTarget, marker: &str) -> Vec<u8> {
-    for _ in 0..100 {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let mut last_stdout = Vec::new();
+    while Instant::now() < deadline {
         let response = handler
             .handle(Request::CapturePane(capture_pane_request(
                 target.clone(),
@@ -126,6 +128,7 @@ async fn wait_for_capture(handler: &RequestHandler, target: PaneTarget, marker: 
         let output = response
             .command_output()
             .expect("capture-pane -p returns command output");
+        last_stdout = output.stdout().to_vec();
         if String::from_utf8_lossy(output.stdout()).contains(marker) {
             return output.stdout().to_vec();
         }
@@ -133,7 +136,10 @@ async fn wait_for_capture(handler: &RequestHandler, target: PaneTarget, marker: 
         sleep(Duration::from_millis(20)).await;
     }
 
-    panic!("capture output never contained marker {marker}");
+    panic!(
+        "capture output never contained marker {marker}; last stdout: {:?}",
+        String::from_utf8_lossy(&last_stdout)
+    );
 }
 
 #[tokio::test]

@@ -22,7 +22,7 @@ pub(crate) use rmux::connect_transport_to_endpoint;
 pub use rmux::Rmux;
 pub use session::Session;
 pub use split::SplitDirection;
-pub use window::{Window, WindowCloseOutcome, WindowPane};
+pub use window::{NewWindowBuilder, Window, WindowCloseOutcome, WindowPane};
 
 #[allow(dead_code)]
 fn assert_static_facade_contract<T: Send + Sync + 'static>() {

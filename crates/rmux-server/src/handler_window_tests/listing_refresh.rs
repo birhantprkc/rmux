@@ -244,6 +244,7 @@ async fn window_mutations_refresh_attached_sessions() {
                 start_directory: None,
                 environment: None,
                 command: None,
+                process_command: None,
                 target_window_index: None,
                 insert_at_target: false,
             }))

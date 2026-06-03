@@ -459,6 +459,7 @@ async fn killing_the_last_pane_destroys_the_window_and_session_targets_fall_back
             start_directory: None,
             environment: None,
             command: None,
+            process_command: None,
             target_window_index: None,
             insert_at_target: false,
         }))

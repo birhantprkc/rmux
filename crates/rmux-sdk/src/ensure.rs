@@ -145,7 +145,7 @@ impl EnsureSession {
 
     /// Records the legacy initial command vector for the initial pane.
     ///
-    /// This preserves the pre-v0.1.3 behavior: a one-element command is
+    /// This preserves the legacy behavior: a one-element command is
     /// interpreted by the daemon as shell text, while multiple elements are
     /// treated as direct argv. New code that wants explicit launch semantics
     /// should prefer [`Self::argv`] or [`Self::shell`].

@@ -24,6 +24,7 @@ async fn parsed_queue_uses_current_target_for_rename_window_session_and_last_win
                 start_directory: None,
                 environment: None,
                 command: None,
+                process_command: None,
                 target_window_index: None,
                 insert_at_target: false,
             }))
@@ -394,6 +395,7 @@ async fn parsed_queue_uses_marked_pane_window_as_default_swap_window_source() {
                 start_directory: None,
                 environment: None,
                 command: None,
+                process_command: None,
                 target_window_index: Some(1),
                 insert_at_target: false,
             }))

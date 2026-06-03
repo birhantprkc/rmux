@@ -2,7 +2,7 @@ use serde::de::{self, MapAccess, SeqAccess, Visitor};
 use serde::{Deserialize, Deserializer, Serialize};
 use std::path::PathBuf;
 
-use crate::{SessionName, WindowTarget};
+use crate::{ProcessCommand, SessionName, WindowTarget};
 
 use super::compat::compat_next_element;
 
@@ -30,6 +30,9 @@ pub struct NewWindowRequest {
     /// Whether an occupied destination index should be opened by shifting windows upward.
     #[serde(default)]
     pub insert_at_target: bool,
+    /// Explicit process launch mode for the new window's initial pane.
+    #[serde(default)]
+    pub process_command: Option<ProcessCommand>,
 }
 
 /// Request payload for `kill-window`.
@@ -232,6 +235,7 @@ impl<'de> Deserialize<'de> for NewWindowRequest {
                 "start_directory",
                 "target_window_index",
                 "insert_at_target",
+                "process_command",
             ],
             NewWindowRequestVisitor,
         )
@@ -286,6 +290,7 @@ impl<'de> Visitor<'de> for NewWindowRequestVisitor {
         let start_directory = compat_next_element(&mut seq)?;
         let target_window_index = compat_next_element(&mut seq)?;
         let insert_at_target = compat_next_element(&mut seq)?;
+        let process_command = compat_next_element(&mut seq)?;
 
         Ok(NewWindowRequest {
             target,
@@ -296,6 +301,7 @@ impl<'de> Visitor<'de> for NewWindowRequestVisitor {
             start_directory,
             target_window_index,
             insert_at_target,
+            process_command,
         })
     }
 
@@ -308,6 +314,7 @@ impl<'de> Visitor<'de> for NewWindowRequestVisitor {
         let mut detached = None;
         let mut environment = None;
         let mut command = None;
+        let mut process_command = None;
         let mut start_directory = None;
         let mut target_window_index = None;
         let mut insert_at_target = None;
@@ -319,6 +326,7 @@ impl<'de> Visitor<'de> for NewWindowRequestVisitor {
                 "detached" => detached = Some(map.next_value()?),
                 "environment" => environment = Some(map.next_value()?),
                 "command" => command = Some(map.next_value()?),
+                "process_command" => process_command = Some(map.next_value()?),
                 "start_directory" => start_directory = Some(map.next_value()?),
                 "target_window_index" => target_window_index = Some(map.next_value()?),
                 "insert_at_target" => insert_at_target = Some(map.next_value()?),
@@ -334,6 +342,7 @@ impl<'de> Visitor<'de> for NewWindowRequestVisitor {
             detached: detached.ok_or_else(|| de::Error::missing_field("detached"))?,
             environment: environment.ok_or_else(|| de::Error::missing_field("environment"))?,
             command: command.unwrap_or_default(),
+            process_command: process_command.unwrap_or_default(),
             start_directory: start_directory.unwrap_or_default(),
             target_window_index: target_window_index.unwrap_or_default(),
             insert_at_target: insert_at_target.unwrap_or_default(),

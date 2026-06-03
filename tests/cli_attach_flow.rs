@@ -206,6 +206,49 @@ fn wait_for_layout_change(
     }
 }
 
+fn wait_for_layout(
+    harness: &CliHarness,
+    target: &str,
+    expected_layout: &str,
+) -> Result<String, Box<dyn Error>> {
+    let deadline = std::time::Instant::now() + IO_TIMEOUT;
+    loop {
+        let current = window_layout(harness, target)?;
+        if current == expected_layout {
+            return Ok(current);
+        }
+        if std::time::Instant::now() >= deadline {
+            return Err(format!(
+                "timed out waiting for window layout in {target}; expected {expected_layout:?}, got {current:?}"
+            )
+            .into());
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+fn drain_attach_output_until_quiet(attach: &mut AttachedSession) -> Result<(), Box<dyn Error>> {
+    let deadline = std::time::Instant::now() + IO_TIMEOUT;
+    let quiet_period = Duration::from_millis(100);
+    let mut quiet_since = std::time::Instant::now();
+
+    loop {
+        let bytes = drain_attach_output_bytes(attach.master_mut())?;
+        if bytes.is_empty() {
+            if std::time::Instant::now().duration_since(quiet_since) >= quiet_period {
+                return Ok(());
+            }
+            if std::time::Instant::now() >= deadline {
+                return Err("attach output did not become quiet".into());
+            }
+            std::thread::sleep(Duration::from_millis(10));
+            continue;
+        }
+
+        quiet_since = std::time::Instant::now();
+    }
+}
+
 fn active_pane_target(harness: &CliHarness, session_name: &str) -> Result<String, Box<dyn Error>> {
     let output = harness.run(&[
         "list-panes",
@@ -2037,8 +2080,7 @@ fn prefix_meta_digits_select_layouts_on_the_real_attached_client() -> Result<(),
     let mut attach = AttachedSession::spawn(&harness, "alpha", TerminalSize::new(80, 24))?;
     attach.wait_for_raw_mode(IO_TIMEOUT)?;
     let _ = read_until_contains(attach.master_mut(), "tester@RMUXHOST", IO_TIMEOUT)?;
-    std::thread::sleep(Duration::from_millis(200));
-    drain_attach_output(attach.master_mut())?;
+    drain_attach_output_until_quiet(&mut attach)?;
 
     for (bytes, expected_layout, starting_layout) in [
         (b"\x02\x1b1".as_slice(), "even-horizontal", "tiled"),
@@ -2049,12 +2091,12 @@ fn prefix_meta_digits_select_layouts_on_the_real_attached_client() -> Result<(),
     ] {
         assert_success(&harness.run(&["select-layout", "-t", "alpha:0", expected_layout])?);
         let expected_dump = window_layout(&harness, "alpha")?;
-        std::thread::sleep(Duration::from_millis(100));
-        drain_attach_output(attach.master_mut())?;
+        drain_attach_output_until_quiet(&mut attach)?;
 
         assert_success(&harness.run(&["select-layout", "-t", "alpha:0", starting_layout])?);
-        std::thread::sleep(Duration::from_millis(300));
-        drain_attach_output(attach.master_mut())?;
+        let starting_dump = window_layout(&harness, "alpha")?;
+        wait_for_layout(&harness, "alpha", &starting_dump)?;
+        drain_attach_output_until_quiet(&mut attach)?;
         attach.send_bytes(bytes)?;
         let deadline = std::time::Instant::now() + IO_TIMEOUT;
         let actual_dump = loop {

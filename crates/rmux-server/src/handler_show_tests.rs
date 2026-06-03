@@ -222,6 +222,7 @@ async fn base_index_controls_future_window_allocation() {
             start_directory: None,
             environment: None,
             command: None,
+            process_command: None,
             target_window_index: None,
             insert_at_target: false,
         }))
@@ -476,6 +477,7 @@ async fn kill_window_removes_window_and_pane_option_overrides() {
                 start_directory: None,
                 environment: None,
                 command: None,
+                process_command: None,
                 target_window_index: None,
                 insert_at_target: false,
             }))

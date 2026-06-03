@@ -12,6 +12,8 @@ use rmux_proto::{CommandOutput, WebShareCreatedResponse};
 
 #[path = "web_share_display/ansi.rs"]
 mod ansi;
+#[path = "web_share_display/plain.rs"]
+mod plain;
 #[path = "web_share_display/qr.rs"]
 mod qr;
 #[path = "web_share_display/support.rs"]
@@ -22,14 +24,14 @@ mod tests;
 
 use support::{
     compact_middle, display_url, expiry_label, frontend_label, provider_label, role_limit,
-    terminal_width, url_label, LinkMode, UrlLabel,
+    terminal_needs_qr_fallback, terminal_width, url_label, LinkMode, OutputStyle, UrlLabel,
 };
 
 const DEFAULT_WIDTH: u16 = 110;
 const MIN_WIDTH: u16 = 44;
 const STACK_AT_OR_BELOW: u16 = 80;
-const CARD_HEIGHT: u16 = 31;
 const OSC8_URL_LABEL_WIDTH: usize = 32;
+const PRINTED_BELOW_LABEL: &str = "scan QR or copy the full URL below";
 const ORANGE: Color = Color::Indexed(208);
 
 #[derive(Clone)]
@@ -50,6 +52,13 @@ pub(super) fn created_share_terminal_output(created: &WebShareCreatedResponse) -
 }
 
 fn render_created_share(created: &WebShareCreatedResponse) -> io::Result<String> {
+    render_created_share_with_style(created, OutputStyle::detect())
+}
+
+fn render_created_share_with_style(
+    created: &WebShareCreatedResponse,
+    style: OutputStyle,
+) -> io::Result<String> {
     let cards = share_cards(created);
     if cards.is_empty() {
         return Ok(fallback_output(created));
@@ -60,11 +69,12 @@ fn render_created_share(created: &WebShareCreatedResponse) -> io::Result<String>
         return Ok(too_narrow_output(created, width));
     }
 
-    let link_mode = LinkMode::detect();
-    if !cards_fit_width(width, &cards) {
+    let link_mode = link_mode_for_style(style);
+    let qr_mode = qr_render_mode(style);
+    if !cards_fit_width(width, &cards, qr_mode) {
         return Ok(too_narrow_output(created, width));
     }
-    let height = render_height(width, &cards, link_mode);
+    let height = render_height(width, &cards, link_mode, qr_mode);
     let mut terminal = Terminal::new(TestBackend::new(width, height))?;
     terminal.draw(|frame| {
         let area = frame.area();
@@ -77,12 +87,7 @@ fn render_created_share(created: &WebShareCreatedResponse) -> io::Result<String>
             ));
         frame.render_widget(outer, area);
 
-        let stack = should_stack_cards(area.width.saturating_sub(2), &cards, link_mode);
-        let card_rows = if stack {
-            CARD_HEIGHT.saturating_mul(cards.len() as u16)
-        } else {
-            CARD_HEIGHT
-        };
+        let card_rows = cards_height(area.width.saturating_sub(2), &cards, link_mode, qr_mode);
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .margin(1)
@@ -94,16 +99,20 @@ fn render_created_share(created: &WebShareCreatedResponse) -> io::Result<String>
             .split(area);
 
         render_header(frame, chunks[0], created);
-        render_cards(frame, chunks[1], &cards, link_mode);
+        render_cards(frame, chunks[1], &cards, link_mode, qr_mode);
         render_footer(frame, chunks[2], created);
     })?;
 
-    let mut output = ansi::buffer_to_ansi_string(
-        terminal.backend().buffer(),
-        &cards.iter().map(|card| card.url).collect::<Vec<_>>(),
-        link_mode,
-    );
-    output.push_str(&full_links_output(width, &cards, link_mode));
+    let links = cards.iter().map(|card| card.url).collect::<Vec<_>>();
+    let mut output = match style {
+        OutputStyle::Ansi => {
+            ansi::buffer_to_ansi_string(terminal.backend().buffer(), &links, link_mode)
+        }
+        OutputStyle::Plain => plain::buffer_to_plain_string(terminal.backend().buffer()),
+    };
+    output.push_str(&full_links_output_for_style(
+        width, &cards, link_mode, style,
+    ));
     Ok(output)
 }
 
@@ -136,35 +145,50 @@ fn share_cards(created: &WebShareCreatedResponse) -> Vec<ShareCard<'_>> {
     cards
 }
 
-fn render_height(width: u16, cards: &[ShareCard<'_>], link_mode: LinkMode) -> u16 {
-    let card_rows = if should_stack_cards(width.saturating_sub(2), cards, link_mode) {
-        CARD_HEIGHT.saturating_mul(cards.len() as u16)
-    } else {
-        CARD_HEIGHT
-    };
+fn render_height(
+    width: u16,
+    cards: &[ShareCard<'_>],
+    link_mode: LinkMode,
+    qr_mode: qr::RenderMode,
+) -> u16 {
+    let card_rows = cards_height(width.saturating_sub(2), cards, link_mode, qr_mode);
     1 + card_rows + 5 + 2
 }
 
 fn should_stack_cards(width: u16, cards: &[ShareCard<'_>], link_mode: LinkMode) -> bool {
-    cards.len() > 1 && (width <= STACK_AT_OR_BELOW || width < side_by_side_width(cards, link_mode))
+    should_stack_cards_with_qr(width, cards, link_mode, qr::RenderMode::Compact)
 }
 
-fn side_by_side_width(cards: &[ShareCard<'_>], link_mode: LinkMode) -> u16 {
+fn should_stack_cards_with_qr(
+    width: u16,
+    cards: &[ShareCard<'_>],
+    link_mode: LinkMode,
+    qr_mode: qr::RenderMode,
+) -> bool {
+    cards.len() > 1
+        && (width <= STACK_AT_OR_BELOW || width < side_by_side_width(cards, link_mode, qr_mode))
+}
+
+fn side_by_side_width(
+    cards: &[ShareCard<'_>],
+    link_mode: LinkMode,
+    qr_mode: qr::RenderMode,
+) -> u16 {
     cards
         .iter()
-        .map(|card| card_min_width(card.url, link_mode))
+        .map(|card| card_min_width(card.url, link_mode, qr_mode))
         .sum::<u16>()
         .saturating_add(cards.len().saturating_sub(1) as u16 * 2)
 }
 
-fn card_min_width(url: &str, link_mode: LinkMode) -> u16 {
-    let qr_width = qr::half_block_qr(url)
-        .ok()
-        .and_then(|qr| qr.first().map(|line| line.chars().count()))
-        .unwrap_or_default();
+fn card_min_width(url: &str, link_mode: LinkMode, qr_mode: qr::RenderMode) -> u16 {
+    let qr_width = qr_width(url, qr_mode);
     let url_width = match link_mode {
         LinkMode::Osc8 => OSC8_URL_LABEL_WIDTH,
-        LinkMode::PlainUrl => display_url(url, usize::MAX, link_mode).chars().count(),
+        LinkMode::PlainUrl => display_url(url, usize::MAX, link_mode)
+            .chars()
+            .count()
+            .min(PRINTED_BELOW_LABEL.chars().count()),
     };
     let padding = match link_mode {
         LinkMode::Osc8 => 2,
@@ -173,14 +197,68 @@ fn card_min_width(url: &str, link_mode: LinkMode) -> u16 {
     qr_width.max(url_width).saturating_add(padding) as u16
 }
 
-fn cards_fit_width(width: u16, cards: &[ShareCard<'_>]) -> bool {
+fn cards_fit_width(width: u16, cards: &[ShareCard<'_>], qr_mode: qr::RenderMode) -> bool {
     let card_area_width = width.saturating_sub(2);
     cards.iter().all(|card| {
-        qr::half_block_qr(card.url)
+        u16::try_from(qr_width(card.url, qr_mode))
             .ok()
-            .and_then(|qr| qr.first().map(|line| line.chars().count() as u16))
             .is_none_or(|qr_width| card_area_width >= qr_width.saturating_add(2))
     })
+}
+
+fn cards_height(
+    width: u16,
+    cards: &[ShareCard<'_>],
+    link_mode: LinkMode,
+    qr_mode: qr::RenderMode,
+) -> u16 {
+    if should_stack_cards_with_qr(width, cards, link_mode, qr_mode) {
+        cards.iter().map(|card| card_height(card, qr_mode)).sum()
+    } else {
+        cards
+            .iter()
+            .map(|card| card_height(card, qr_mode))
+            .max()
+            .unwrap_or(0)
+    }
+}
+
+fn card_height(card: &ShareCard<'_>, qr_mode: qr::RenderMode) -> u16 {
+    card_line_count(card, qr_mode).saturating_add(2)
+}
+
+fn card_line_count(card: &ShareCard<'_>, qr_mode: qr::RenderMode) -> u16 {
+    let header_lines = 3 + u16::from(card.limit.is_some());
+    let qr_lines = u16::try_from(qr_height(card.url, qr_mode)).unwrap_or(1);
+    let tail_lines = 2 + u16::from(card.pin.is_some());
+    header_lines
+        .saturating_add(qr_lines)
+        .saturating_add(tail_lines)
+}
+
+fn qr_width(url: &str, qr_mode: qr::RenderMode) -> usize {
+    qr::width(url, qr_mode)
+}
+
+fn qr_height(url: &str, qr_mode: qr::RenderMode) -> usize {
+    qr::height(url, qr_mode)
+}
+
+fn link_mode_for_style(style: OutputStyle) -> LinkMode {
+    match style {
+        OutputStyle::Ansi => LinkMode::detect(),
+        OutputStyle::Plain => LinkMode::PlainUrl,
+    }
+}
+
+fn qr_render_mode(style: OutputStyle) -> qr::RenderMode {
+    if matches!(style, OutputStyle::Plain) {
+        qr::RenderMode::Plain
+    } else if terminal_needs_qr_fallback() {
+        qr::RenderMode::TerminalSafe
+    } else {
+        qr::RenderMode::Compact
+    }
 }
 
 fn render_header(frame: &mut ratatui::Frame<'_>, area: Rect, created: &WebShareCreatedResponse) {
@@ -210,10 +288,14 @@ fn render_cards(
     area: Rect,
     cards: &[ShareCard<'_>],
     link_mode: LinkMode,
+    qr_mode: qr::RenderMode,
 ) {
-    let stack = should_stack_cards(area.width, cards, link_mode);
+    let stack = should_stack_cards_with_qr(area.width, cards, link_mode, qr_mode);
     let constraints = if stack {
-        vec![Constraint::Length(CARD_HEIGHT); cards.len()]
+        cards
+            .iter()
+            .map(|card| Constraint::Length(card_height(card, qr_mode)))
+            .collect()
     } else {
         vec![Constraint::Percentage(100 / cards.len() as u16); cards.len()]
     };
@@ -226,7 +308,7 @@ fn render_cards(
         .constraints(constraints)
         .split(area);
     for (card, area) in cards.iter().zip(chunks.iter().copied()) {
-        render_card(frame, area, card, link_mode);
+        render_card(frame, area, card, link_mode, qr_mode);
     }
 }
 
@@ -235,6 +317,7 @@ fn render_card(
     area: Rect,
     card: &ShareCard<'_>,
     link_mode: LinkMode,
+    qr_mode: qr::RenderMode,
 ) {
     let block = Block::default()
         .borders(Borders::ALL)
@@ -267,19 +350,9 @@ fn render_card(
     }
     lines.push(Line::from(""));
 
-    match qr::half_block_qr(card.url) {
-        Ok(qr) => {
-            for line in qr {
-                lines.push(Line::from(Span::styled(
-                    line,
-                    Style::default().fg(Color::Black).bg(Color::White),
-                )));
-            }
-        }
-        Err(_) => lines.push(Line::from(Span::styled(
-            "QR omitted: URL too large",
-            Style::default().fg(ORANGE),
-        ))),
+    match qr::render_lines(card.url, qr_mode) {
+        Ok(qr_lines) => lines.extend(qr_lines),
+        Err(_) => lines.push(qr_omitted_line()),
     }
 
     lines.push(Line::from(""));
@@ -295,7 +368,7 @@ fn render_card(
                 .add_modifier(Modifier::UNDERLINED),
         ))),
         UrlLabel::PrintedBelow => lines.push(Line::from(Span::styled(
-            "scan QR or copy the full URL below",
+            PRINTED_BELOW_LABEL,
             Style::default().fg(Color::Gray),
         ))),
     }
@@ -306,13 +379,40 @@ fn render_card(
     );
 }
 
+fn qr_omitted_line() -> Line<'static> {
+    Line::from(Span::styled(
+        "QR omitted: URL too large",
+        Style::default().fg(ORANGE),
+    ))
+}
+
+#[cfg(test)]
 fn full_links_output(width: u16, cards: &[ShareCard<'_>], link_mode: LinkMode) -> String {
+    full_links_output_for_style(width, cards, link_mode, OutputStyle::detect())
+}
+
+fn full_links_output_for_style(
+    width: u16,
+    cards: &[ShareCard<'_>],
+    link_mode: LinkMode,
+    style: OutputStyle,
+) -> String {
     let Some(capacity) = plain_url_capacity(width, cards, link_mode) else {
         return String::new();
     };
+    let include_all = terminal_needs_qr_fallback() || matches!(style, OutputStyle::Plain);
+    full_links_output_with_copy_fallback(capacity, cards, link_mode, include_all)
+}
+
+fn full_links_output_with_copy_fallback(
+    capacity: usize,
+    cards: &[ShareCard<'_>],
+    link_mode: LinkMode,
+    include_all: bool,
+) -> String {
     let overflow = cards
         .iter()
-        .filter(|card| full_link_needed(card.url, capacity, link_mode))
+        .filter(|card| include_all || full_link_needed(card.url, capacity, link_mode))
         .collect::<Vec<_>>();
     if overflow.is_empty() {
         return String::new();
@@ -329,9 +429,9 @@ fn full_links_output(width: u16, cards: &[ShareCard<'_>], link_mode: LinkMode) -
 }
 
 fn full_link_needed(url: &str, capacity: usize, link_mode: LinkMode) -> bool {
-    match link_mode {
-        LinkMode::Osc8 => display_url(url, capacity, link_mode).contains('…'),
-        LinkMode::PlainUrl => url.chars().count() > capacity,
+    match url_label(url, capacity, link_mode) {
+        UrlLabel::Clickable(label) => label != url,
+        UrlLabel::PrintedBelow => true,
     }
 }
 
@@ -415,11 +515,6 @@ fn render_footer(frame: &mut ratatui::Frame<'_>, area: Rect, created: &WebShareC
 }
 
 fn pin_line(code: &str) -> Line<'static> {
-    let grouped = if code.len() == 6 {
-        format!("{} {}", &code[..3], &code[3..])
-    } else {
-        code.to_owned()
-    };
     Line::from(vec![
         Span::styled(
             " PIN ",
@@ -430,7 +525,7 @@ fn pin_line(code: &str) -> Line<'static> {
         ),
         Span::raw(" "),
         Span::styled(
-            grouped,
+            code.to_owned(),
             Style::default().fg(ORANGE).add_modifier(Modifier::BOLD),
         ),
     ])
@@ -446,6 +541,7 @@ pub(super) fn ansi_fg(color: Color) -> &'static str {
         Color::LightRed => "\x1b[91m",
         Color::LightBlue => "\x1b[94m",
         Color::LightGreen => "\x1b[92m",
+        Color::Indexed(15) => "\x1b[38;5;15m",
         Color::Indexed(208) => "\x1b[38;5;208m",
         _ => "\x1b[39m",
     }
@@ -458,6 +554,7 @@ pub(super) fn ansi_bg(color: Color) -> &'static str {
         Color::LightRed => "\x1b[101m",
         Color::LightBlue => "\x1b[104m",
         Color::LightGreen => "\x1b[102m",
+        Color::Indexed(15) => "\x1b[48;5;15m",
         Color::Indexed(208) => "\x1b[48;5;208m",
         _ => "\x1b[49m",
     }

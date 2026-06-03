@@ -537,6 +537,7 @@ async fn raw_new_window(socket_path: &Path, target: SessionName, index: u32) -> 
             detached: true,
             environment: None,
             command: None,
+            process_command: None,
             start_directory: None,
             target_window_index: Some(index),
             insert_at_target: false,

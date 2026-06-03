@@ -10,7 +10,6 @@ use rmux_ipc::BlockingLocalStream;
 use rmux_proto::{encode_attach_message, AttachMessage, TerminalSize};
 use tokio::sync::mpsc;
 use windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE;
-use windows_sys::Win32::Storage::FileSystem::{GetFileType, FILE_TYPE_CHAR};
 
 use crate::ClientError;
 
@@ -282,19 +281,11 @@ enum InputJoinPolicy {
 }
 
 fn input_join_policy(handle: RawHandle) -> InputJoinPolicy {
-    if is_absent_input_handle(handle) || is_console_input_handle(handle) {
+    if is_absent_input_handle(handle) {
         InputJoinPolicy::JoinOnClose
     } else {
         InputJoinPolicy::DetachOnClose
     }
-}
-
-fn is_console_input_handle(handle: RawHandle) -> bool {
-    let file_type = unsafe {
-        // SAFETY: GetFileType only observes the borrowed OS handle.
-        GetFileType(handle)
-    };
-    file_type == FILE_TYPE_CHAR
 }
 
 fn is_absent_input_handle(handle: RawHandle) -> bool {
@@ -357,6 +348,16 @@ mod tests {
 
         assert_eq!(
             input_join_policy(read.as_raw_handle()),
+            InputJoinPolicy::DetachOnClose
+        );
+    }
+
+    #[test]
+    fn console_stdin_handles_are_detached_on_attach_close() {
+        let console_like = 1_usize as std::os::windows::io::RawHandle;
+
+        assert_eq!(
+            input_join_policy(console_like),
             InputJoinPolicy::DetachOnClose
         );
     }

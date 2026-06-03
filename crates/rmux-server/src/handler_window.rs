@@ -30,7 +30,9 @@ impl RequestHandler {
         let environment_overrides = request.environment;
         let start_directory = request.start_directory;
         let command = request.command;
-        let process_command = ProcessCommand::from_legacy_command(command.as_deref());
+        let process_command = request
+            .process_command
+            .or_else(|| ProcessCommand::from_legacy_command(command.as_deref()));
         let socket_path = self.socket_path();
         let client_environment = client_environment_snapshot(requester_pid);
         let spawn_environment = client_spawn_environment(client_environment.as_ref());

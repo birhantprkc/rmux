@@ -36,6 +36,7 @@ impl RequestHandler {
                 detached,
                 environment: environment.clone(),
                 command: command.clone(),
+                process_command: None,
                 start_directory: start_directory.clone(),
                 target_window_index,
                 insert_at_target,

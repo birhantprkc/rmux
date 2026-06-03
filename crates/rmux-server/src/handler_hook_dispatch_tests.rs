@@ -52,6 +52,7 @@ async fn appended_after_new_window_hooks_run_once_in_order() {
             start_directory: None,
             environment: None,
             command: None,
+            process_command: None,
             target_window_index: None,
             insert_at_target: false,
         }))

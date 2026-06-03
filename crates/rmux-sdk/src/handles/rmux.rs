@@ -230,7 +230,7 @@ impl Rmux {
 
     /// Broadcasts text or one key token to a set of panes.
     ///
-    /// The v0.1.3 implementation is client-side fan-out. It preserves caller
+    /// The implementation is client-side fan-out. It preserves caller
     /// order per pane when broadcast calls are awaited sequentially, but it
     /// does not promise simultaneous cross-pane delivery. If any pane fails,
     /// the returned error is [`RmuxError::PartialBroadcast`] with per-pane

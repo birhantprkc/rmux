@@ -11,7 +11,7 @@ the primary primitives.
 
 ```toml
 [dependencies]
-rmux-sdk = "0.4"
+rmux-sdk = "0.5"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 ```
 
@@ -32,6 +32,10 @@ async fn main() -> rmux_sdk::Result<()> {
     let pane = session.pane(0, 0);
     pane.send_text("printf 'ready\\n'\n").await?;
     pane.wait_for_text("ready").await?;
+
+    let logs = session.new_window_with().name("logs").detached(true).await?;
+    assert!(logs.exists().await?);
+
     let snapshot = pane.snapshot().await?;
     println!("{}x{}", snapshot.cols, snapshot.rows);
     Ok(())
@@ -43,6 +47,7 @@ async fn main() -> rmux_sdk::Result<()> {
 - `Rmux::builder().connect_or_start()` — reuse a running daemon or spawn one.
 - `EnsureSession` — idempotent session bootstrap (named, create-or-reuse, detached, process spec).
 - Typed handles: `Session`, `Window`, `Pane`.
+- `Session::window(index)` — lazy handle for a window slot; `Session::new_window()` creates one now.
 - `Pane::send_text`, `Pane::wait_for_text`, `Pane::snapshot`, plus streams and events for incremental output.
 
 The SDK is a peer of the local IPC client, not a wrapper — no dependency on internal RMUX runtime crates.

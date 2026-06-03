@@ -152,9 +152,28 @@ impl Session {
         ))
     }
 
+    /// Creates a new window in this session and returns a live window handle.
+    ///
+    /// This is an eager daemon mutation. Use [`Self::window`] when you only
+    /// need a lazy handle for an existing or future window slot.
+    pub async fn new_window(&self) -> Result<Window> {
+        self.new_window_with().await
+    }
+
+    /// Starts building a configurable `new-window` request for this session.
+    ///
+    /// The default builder behavior matches tmux `new-window`: the created
+    /// window becomes active unless [`NewWindowBuilder::detached`] is set.
+    ///
+    /// [`NewWindowBuilder::detached`]: crate::NewWindowBuilder::detached
+    #[must_use]
+    pub fn new_window_with(&self) -> crate::NewWindowBuilder<'_> {
+        crate::NewWindowBuilder::new(self)
+    }
+
     /// Starts a declarative SDK layout builder for this session.
     ///
-    /// v0.1.3 layouts are SDK-side composition over the existing pane split,
+    /// Layouts are SDK-side composition over the existing pane split,
     /// spawn, title, and daemon spread-layout primitives. They do not add a
     /// daemon-native transaction; if an intermediate split or spawn fails,
     /// already-created panes remain visible for inspection and cleanup by the

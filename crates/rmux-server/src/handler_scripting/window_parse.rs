@@ -162,6 +162,7 @@ pub(super) fn parse_new_window(
         start_directory,
         environment: (!environment.is_empty()).then_some(environment),
         command,
+        process_command: None,
         target_window_index,
         insert_at_target,
     }))

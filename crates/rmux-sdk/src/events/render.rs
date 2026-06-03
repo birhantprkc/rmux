@@ -36,7 +36,7 @@ impl RenderUpdate {
 
 /// Minimal event-driven render stream for one pane.
 ///
-/// This v0.1.3 stream is intentionally built from [`Pane::output_stream`]:
+/// This render stream is intentionally built from [`Pane::output_stream`]:
 /// output wakes the stream, a short debounce coalesces bursts, then the SDK
 /// captures a fresh snapshot and emits it only when the snapshot revision
 /// changed. It avoids blind fixed-rate refresh loops without claiming a

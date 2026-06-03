@@ -34,6 +34,7 @@ async fn new_window(handler: &RequestHandler, session_name: &SessionName) -> Win
             start_directory: None,
             environment: None,
             command: None,
+            process_command: None,
             target_window_index: None,
             insert_at_target: false,
         }))

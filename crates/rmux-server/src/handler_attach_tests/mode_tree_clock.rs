@@ -15,6 +15,7 @@ async fn attached_mode_tree_acceptance_uses_mode_before_prefix_or_pty() {
                 start_directory: None,
                 environment: None,
                 command: None,
+                process_command: None,
                 target_window_index: None,
                 insert_at_target: false,
             }))
@@ -77,6 +78,7 @@ async fn attached_compact_prefix_wq_uses_choose_tree_before_the_following_key() 
                 start_directory: None,
                 environment: None,
                 command: None,
+                process_command: None,
                 target_window_index: None,
                 insert_at_target: false,
             }))

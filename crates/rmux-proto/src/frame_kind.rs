@@ -1081,7 +1081,7 @@ pub const V1_FRAME_LEDGER: &[FrameLedgerEntry] = &[
         "PaneInputRequest",
         FrameFeature::Panes,
         None,
-        "v0.1.3 SDK pane input endpoint with stable pane-id targeting; pinned bincode tag 100.",
+        "SDK pane input endpoint with stable pane-id targeting; pinned bincode tag 100.",
     ),
     entry(
         c2s(101),
@@ -1090,7 +1090,7 @@ pub const V1_FRAME_LEDGER: &[FrameLedgerEntry] = &[
         "PaneResizeRequest",
         FrameFeature::Panes,
         None,
-        "v0.1.3 SDK pane resize endpoint with stable pane-id targeting; pinned bincode tag 101.",
+        "SDK pane resize endpoint with stable pane-id targeting; pinned bincode tag 101.",
     ),
     entry(
         c2s(102),
@@ -1099,7 +1099,7 @@ pub const V1_FRAME_LEDGER: &[FrameLedgerEntry] = &[
         "PaneKillRequest",
         FrameFeature::Panes,
         None,
-        "v0.1.3 SDK pane kill endpoint with stable pane-id targeting; pinned bincode tag 102.",
+        "SDK pane kill endpoint with stable pane-id targeting; pinned bincode tag 102.",
     ),
     entry(
         c2s(103),
@@ -1108,7 +1108,7 @@ pub const V1_FRAME_LEDGER: &[FrameLedgerEntry] = &[
         "PaneRespawnRequest",
         FrameFeature::Panes,
         None,
-        "v0.1.3 SDK pane respawn endpoint with stable pane-id targeting; pinned bincode tag 103.",
+        "SDK pane respawn endpoint with stable pane-id targeting; pinned bincode tag 103.",
     ),
     entry(
         c2s(104),
@@ -1117,7 +1117,7 @@ pub const V1_FRAME_LEDGER: &[FrameLedgerEntry] = &[
         "PaneSnapshotRefRequest",
         FrameFeature::Panes,
         None,
-        "v0.1.3 SDK pane snapshot endpoint with stable pane-id targeting; pinned bincode tag 104.",
+        "SDK pane snapshot endpoint with stable pane-id targeting; pinned bincode tag 104.",
     ),
     entry(
         c2s(105),
@@ -1126,7 +1126,7 @@ pub const V1_FRAME_LEDGER: &[FrameLedgerEntry] = &[
         "PaneSelectRequest",
         FrameFeature::Panes,
         None,
-        "v0.1.3 SDK pane select/title endpoint with stable pane-id targeting; pinned bincode tag 105.",
+        "SDK pane select/title endpoint with stable pane-id targeting; pinned bincode tag 105.",
     ),
     entry(
         c2s(106),
@@ -1135,7 +1135,7 @@ pub const V1_FRAME_LEDGER: &[FrameLedgerEntry] = &[
         "PaneBroadcastInputRequest",
         FrameFeature::Panes,
         None,
-        "v0.1.3 SDK pane input broadcast endpoint with stable pane-id targeting; pinned bincode tag 106.",
+        "SDK pane input broadcast endpoint with stable pane-id targeting; pinned bincode tag 106.",
     ),
     entry(
         c2s(107),
@@ -1144,7 +1144,7 @@ pub const V1_FRAME_LEDGER: &[FrameLedgerEntry] = &[
         "CreateSessionLeaseRequest",
         FrameFeature::Sessions,
         None,
-        "v0.1.3 SDK app-owned session lease create endpoint; pinned bincode tag 107.",
+        "SDK app-owned session lease create endpoint; pinned bincode tag 107.",
     ),
     entry(
         c2s(108),
@@ -1153,7 +1153,7 @@ pub const V1_FRAME_LEDGER: &[FrameLedgerEntry] = &[
         "RenewSessionLeaseRequest",
         FrameFeature::Sessions,
         None,
-        "v0.1.3 SDK app-owned session lease renewal endpoint; pinned bincode tag 108.",
+        "SDK app-owned session lease renewal endpoint; pinned bincode tag 108.",
     ),
     entry(
         c2s(109),
@@ -1162,7 +1162,7 @@ pub const V1_FRAME_LEDGER: &[FrameLedgerEntry] = &[
         "ReleaseSessionLeaseRequest",
         FrameFeature::Sessions,
         None,
-        "v0.1.3 SDK app-owned session lease release endpoint; pinned bincode tag 109.",
+        "SDK app-owned session lease release endpoint; pinned bincode tag 109.",
     ),
     entry(
         c2s(110),
@@ -1171,7 +1171,7 @@ pub const V1_FRAME_LEDGER: &[FrameLedgerEntry] = &[
         "SubscribePaneOutputRefRequest",
         FrameFeature::Panes,
         None,
-        "v0.1.3 SDK pane output subscription endpoint with stable pane-id targeting; pinned bincode tag 110.",
+        "SDK pane output subscription endpoint with stable pane-id targeting; pinned bincode tag 110.",
     ),
     entry(
         c2s(111),
@@ -1180,7 +1180,7 @@ pub const V1_FRAME_LEDGER: &[FrameLedgerEntry] = &[
         "SdkWaitForOutputRefRequest",
         FrameFeature::SdkWaits,
         None,
-        "v0.1.3 SDK byte wait endpoint with stable pane-id targeting; pinned bincode tag 111.",
+        "SDK byte wait endpoint with stable pane-id targeting; pinned bincode tag 111.",
     ),
     entry(
         c2s(112),
@@ -2037,7 +2037,7 @@ pub const V1_FRAME_LEDGER: &[FrameLedgerEntry] = &[
         "PaneBroadcastInputResponse",
         FrameFeature::Panes,
         None,
-        "v0.1.3 SDK pane input broadcast response; pinned bincode tag 87.",
+        "SDK pane input broadcast response; pinned bincode tag 87.",
     ),
     entry(
         s2c(88),
@@ -2046,7 +2046,7 @@ pub const V1_FRAME_LEDGER: &[FrameLedgerEntry] = &[
         "CreateSessionLeaseResponse",
         FrameFeature::Sessions,
         None,
-        "v0.1.3 SDK app-owned session lease create response; pinned bincode tag 88.",
+        "SDK app-owned session lease create response; pinned bincode tag 88.",
     ),
     entry(
         s2c(89),
@@ -2055,7 +2055,7 @@ pub const V1_FRAME_LEDGER: &[FrameLedgerEntry] = &[
         "RenewSessionLeaseResponse",
         FrameFeature::Sessions,
         None,
-        "v0.1.3 SDK app-owned session lease renewal response; pinned bincode tag 89.",
+        "SDK app-owned session lease renewal response; pinned bincode tag 89.",
     ),
     entry(
         s2c(90),
@@ -2064,7 +2064,7 @@ pub const V1_FRAME_LEDGER: &[FrameLedgerEntry] = &[
         "ReleaseSessionLeaseResponse",
         FrameFeature::Sessions,
         None,
-        "v0.1.3 SDK app-owned session lease release response; pinned bincode tag 90.",
+        "SDK app-owned session lease release response; pinned bincode tag 90.",
     ),
     entry(
         s2c(91),

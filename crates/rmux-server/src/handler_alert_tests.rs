@@ -40,6 +40,7 @@ async fn create_window(handler: &RequestHandler, session: &SessionName) -> Windo
             start_directory: None,
             environment: None,
             command: None,
+            process_command: None,
             target_window_index: None,
             insert_at_target: false,
         }))
