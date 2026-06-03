@@ -101,7 +101,6 @@ trap 'rm -rf "$tmpdir"' EXIT
 
 for required in \
   usr/bin/rmux \
-  usr/share/man/man1/rmux.1 \
   usr/share/doc/rmux/README.md \
   usr/share/doc/rmux/LICENSE-APACHE \
   usr/share/doc/rmux/LICENSE-MIT \
@@ -109,6 +108,8 @@ for required in \
 do
   [ -e "$tmpdir/$required" ] || die "missing package file: $required"
 done
+[ -e "$tmpdir/usr/share/man/man1/rmux.1" ] || [ -e "$tmpdir/usr/share/man/man1/rmux.1.gz" ] || \
+  die "missing package file: usr/share/man/man1/rmux.1"
 [ -x "$tmpdir/usr/bin/rmux" ] || die "packaged rmux is not executable"
 
 metadata="$tmpdir/usr/share/rmux/artifact-metadata.json"
