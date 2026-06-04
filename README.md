@@ -95,6 +95,23 @@ Useful entry points:
 curl -fsSL https://rmux.io/install.sh | sh
 ```
 
+#### APT
+
+```sh
+sudo install -d -m 0755 /etc/apt/keyrings
+curl -fsSL https://packages.rmux.io/debian/rmux.asc | sudo tee /etc/apt/keyrings/rmux.asc >/dev/null
+echo "deb [signed-by=/etc/apt/keyrings/rmux.asc] https://packages.rmux.io/debian stable main" | sudo tee /etc/apt/sources.list.d/rmux.list >/dev/null
+sudo apt update
+sudo apt install rmux
+```
+
+#### DNF
+
+```sh
+sudo curl -fsSL https://packages.rmux.io/rpm/rmux.repo -o /etc/yum.repos.d/rmux.repo
+sudo dnf install rmux
+```
+
 Direct downloads are available from the [v0.5.0 GitHub Release](https://github.com/helvesec/rmux/releases/tag/v0.5.0):
 
 - `rmux-0.5.0-linux-x86_64.tar.gz`
@@ -113,6 +130,12 @@ Direct downloads are available from the [v0.5.0 GitHub Release](https://github.c
 curl -fsSL https://rmux.io/install.sh | sh
 ```
 
+#### Homebrew
+
+```sh
+brew install helvesec/rmux/rmux
+```
+
 Direct downloads are available from the [v0.5.0 GitHub Release](https://github.com/helvesec/rmux/releases/tag/v0.5.0):
 
 - `rmux-0.5.0-macos-aarch64.tar.gz`
@@ -128,6 +151,13 @@ Direct downloads are available from the [v0.5.0 GitHub Release](https://github.c
 
 ```powershell
 irm https://rmux.io/install.ps1 | iex
+```
+
+#### Scoop
+
+```powershell
+scoop bucket add rmux https://github.com/Helvesec/scoop-rmux
+scoop install rmux
 ```
 
 Direct downloads are available from the [v0.5.0 GitHub Release](https://github.com/helvesec/rmux/releases/tag/v0.5.0):
@@ -163,7 +193,7 @@ cargo add ratatui-rmux
 
 </details>
 
-SHA256 checksums are published with every GitHub Release. APT, DNF, Homebrew, WinGet, Scoop, and Chocolatey metadata is prepared for each release and published separately once the corresponding repositories are live.
+SHA256 checksums are published with every GitHub Release. APT, DNF, Homebrew, and Scoop packages are live for v0.5.0. WinGet and Chocolatey metadata is generated for release submission.
 
 ## Documentation
 

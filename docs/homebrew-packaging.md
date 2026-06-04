@@ -10,8 +10,10 @@ The Homebrew formula uses the release artifact convention produced by
 ```text
 rmux-<semver>-macos-aarch64.tar.gz
 rmux-<semver>-macos-x86_64.tar.gz
-rmux-<semver>-linux-x86_64.tar.gz
 ```
+
+The Homebrew tap is macOS-only. Linux users should use APT, DNF, the portable
+installer, or Cargo.
 
 Generate `Formula/rmux.rb` for the official tap:
 
@@ -43,5 +45,4 @@ The release orchestrator should run the generator after `release.yml` has
 published the release assets and after `SHA256SUMS` is available.
 
 The release workflow also runs the generator against the release artifacts as a
-CI guard. It does not publish or push the Homebrew tap; tap publication remains
-part of the local release orchestration.
+CI guard. The tap repository is `Helvesec/homebrew-rmux`.

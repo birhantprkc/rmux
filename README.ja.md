@@ -93,10 +93,33 @@ macOS と Linux のビルド済みバイナリ：
 curl -fsSL https://rmux.io/install.sh | sh
 ```
 
+macOS Homebrew：
+
+```sh
+brew install helvesec/rmux/rmux
+```
+
+Linux パッケージ：
+
+```sh
+sudo install -d -m 0755 /etc/apt/keyrings
+curl -fsSL https://packages.rmux.io/debian/rmux.asc | sudo tee /etc/apt/keyrings/rmux.asc >/dev/null
+echo "deb [signed-by=/etc/apt/keyrings/rmux.asc] https://packages.rmux.io/debian stable main" | sudo tee /etc/apt/sources.list.d/rmux.list >/dev/null
+sudo apt update
+sudo apt install rmux
+```
+
 Windows PowerShell のビルド済みバイナリ：
 
 ```powershell
 irm https://rmux.io/install.ps1 | iex
+```
+
+Windows Scoop：
+
+```powershell
+scoop bucket add rmux https://github.com/Helvesec/scoop-rmux
+scoop install rmux
 ```
 
 直接ダウンロードと SHA256 チェックサムは [v0.5.0 GitHub Release](https://github.com/helvesec/rmux/releases/tag/v0.5.0) で確認できます。

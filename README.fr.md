@@ -93,10 +93,33 @@ Binaire précompilé pour macOS et Linux :
 curl -fsSL https://rmux.io/install.sh | sh
 ```
 
+Binaire macOS avec Homebrew :
+
+```sh
+brew install helvesec/rmux/rmux
+```
+
+Paquets Linux :
+
+```sh
+sudo install -d -m 0755 /etc/apt/keyrings
+curl -fsSL https://packages.rmux.io/debian/rmux.asc | sudo tee /etc/apt/keyrings/rmux.asc >/dev/null
+echo "deb [signed-by=/etc/apt/keyrings/rmux.asc] https://packages.rmux.io/debian stable main" | sudo tee /etc/apt/sources.list.d/rmux.list >/dev/null
+sudo apt update
+sudo apt install rmux
+```
+
 Binaire précompilé pour Windows PowerShell :
 
 ```powershell
 irm https://rmux.io/install.ps1 | iex
+```
+
+Windows avec Scoop :
+
+```powershell
+scoop bucket add rmux https://github.com/Helvesec/scoop-rmux
+scoop install rmux
 ```
 
 Les téléchargements directs et checksums SHA256 sont disponibles dans la [GitHub Release v0.5.0](https://github.com/helvesec/rmux/releases/tag/v0.5.0).

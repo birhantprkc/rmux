@@ -54,17 +54,14 @@ asset_sha256() {
 }
 
 formula() {
-  local tag base_url macos_arm macos_intel linux_intel
+  local tag base_url macos_arm macos_intel
   tag="v$version"
   base_url="https://github.com/$repository/releases/download/$tag"
 
   macos_arm="rmux-$version-macos-aarch64.tar.gz"
   macos_intel="rmux-$version-macos-x86_64.tar.gz"
-  linux_intel="rmux-$version-linux-x86_64.tar.gz"
-
   macos_arm_sha="$(asset_sha256 "$macos_arm")"
   macos_intel_sha="$(asset_sha256 "$macos_intel")"
-  linux_intel_sha="$(asset_sha256 "$linux_intel")"
 
   cat <<EOF
 # typed: strict
@@ -75,7 +72,11 @@ class Rmux < Formula
   desc "Local terminal multiplexer with a tmux-style CLI and daemon runtime"
   homepage "$homepage"
   version "$version"
+  url "$base_url/$macos_arm"
+  sha256 "$macos_arm_sha"
   license any_of: ["MIT", "Apache-2.0"]
+
+  depends_on :macos
 
   on_macos do
     on_arm do
@@ -86,13 +87,6 @@ class Rmux < Formula
     on_intel do
       url "$base_url/$macos_intel"
       sha256 "$macos_intel_sha"
-    end
-  end
-
-  on_linux do
-    on_intel do
-      url "$base_url/$linux_intel"
-      sha256 "$linux_intel_sha"
     end
   end
 

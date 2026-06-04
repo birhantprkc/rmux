@@ -75,8 +75,17 @@ Submit through `wingetcreate submit` or a PR to `microsoft/winget-pkgs`.
 
 ## Scoop
 
-The generated Scoop manifest is `rmux.json`. Commit it to the RMUX Scoop bucket
-after validating the published URL and SHA:
+The generated Scoop manifest is `rmux.json`. The public bucket is
+`Helvesec/scoop-rmux`.
+
+User install command:
+
+```powershell
+scoop bucket add rmux https://github.com/Helvesec/scoop-rmux
+scoop install rmux
+```
+
+Validate a generated manifest locally on Windows before committing it:
 
 ```powershell
 scoop install .\target\package-managers\scoop\rmux.json
