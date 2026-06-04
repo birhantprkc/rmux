@@ -135,9 +135,11 @@ rmux -V
 
 GitHub Actions publishes Chocolatey after the GitHub Release assets are public.
 The release workflow expects a secret named `CHOCOLATEY_API_KEY`; keep it as a
-GitHub Actions secret and never commit it to the repository. The workflow packs
-the generated package, performs a local Chocolatey install smoke test, then
-pushes the `.nupkg` to `https://push.chocolatey.org/` for moderation.
+GitHub Actions environment secret on the protected `release` environment and
+never commit it to the repository. The workflow packs the generated package,
+performs a local Chocolatey install smoke test, then pushes the `.nupkg` to
+`https://push.chocolatey.org/` for moderation. If the same package version is
+already visible on Chocolatey, the workflow skips the push.
 
 Never replace a published release zip silently. WinGet, Scoop, and Chocolatey
 all pin SHA256 values; a bad asset requires a new version.
