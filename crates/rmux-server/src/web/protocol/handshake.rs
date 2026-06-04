@@ -1,6 +1,6 @@
 //! Pre-ready handshake: client hello, server challenge, and the encrypted auth
-//! frame. Every failure here is logged precisely but collapses to the single
-//! [`super::HANDSHAKE_REJECTED`] close pair on the wire (no PIN/identity oracle).
+//! frame. Failures before token/PIN authentication collapse to
+//! [`super::HANDSHAKE_REJECTED`] on the wire (no PIN/identity oracle).
 
 use std::io;
 
@@ -8,8 +8,8 @@ use serde::Serialize;
 use tokio::time::timeout;
 
 use super::{
-    AuthMessage, AuthWireMessage, AUTH_FRAME_TIMEOUT, PRE_AUTH_TIMEOUT, SERVER_CAPABILITIES,
-    WEB_SHARE_PROTOCOL_VERSION,
+    AuthMessage, AuthWireMessage, AUTH_FRAME_TIMEOUT, CAPACITY_REACHED, HANDSHAKE_REJECTED,
+    PRE_AUTH_TIMEOUT, SERVER_CAPABILITIES, WEB_SHARE_PROTOCOL_VERSION,
 };
 use crate::web::crypto::{parse_client_hello, ClientHello, FrameOpener, E2EE_CAPABILITY};
 use crate::web::websocket::{WebSocket, WebSocketMessage};
@@ -104,26 +104,46 @@ pub(crate) async fn read_auth_message(
     Ok(AuthMessage { pin: wire.pin })
 }
 
-/// Maps an open-token error to a PRECISE internal reason for server-side
-/// logging only.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct AuthClose {
+    pub(crate) reason: &'static str,
+    pub(crate) wire_close: (u16, &'static str),
+}
+
+/// Maps an open-token error to a precise internal reason and safe wire close.
 ///
-/// Every variant (including capacity-reached and pin) is logged but NOT sent on
-/// the wire: distinguishing them would create a PIN/identity oracle, so the
-/// caller always sends [`super::HANDSHAKE_REJECTED`].
-pub(crate) fn close_for_auth_error(error: &str) -> &'static str {
+/// Role capacity is only reached after the token-authenticated channel and PIN
+/// check succeed, so it can use a distinct close code without becoming a
+/// token/PIN oracle. All other auth errors stay collapsed.
+pub(crate) fn close_for_auth_error(error: &str) -> AuthClose {
     if error.contains("spectator limit") {
-        return "spectator_cap_reached";
+        return AuthClose {
+            reason: "spectator_cap_reached",
+            wire_close: CAPACITY_REACHED,
+        };
     }
     if error.contains("operator limit") {
-        return "operator_cap_reached";
+        return AuthClose {
+            reason: "operator_cap_reached",
+            wire_close: CAPACITY_REACHED,
+        };
     }
     if error.contains("missing web-share pairing code") {
-        return "pin_required";
+        return AuthClose {
+            reason: "pin_required",
+            wire_close: HANDSHAKE_REJECTED,
+        };
     }
     if error.contains("no operator") {
-        return "operator_not_available";
+        return AuthClose {
+            reason: "operator_not_available",
+            wire_close: HANDSHAKE_REJECTED,
+        };
     }
-    "invalid_auth"
+    AuthClose {
+        reason: "invalid_auth",
+        wire_close: HANDSHAKE_REJECTED,
+    }
 }
 
 #[cfg(test)]
@@ -137,5 +157,30 @@ mod tests {
             challenge,
             r#"{"type":"challenge","protocol_version":1,"capabilities":["e2ee-token-auth","terminal-palette-v1"],"server_nonce":"nonce","server_public":"server-public","server_ml_kem_ct":"ml-kem-ct"}"#
         );
+    }
+
+    #[test]
+    fn role_capacity_auth_errors_use_capacity_close_code() {
+        for error in [
+            "web-share spectator limit reached",
+            "web-share operator limit reached",
+        ] {
+            let close = super::close_for_auth_error(error);
+            assert_eq!(close.wire_close, super::CAPACITY_REACHED);
+        }
+    }
+
+    #[test]
+    fn non_capacity_auth_errors_remain_collapsed() {
+        for error in [
+            "invalid web-share pairing code",
+            "missing web-share pairing code",
+            "web-share connection limit reached",
+            "web-share does not exist or has expired",
+            "web-share has no operator access",
+        ] {
+            let close = super::close_for_auth_error(error);
+            assert_eq!(close.wire_close, super::HANDSHAKE_REJECTED);
+        }
     }
 }

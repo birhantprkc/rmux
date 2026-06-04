@@ -44,14 +44,16 @@ pub(crate) const UNIFORM_AUTH_DELAY: Duration = Duration::from_millis(50);
 
 pub(crate) const WEB_SHARE_PROTOCOL_VERSION: u16 = 1;
 
-/// The single wire close pair used for EVERY pre-ready handshake rejection.
+/// The default wire close pair used for pre-ready handshake rejection.
 ///
 /// A web-share relay performing its own DH knows both DH secrets, so only the
 /// token authenticates the channel and the PIN is a secondary factor.
-/// Distinguishable close codes (e.g. capacity-reached, which implies a correct
-/// PIN) would leak a PIN/identity oracle, so all pre-ready failures collapse to
-/// this one pair. The precise reason is logged server-side, never sent.
+/// Distinguishable close codes before token/PIN authentication would leak a
+/// PIN/identity oracle, so those failures collapse to this one pair. The
+/// precise reason is logged server-side, never sent.
 pub(crate) const HANDSHAKE_REJECTED: (u16, &str) = (4000, "handshake_rejected");
+/// Role capacity reached after token and PIN authentication succeeded.
+pub(crate) const CAPACITY_REACHED: (u16, &str) = (4009, "capacity_reached");
 const SERVER_CAPABILITIES: &[&str] = &[E2EE_CAPABILITY, "terminal-palette-v1"];
 const OPERATOR_INPUT_FRAME_MAX: usize = 4 * 1024;
 const MAX_PANE_RESIZE_CELLS: u16 = 10_000;

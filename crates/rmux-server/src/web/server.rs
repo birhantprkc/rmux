@@ -265,7 +265,8 @@ async fn establish_web_share(
                 let _ = write_with_timeout(socket.write_close_code(4008, "pin_required")).await;
                 return Ok(None);
             }
-            reject_handshake(&mut socket, close_for_auth_error(&message)).await?;
+            let close = close_for_auth_error(&message);
+            reject_handshake_with_close(&mut socket, close.reason, close.wire_close).await?;
             return Ok(None);
         }
     };
@@ -401,14 +402,22 @@ fn is_fd_exhaustion(error: &io::Error) -> bool {
     matches!(error.raw_os_error(), Some(23 | 24 | 10024))
 }
 
-/// Rejects a pre-ready handshake.
+/// Rejects a pre-ready handshake with the collapsed close pair.
 ///
 /// Logs the PRECISE internal reason server-side, waits the uniform auth delay
 /// (timing-side-channel mitigation), and sends the SINGLE collapsed wire close
 /// pair so no close code can act as a token/PIN/identity oracle.
 async fn reject_handshake(socket: &mut WebSocket, reason: &str) -> io::Result<()> {
+    reject_handshake_with_close(socket, reason, HANDSHAKE_REJECTED).await
+}
+
+async fn reject_handshake_with_close(
+    socket: &mut WebSocket,
+    reason: &str,
+    wire_close: (u16, &str),
+) -> io::Result<()> {
     sleep(UNIFORM_AUTH_DELAY).await;
-    let (code, wire_reason) = HANDSHAKE_REJECTED;
+    let (code, wire_reason) = wire_close;
     info!(close_code = code, reason, "web_share_handshake_rejected");
     let _ = write_with_timeout(socket.write_close_code(code, wire_reason)).await;
     Ok(())

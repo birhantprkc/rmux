@@ -748,11 +748,10 @@ async fn handshake_rejects_wrong_pin_with_same_collapsed_close() {
 }
 
 #[tokio::test]
-async fn handshake_rejects_capacity_reached_with_same_collapsed_close() {
+async fn handshake_rejects_capacity_reached_with_capacity_close() {
     // The share caps spectators at 1. Once that slot is held by a live viewer,
-    // a second spectator hits the capacity-reached path, which must ALSO
-    // collapse to (4000, "handshake_rejected") -- a distinguishable code would
-    // imply a correct token/PIN and leak an occupancy oracle.
+    // a second spectator hits the capacity-reached path after token auth. This
+    // is safe to expose distinctly because token/PIN auth has already succeeded.
     let handler = Arc::new(RequestHandler::new());
     let session_name = create_session(&handler, "websocket-capacity").await;
     let created = create_share(
@@ -773,11 +772,113 @@ async fn handshake_rejects_capacity_reached_with_same_collapsed_close() {
         mut stream, task, ..
     } = drive_handshake_through_auth(Arc::clone(&handler), &token, &token_id, &auth_text()).await;
 
+    assert_close(&mut stream, 4009, "capacity_reached").await;
+
+    drop(stream);
+    let _ = task.await.expect("server task joins");
+    first.close().await;
+}
+
+#[tokio::test]
+async fn handshake_rejects_pin_protected_capacity_after_valid_pin_with_capacity_close() {
+    let handler = Arc::new(RequestHandler::new());
+    let session_name = create_session(&handler, "websocket-pin-capacity").await;
+    let created = create_share(
+        &handler,
+        CreateWebShareRequest {
+            require_pin: true,
+            ..share_request(WebShareScope::Session(session_name))
+        },
+    )
+    .await;
+    let token = token_from_url(created.spectator_url.as_deref().expect("spectator URL"));
+    let pin = created
+        .spectator_pairing_code
+        .as_deref()
+        .expect("pin-enabled spectator share returns pairing code");
+
+    let first = TestWebSocket::connect_with_pin(Arc::clone(&handler), &token, pin).await;
+
+    let token_id = SecretHashForCrypto::from_secret(&token).token_id();
+    let HandshakeSession {
+        mut stream, task, ..
+    } = drive_handshake_through_auth(
+        Arc::clone(&handler),
+        &token,
+        &token_id,
+        &auth_text_with_pin(pin),
+    )
+    .await;
+
+    assert_close(&mut stream, 4009, "capacity_reached").await;
+
+    drop(stream);
+    let _ = task.await.expect("server task joins");
+    first.close().await;
+}
+
+#[tokio::test]
+async fn handshake_rejects_wrong_pin_before_capacity_with_collapsed_close() {
+    let handler = Arc::new(RequestHandler::new());
+    let session_name = create_session(&handler, "websocket-wrong-pin-capacity").await;
+    let created = create_share(
+        &handler,
+        CreateWebShareRequest {
+            require_pin: true,
+            ..share_request(WebShareScope::Session(session_name))
+        },
+    )
+    .await;
+    let token = token_from_url(created.spectator_url.as_deref().expect("spectator URL"));
+    let pin = created
+        .spectator_pairing_code
+        .as_deref()
+        .expect("pin-enabled spectator share returns pairing code");
+    let wrong_pin = if pin == "000000" { "111111" } else { "000000" };
+
+    let first = TestWebSocket::connect_with_pin(Arc::clone(&handler), &token, pin).await;
+
+    let token_id = SecretHashForCrypto::from_secret(&token).token_id();
+    let HandshakeSession {
+        mut stream, task, ..
+    } = drive_handshake_through_auth(
+        Arc::clone(&handler),
+        &token,
+        &token_id,
+        &auth_text_with_pin(wrong_pin),
+    )
+    .await;
+
     assert_close(&mut stream, 4000, "handshake_rejected").await;
 
     drop(stream);
     let _ = task.await.expect("server task joins");
     first.close().await;
+}
+
+#[tokio::test]
+async fn handshake_rejects_missing_pin_with_pin_required_close() {
+    let handler = Arc::new(RequestHandler::new());
+    let session_name = create_session(&handler, "websocket-missing-pin").await;
+    let created = create_share(
+        &handler,
+        CreateWebShareRequest {
+            require_pin: true,
+            ..share_request(WebShareScope::Session(session_name))
+        },
+    )
+    .await;
+    let token = token_from_url(created.spectator_url.as_deref().expect("spectator URL"));
+    let token_id = SecretHashForCrypto::from_secret(&token).token_id();
+
+    let HandshakeSession {
+        mut stream, task, ..
+    } = drive_handshake_through_auth(Arc::clone(&handler), &token, &token_id, &auth_text()).await;
+
+    assert_close(&mut stream, 4008, "pin_required").await;
+
+    drop(stream);
+    let _ = task.await.expect("server task joins");
 }
 
 fn request_with_headers<const N: usize>(headers: [(&str, &str); N]) -> HttpRequest {
@@ -1044,13 +1145,23 @@ struct TestWebSocket {
 
 impl TestWebSocket {
     async fn connect(handler: Arc<RequestHandler>, token: &str) -> Self {
+        let auth = auth_text();
+        Self::connect_with_auth(handler, token, &auth).await
+    }
+
+    async fn connect_with_pin(handler: Arc<RequestHandler>, token: &str, pin: &str) -> Self {
+        let auth = auth_text_with_pin(pin);
+        Self::connect_with_auth(handler, token, &auth).await
+    }
+
+    async fn connect_with_auth(handler: Arc<RequestHandler>, token: &str, auth: &str) -> Self {
         let token_id = SecretHashForCrypto::from_secret(token).token_id();
         let HandshakeSession {
             stream,
             task,
             opener,
             sealer,
-        } = drive_handshake_through_auth(handler, token, &token_id, &auth_text()).await;
+        } = drive_handshake_through_auth(handler, token, &token_id, auth).await;
         Self {
             stream,
             task,
