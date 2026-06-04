@@ -28,15 +28,15 @@
 > [!NOTE]
 > RMUX はサーバーレス、ハイブリッド・ポスト量子、エンドツーエンド暗号化の Web 多重化に対応しました。詳しくは[リポジトリの Web Share ドキュメント](docs/web-share.md)を参照してください。
 >
-> RMUX はまだ速いペースで進化しています。機能要望や問題報告は [issues](https://github.com/Helvesec/rmux/issues) へ送れます。
+> 機能要望や問題報告は [issues](https://github.com/Helvesec/rmux/issues) へ送れます。
 
 ## RMUX
 
-RMUX は、モダンで非同期、型付きの Rust <strong>マルチプレクサエンジン</strong>です。macOS、Linux、Windows で 90 以上の tmux コマンドをネイティブにサポートし、WSL は不要です。
+RMUX は、モダンで非同期、型付きの Rust <strong>マルチプレクサ</strong>です。macOS、Linux、Windows で 90 以上の tmux コマンドをネイティブに提供し、WSL は不要です。
 
-永続的な AI ワークフローや美しい Ratatui TUI を構築するための公開 Rust SDK を提供します。
+公開 Rust SDK とネイティブ Ratatui 統合を提供します。
 
-日常的なターミナルツールとして使えるほか、セッションをブラウザに共有したり、<strong>永続的なエージェント型 TUI ツール</strong>の基盤としてスクリプト化したりできます。
+CLI から使えるほか、セッションをブラウザに共有したり、Rust から操作したりできます。
 
 ## デモ
 
@@ -60,7 +60,7 @@ RMUX を何に使えるかを示す短い実例です。
 </a>
 </p>
 
-RMUX は Web 多重化に対応しています。RMUX の pane や session を Web に共有し、新しい pane を作成し、マウスで区切り線を動かし、より豊かなブラウザインターフェイスから RMUX を使えます。
+RMUX は pane や session をブラウザに共有し、pane を作成し、split のサイズを変更し、ターミナル実行をローカルに残します。
 
 ```sh
 # loopback 上でローカル Web Share を開始

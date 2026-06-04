@@ -28,15 +28,15 @@
 > [!NOTE]
 > RMUX 现在包含无服务器、混合后量子、端到端加密的 Web 复用能力。可在[仓库 Web Share 文档](docs/web-share.md)中了解更多。
 >
-> RMUX 仍在快速演进。功能请求或问题反馈可提交到 [issues](https://github.com/Helvesec/rmux/issues)。
+> 功能请求或问题反馈可提交到 [issues](https://github.com/Helvesec/rmux/issues)。
 
 ## RMUX
 
-RMUX 是一个现代、异步、类型化的 Rust <strong>复用器引擎</strong>，在 macOS、Linux 和 Windows 上原生支持 90 多条 tmux 命令，无需 WSL。
+RMUX 是一个现代、异步、类型化的 Rust <strong>复用器</strong>，在 macOS、Linux 和 Windows 上原生提供 90 多条 tmux 命令，无需 WSL。
 
-它提供公共 Rust SDK，用于构建持久的 AI 工作流，以及基于 Ratatui 的精致 TUI。
+它提供公共 Rust SDK 和原生 Ratatui 集成。
 
-它既可以作为日常终端工具，也可以把会话分享到浏览器，还可以作为<strong>持久智能体 TUI 工具</strong>的基础。
+它可以从 CLI 使用，把会话分享到浏览器，也可以从 Rust 驱动。
 
 ## 演示
 
@@ -60,7 +60,7 @@ RMUX 是一个现代、异步、类型化的 Rust <strong>复用器引擎</stron
 </a>
 </p>
 
-RMUX 支持 Web 复用：把 RMUX pane 或 session 分享到 Web，创建新的 pane，用鼠标移动分隔线，并通过更丰富的浏览器界面使用 RMUX。
+RMUX 可以在浏览器中分享 pane 或 session，创建 pane，调整 split 大小，并让终端执行保持在本地。
 
 ```sh
 # 在 loopback 上启动本地 Web Share

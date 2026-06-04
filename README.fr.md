@@ -28,15 +28,15 @@
 > [!NOTE]
 > RMUX intègre maintenant un multiplexage web serverless, chiffré de bout en bout, avec échange hybride post-quantique. [Voir la documentation Web Share du dépôt](docs/web-share.md).
 >
-> RMUX évolue vite. Pour une demande de fonctionnalité ou un signalement, [ouvrir une issue](https://github.com/Helvesec/rmux/issues).
+> Pour une demande de fonctionnalité ou un signalement, [ouvrir une issue](https://github.com/Helvesec/rmux/issues).
 
 ## RMUX
 
-RMUX est un <strong>moteur de multiplexage</strong> Rust moderne, asynchrone et typé, avec support natif de plus de 90 commandes tmux sur macOS, Linux et Windows, sans WSL.
+RMUX est un <strong>multiplexeur</strong> Rust moderne, asynchrone et typé, avec plus de 90 commandes tmux en natif sur macOS, Linux et Windows, sans WSL.
 
-Il fournit un SDK Rust public pour construire des workflows IA persistants et de belles TUI avec Ratatui.
+Il fournit un SDK Rust public et une intégration Ratatui native.
 
-Il peut servir d'outil terminal quotidien, partager des sessions dans un navigateur, ou devenir la base d'un <strong>outil TUI agentique persistant</strong>.
+Il peut s'utiliser en CLI, partager des sessions dans un navigateur, ou se piloter depuis Rust.
 
 ## Démos
 
@@ -60,7 +60,7 @@ Quelques exemples courts et concrets de ce que l'on peut faire avec RMUX.
 </a>
 </p>
 
-RMUX permet de faire du multiplexage web : partager un pane ou une session RMUX sur le web, créer de nouveaux panes, déplacer les séparateurs à la souris, et utiliser RMUX avec une interface navigateur plus riche.
+RMUX peut partager un pane ou une session dans un navigateur, créer des panes, redimensionner les splits, et garder l'exécution terminale en local.
 
 ```sh
 # Démarrer un Web Share local sur loopback
