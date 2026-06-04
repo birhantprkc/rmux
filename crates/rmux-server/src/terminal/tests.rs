@@ -713,7 +713,7 @@ fn windows_interactive_shell_starts_in_profile_cwd_and_accepts_input(
     let (master, mut child) =
         super::spawn_pane_process(PtyTerminalSize::new(100, 30), &profile, None)?;
     let io = master.try_clone_io()?;
-    let cwd_marker = cwd.to_string_lossy().into_owned();
+    let cwd_markers = windows_path_markers(&cwd);
 
     let output = (|| -> Result<Vec<u8>, Box<dyn Error>> {
         let lower_default_shell = default_shell.to_ascii_lowercase();
@@ -731,15 +731,41 @@ fn windows_interactive_shell_starts_in_profile_cwd_and_accepts_input(
     let output = output?;
     let output = String::from_utf8_lossy(&output);
     let unwrapped_output = output.replace(['\r', '\n'], "");
+    let folded_output = unwrapped_output.to_ascii_lowercase();
     assert!(
-        unwrapped_output.contains(&cwd_marker),
-        "expected Windows shell command to start in {cwd_marker}, got {output:?}"
+        cwd_markers
+            .iter()
+            .any(|marker| folded_output.contains(&marker.to_ascii_lowercase())),
+        "expected Windows shell command to start in one of {cwd_markers:?}, got {output:?}"
     );
     assert!(
         output.contains("RMUX_WINDOWS_INTERACTIVE_OK"),
         "expected Windows interactive input marker, got {output:?}"
     );
     Ok(())
+}
+
+#[cfg(windows)]
+fn windows_path_markers(path: &Path) -> Vec<String> {
+    let mut markers = vec![path.display().to_string()];
+    if let Ok(canonical) = fs::canonicalize(path) {
+        let rendered = canonical.display().to_string();
+        let normalized = if let Some(rest) = rendered.strip_prefix(r"\\?\UNC\") {
+            format!(r"\\{rest}")
+        } else {
+            rendered
+                .strip_prefix(r"\\?\")
+                .unwrap_or(&rendered)
+                .to_owned()
+        };
+        if !markers
+            .iter()
+            .any(|marker| marker.eq_ignore_ascii_case(&normalized))
+        {
+            markers.push(normalized);
+        }
+    }
+    markers
 }
 
 #[test]
