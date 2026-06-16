@@ -39,6 +39,12 @@ pub(crate) fn encode_key(
     format: ExtendedKeyFormat,
     key: KeyCode,
 ) -> Option<Vec<u8>> {
+    let format = if (pane_mode & mode::MODE_KEYS_KITTY) != 0 {
+        ExtendedKeyFormat::CsiU
+    } else {
+        format
+    };
+
     if is_backtab(key) {
         if (pane_mode & mode::MODE_KEYS_EXTENDED_2) != 0 {
             return input_key_extended(
@@ -309,6 +315,11 @@ fn input_key_vt10x(pane_mode: u32, key: KeyCode) -> Option<Vec<u8>> {
         key &= !KEYC_CURSOR;
     }
 
+    let onlykey = key & KEYC_MASK_KEY;
+    if tmux_noop_control_key(key, onlykey) {
+        return Some(Vec::new());
+    }
+
     if let Some(sequence) = standard_vt10x_sequence(key)
         .or_else(|| {
             ((key & KEYC_CURSOR) != 0)
@@ -325,7 +336,15 @@ fn input_key_vt10x(pane_mode: u32, key: KeyCode) -> Option<Vec<u8>> {
         return Some(output);
     }
 
-    let onlykey = key & KEYC_MASK_KEY;
+    if onlykey == KEYC_BSPACE {
+        output.push(0x7f);
+        return Some(output);
+    }
+    if (key & KEYC_CTRL) != 0 && onlykey == b' ' as u64 {
+        output.push(0x00);
+        return Some(output);
+    }
+
     if onlykey == b'\r' as u64 || onlykey == b'\n' as u64 || onlykey == b'\t' as u64 {
         key &= !KEYC_CTRL;
     }
@@ -340,7 +359,8 @@ fn input_key_vt10x(pane_mode: u32, key: KeyCode) -> Option<Vec<u8>> {
             value if value == b'\'' as u64 || value == b'"' as u64 => Some(b'\''),
             value if value == b',' as u64 || value == b'<' as u64 => Some(b','),
             value if value == b'.' as u64 || value == b'>' as u64 => Some(b'.'),
-            value if value == b'/' as u64 || value == b'?' as u64 => Some(0x1f),
+            value if value == b'?' as u64 => Some(0x7f),
+            value if value == b'/' as u64 => Some(0x1f),
             value if value == b'2' as u64 => Some(0),
             value if (b'3' as u64..=b'7' as u64).contains(&value) => Some((value as u8) - 0x18),
             value if (b'@' as u64..=b'~' as u64).contains(&value) => Some((value as u8) & 0x1f),
@@ -351,6 +371,18 @@ fn input_key_vt10x(pane_mode: u32, key: KeyCode) -> Option<Vec<u8>> {
 
     output.push((key & 0x7f) as u8);
     Some(output)
+}
+
+fn tmux_noop_control_key(key: KeyCode, onlykey: KeyCode) -> bool {
+    (key & (KEYC_CTRL | KEYC_META | KEYC_SHIFT)) == KEYC_CTRL
+        && matches!(
+            onlykey,
+            value if value == b'3' as u64
+                || value == b'4' as u64
+                || value == b'5' as u64
+                || value == b'7' as u64
+                || value == b'8' as u64
+        )
 }
 
 fn input_key_mode1(key: KeyCode) -> Option<Vec<u8>> {

@@ -136,6 +136,8 @@ async fn next_overlay(
             Some(AttachControl::Overlay(frame)) => return frame,
             Some(AttachControl::AdvancePersistentOverlayState(_)) => {}
             Some(AttachControl::Switch(_)) => {}
+            Some(AttachControl::Refresh) => {}
+            Some(AttachControl::InteractiveInput) => {}
             Some(AttachControl::Detach) => panic!("unexpected detach"),
             Some(AttachControl::Exited) => panic!("unexpected exited"),
             Some(AttachControl::DetachKill) => panic!("unexpected detach kill"),

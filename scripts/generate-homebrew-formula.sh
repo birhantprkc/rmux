@@ -92,7 +92,11 @@ class Rmux < Formula
 
   def install
     bin.install "bin/rmux"
+    bin.install "bin/rmux-daemon" if File.exist?("bin/rmux-daemon")
     man1.install "share/man/man1/rmux.1"
+    bash_completion.install "share/bash-completion/completions/rmux" if File.exist?("share/bash-completion/completions/rmux")
+    zsh_completion.install "share/zsh/site-functions/_rmux" if File.exist?("share/zsh/site-functions/_rmux")
+    fish_completion.install "share/fish/vendor_completions.d/rmux.fish" if File.exist?("share/fish/vendor_completions.d/rmux.fish")
     pkgshare.install "share/rmux/artifact-metadata.json" if File.exist?("share/rmux/artifact-metadata.json")
 
     license_files = Dir["LICENSE*"]

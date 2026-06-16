@@ -86,7 +86,7 @@ Installers:
     InstallerType: "zip"
     NestedInstallerType: "portable"
     NestedInstallerFiles:
-      - RelativeFilePath: "$nested_path"
+      - RelativeFilePath: '$nested_path'
         PortableCommandAlias: "rmux"
     InstallerUrl: "$base_url/$asset"
     InstallerSha256: "$sha"

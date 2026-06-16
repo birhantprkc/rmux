@@ -96,6 +96,7 @@ write_install() {
 \$toolsDir = Split-Path -Parent \$MyInvocation.MyCommand.Definition
 \$installDir = Join-Path \$toolsDir '$package_dir'
 \$rmuxExe = Join-Path \$installDir 'rmux.exe'
+\$rmuxDaemonExe = Join-Path \$installDir 'rmux-daemon.exe'
 
 \$zipArgs = @{
   packageName = \$packageName
@@ -110,8 +111,12 @@ Install-ChocolateyZipPackage @zipArgs
 if (-not (Test-Path \$rmuxExe)) {
   throw "rmux.exe was not extracted to \$rmuxExe"
 }
+if (-not (Test-Path \$rmuxDaemonExe)) {
+  throw "rmux-daemon.exe was not extracted to \$rmuxDaemonExe"
+}
 
 Install-BinFile -Name 'rmux' -Path \$rmuxExe
+Install-BinFile -Name 'rmux-daemon' -Path \$rmuxDaemonExe
 EOF
 }
 
@@ -122,6 +127,7 @@ write_uninstall() {
 $ErrorActionPreference = 'Stop'
 
 Uninstall-BinFile -Name 'rmux'
+Uninstall-BinFile -Name 'rmux-daemon'
 EOF
 }
 
