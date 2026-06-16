@@ -12,7 +12,7 @@ use rmux_proto::{
     DisplayMessageRequest, HookName, KillWindowRequest, NewSessionExtRequest, NewSessionRequest,
     NewWindowRequest, NextWindowRequest, OptionName, PreviousWindowRequest, Request, Response,
     ScopeSelector, SessionName, SetOptionMode, SetOptionRequest, ShowMessagesRequest,
-    SplitDirection, SplitWindowRequest, SplitWindowTarget, Target, TerminalSize, WindowTarget,
+    SplitDirection, SplitWindowExtRequest, SplitWindowTarget, Target, TerminalSize, WindowTarget,
 };
 #[cfg(unix)]
 use rmux_proto::{PaneTarget, SendKeysRequest};
@@ -39,6 +39,33 @@ async fn create_session(handler: &RequestHandler, name: &str) -> SessionName {
     session
 }
 
+async fn create_quiet_session(handler: &RequestHandler, name: &str) -> SessionName {
+    let session = session_name(name);
+    let response = handler
+        .handle(Request::NewSessionExt(NewSessionExtRequest {
+            session_name: Some(session.clone()),
+            working_directory: None,
+            detached: true,
+            size: Some(TerminalSize { cols: 80, rows: 24 }),
+            environment: None,
+            group_target: None,
+            attach_if_exists: false,
+            detach_other_clients: false,
+            kill_other_clients: false,
+            flags: None,
+            window_name: None,
+            print_session_info: false,
+            print_format: None,
+            command: Some(quiet_alert_command()),
+            process_command: None,
+            client_environment: None,
+            skip_environment_update: false,
+        }))
+        .await;
+    assert!(matches!(response, Response::NewSession(_)));
+    session
+}
+
 async fn create_window(handler: &RequestHandler, session: &SessionName) -> WindowTarget {
     let response = handler
         .handle(Request::NewWindow(NewWindowRequest {
@@ -59,16 +86,49 @@ async fn create_window(handler: &RequestHandler, session: &SessionName) -> Windo
     response.target
 }
 
-async fn split_window(handler: &RequestHandler, session: &SessionName) {
+async fn split_quiet_window(handler: &RequestHandler, session: &SessionName) {
     let response = handler
-        .handle(Request::SplitWindow(SplitWindowRequest {
+        .handle(Request::SplitWindowExt(SplitWindowExtRequest {
             target: SplitWindowTarget::Session(session.clone()),
             direction: SplitDirection::Vertical,
             before: false,
             environment: None,
+            command: Some(quiet_alert_command()),
+            process_command: None,
+            start_directory: None,
+            keep_alive_on_exit: None,
+            detached: false,
+            size: None,
+            preserve_zoom: false,
+            full_size: false,
+            stdin_payload: None,
         }))
         .await;
     assert!(matches!(response, Response::SplitWindow(_)));
+}
+
+#[cfg(unix)]
+fn quiet_alert_command() -> Vec<String> {
+    ["/bin/sh", "-c", "sleep 60"]
+        .into_iter()
+        .map(str::to_owned)
+        .collect()
+}
+
+#[cfg(windows)]
+fn quiet_alert_command() -> Vec<String> {
+    let system_root =
+        std::env::var_os("SystemRoot").unwrap_or_else(|| std::ffi::OsString::from(r"C:\Windows"));
+    let cmd = std::path::PathBuf::from(system_root)
+        .join("System32")
+        .join("cmd.exe");
+    vec![
+        cmd.to_string_lossy().into_owned(),
+        "/d".to_owned(),
+        "/q".to_owned(),
+        "/c".to_owned(),
+        "ping -n 120 127.0.0.1 >NUL".to_owned(),
+    ]
 }
 
 async fn display_message(handler: &RequestHandler, target: Target, message: &str) -> String {
@@ -350,7 +410,7 @@ async fn pane_alert_callback_can_be_invoked_from_reader_thread() {
 #[tokio::test]
 async fn pane_alert_callback_coalesces_inactive_pane_refreshes_by_session() {
     let handler = RequestHandler::new();
-    let session = create_session(&handler, "inactive-output-refresh").await;
+    let session = create_quiet_session(&handler, "inactive-output-refresh").await;
     set_option(
         &handler,
         ScopeSelector::Window(WindowTarget::with_window(session.clone(), 0)),
@@ -358,8 +418,8 @@ async fn pane_alert_callback_coalesces_inactive_pane_refreshes_by_session() {
         "off",
     )
     .await;
-    split_window(&handler, &session).await;
-    split_window(&handler, &session).await;
+    split_quiet_window(&handler, &session).await;
+    split_quiet_window(&handler, &session).await;
 
     let inactive_panes = {
         let state = handler.state.lock().await;
@@ -398,6 +458,8 @@ async fn pane_alert_callback_coalesces_inactive_pane_refreshes_by_session() {
             },
         )
         .await;
+    drain_attach_controls_until_idle(&mut control_rx).await;
+    let baseline_backlog = control_backlog.load(Ordering::Acquire);
 
     let first_callback = handler.pane_alert_callback();
     let second_callback = handler.pane_alert_callback();
@@ -432,7 +494,10 @@ async fn pane_alert_callback_coalesces_inactive_pane_refreshes_by_session() {
         extra_switches, 0,
         "inactive pane output from one coalesced reader batch should repaint each attached session once"
     );
-    assert_eq!(control_backlog.load(Ordering::Acquire), 1);
+    assert_eq!(
+        control_backlog.load(Ordering::Acquire),
+        baseline_backlog + 1
+    );
 }
 
 #[tokio::test]
