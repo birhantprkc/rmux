@@ -140,7 +140,8 @@ where
             StartupOptions::new(cli.no_start_server, startup_config.auto_start.clone()),
             shell_command,
             cli.login_shell,
-        );
+        )
+        .map_err(|error| error.with_socket_context(&socket_path));
     }
 
     if cli.no_fork {
@@ -149,11 +150,13 @@ where
 
     let startup = StartupOptions::new(cli.no_start_server, startup_config.auto_start);
     if cli.control_mode != 0 {
-        return run_control_mode(&cli, &socket_path, startup);
+        return run_control_mode(&cli, &socket_path, startup)
+            .map_err(|error| error.with_socket_context(&socket_path));
     }
     let client_terminal = client_terminal_context_from_cli(&cli);
     let commands = cli.into_command_queue();
     dispatch_command_queue(commands, &socket_path, startup, client_terminal)
+        .map_err(|error| error.with_socket_context(&socket_path))
 }
 
 fn invoked_as_tmux(args: &[OsString]) -> bool {
@@ -181,6 +184,7 @@ fn parse_failure_or_absent_server(
     match connect(&resolved) {
         Ok(_) if error.kind() == clap::error::ErrorKind::InvalidSubcommand => {
             alias_fallback::run_unknown_command_through_server_aliases(args, &resolved)
+                .map_err(|error| error.with_socket_context(&resolved))
         }
         Ok(_) => Err(ExitFailure::from_clap(error)),
         Err(connect_error) => Err(ExitFailure::from_client_connect(&resolved, connect_error)),

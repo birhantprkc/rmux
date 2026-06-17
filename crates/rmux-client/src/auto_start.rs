@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
-use rmux_proto::Response;
+use rmux_proto::{Response, RmuxError};
 #[cfg(unix)]
 use rmux_sdk::bootstrap::startup_unix::{
     connect_or_start_with, StartupError, StartupOutcome, DEFAULT_STARTUP_DEADLINE,
@@ -22,7 +22,7 @@ use rmux_sdk::bootstrap::startup_windows::{
 use crate::shell_quote::shell_quote_path;
 #[cfg(any(all(test, unix), not(any(unix, windows))))]
 use crate::ConnectResult;
-use crate::{ClientError, Connection};
+use crate::{default_socket_path, upgrade, ClientError, Connection};
 
 mod upgrade_restart;
 
@@ -284,12 +284,21 @@ fn startup_outcome_into_connection(outcome: StartupOutcome) -> Result<Connection
 fn probe_connected_server(
     mut connection: Connection,
     _config: &AutoStartConfig,
-    _socket_path: &Path,
+    socket_path: &Path,
 ) -> Result<Connection, AutoStartError> {
     let deadline = Instant::now() + DEFAULT_STARTUP_DEADLINE;
     loop {
         match probe_server_readiness(&mut connection) {
             Ok(()) => return Ok(connection),
+            Err(ClientError::Protocol(RmuxError::UnsupportedWireVersion { got, .. })) => {
+                return Err(AutoStartError::IncompatibleDaemon {
+                    socket_path: socket_path.to_path_buf(),
+                    message: upgrade::incompatible_daemon_message(&upgrade::IncompatibleDaemon {
+                        daemon_version: None,
+                        daemon_wire_version: Some(got),
+                    }),
+                });
+            }
             Err(error) if is_transient_connect_error(&error) && Instant::now() < deadline => {
                 let remaining = deadline.saturating_duration_since(Instant::now());
                 std::thread::sleep(STARTUP_POLL_INTERVAL.min(remaining));
@@ -454,9 +463,9 @@ impl fmt::Display for AutoStartError {
                 message,
             } => write!(
                 formatter,
-                "{message} on '{}'; detach existing clients, then run `rmux -S {} kill-server` before retrying",
+                "rmux: {message} on '{}'.\nrmux: run `{}` to stop it, then retry.",
                 socket_path.display(),
-                shell_quote_path(socket_path)
+                incompatible_daemon_kill_server_command(socket_path)
             ),
             Self::TimedOut {
                 socket_path,
@@ -593,6 +602,18 @@ fn is_transient_connect_error(error: &ClientError) -> bool {
                     | io::ErrorKind::TimedOut
             )
     )
+}
+
+fn incompatible_daemon_kill_server_command(socket_path: &Path) -> String {
+    if default_socket_path()
+        .ok()
+        .as_deref()
+        .is_some_and(|default_path| default_path == socket_path)
+    {
+        return "rmux kill-server".to_owned();
+    }
+
+    format!("rmux -S {} kill-server", shell_quote_path(socket_path))
 }
 
 fn probe_server_readiness(connection: &mut Connection) -> Result<(), ClientError> {

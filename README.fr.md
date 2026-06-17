@@ -14,7 +14,7 @@
 
 [![Licence : MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](LICENSE-MIT)
 [![Validation de release](https://github.com/Helvesec/rmux/actions/workflows/ci.yml/badge.svg)](https://github.com/Helvesec/rmux/actions/workflows/ci.yml)
-[![rmux 0.6.0](https://img.shields.io/badge/rmux-0.6.0-informational.svg)](#install)
+[![rmux 0.6.1](https://img.shields.io/badge/rmux-0.6.1-informational.svg)](#install)
 [![Plateformes : Linux | macOS | Windows](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-lightgrey.svg)](#platform-support)
 [![Politique unsafe](https://img.shields.io/badge/unsafe-restricted-success.svg)](#verification)
 
@@ -27,6 +27,8 @@
 
 > [!NOTE]
 > RMUX intègre maintenant un multiplexage web chiffré de bout en bout, avec échange hybride post-quantique, via un frontend statique. [Voir la documentation Web Share du dépôt](docs/web-share.md).
+>
+> RMUX fournit maintenant un SDK Python officiel : [librmux](https://github.com/Helvesec/rmux-python/).
 >
 > Pour une demande de fonctionnalité ou un signalement, [ouvrir une issue](https://github.com/Helvesec/rmux/issues).
 
@@ -96,7 +98,7 @@ curl -fsSL https://rmux.io/install.sh | sh
 Binaire macOS avec Homebrew :
 
 ```sh
-brew install helvesec/rmux/rmux
+brew install rmux
 ```
 
 Paquets Linux :
@@ -122,7 +124,19 @@ scoop bucket add rmux https://github.com/Helvesec/scoop-rmux
 scoop install rmux
 ```
 
-Les téléchargements directs et checksums SHA256 sont disponibles dans la [GitHub Release v0.6.0](https://github.com/helvesec/rmux/releases/tag/v0.6.0).
+Windows avec WinGet :
+
+```powershell
+winget install rmux
+```
+
+Windows avec Chocolatey :
+
+```powershell
+choco install rmux
+```
+
+Les téléchargements directs et checksums SHA256 sont disponibles dans la [GitHub Release v0.6.1](https://github.com/helvesec/rmux/releases/tag/v0.6.1).
 
 Depuis crates.io avec Cargo :
 
@@ -227,9 +241,9 @@ fn render(snapshot: PaneSnapshot, area: Rect, buffer: &mut Buffer) {
 <div align="center">
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="https://rmux.io/rmux-architecture-dark.png?v=0.6.0-web-share">
-  <source media="(prefers-color-scheme: light)" srcset="https://rmux.io/rmux-architecture-light.png?v=0.6.0-web-share">
-  <img src="https://rmux.io/rmux-architecture-dark.png?v=0.6.0-web-share" alt="Architecture runtime RMUX" width="800">
+  <source media="(prefers-color-scheme: dark)" srcset="https://rmux.io/rmux-architecture-dark.png?v=0.6.1-web-share">
+  <source media="(prefers-color-scheme: light)" srcset="https://rmux.io/rmux-architecture-light.png?v=0.6.1-web-share">
+  <img src="https://rmux.io/rmux-architecture-dark.png?v=0.6.1-web-share" alt="Architecture runtime RMUX" width="800">
 </picture>
 
 </div>

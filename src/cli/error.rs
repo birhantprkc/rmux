@@ -3,12 +3,20 @@ use std::io::ErrorKind;
 use std::path::Path;
 
 use rmux_client::{default_socket_path, AutoStartError, ClientError, NestedContextError};
+use rmux_proto::RmuxError;
 
 #[derive(Debug)]
 pub(crate) struct ExitFailure {
     exit_code: i32,
     message: String,
     use_stderr: bool,
+    kind: ExitFailureKind,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ExitFailureKind {
+    Generic,
+    UnsupportedWireVersion,
 }
 
 impl ExitFailure {
@@ -25,10 +33,15 @@ impl ExitFailure {
     }
 
     pub(crate) fn new(exit_code: i32, message: impl Into<String>) -> Self {
+        Self::new_with_kind(exit_code, message, ExitFailureKind::Generic)
+    }
+
+    fn new_with_kind(exit_code: i32, message: impl Into<String>, kind: ExitFailureKind) -> Self {
         Self {
             exit_code,
             message: message.into(),
             use_stderr: true,
+            kind,
         }
     }
 
@@ -37,6 +50,7 @@ impl ExitFailure {
             exit_code,
             message: message.into(),
             use_stderr: false,
+            kind: ExitFailureKind::Generic,
         }
     }
 
@@ -51,11 +65,17 @@ impl ExitFailure {
             exit_code,
             message,
             use_stderr: error.use_stderr(),
+            kind: ExitFailureKind::Generic,
         }
     }
 
     pub(super) fn from_client(error: ClientError) -> Self {
-        Self::new(1, error.to_string())
+        let kind = if unsupported_wire_version(&error) {
+            ExitFailureKind::UnsupportedWireVersion
+        } else {
+            ExitFailureKind::Generic
+        };
+        Self::new_with_kind(1, error.to_string(), kind)
     }
 
     pub(super) fn from_client_connect(socket_path: &Path, error: ClientError) -> Self {
@@ -89,6 +109,56 @@ impl ExitFailure {
     pub(super) fn from_auto_start(error: AutoStartError) -> Self {
         Self::new(1, error.to_string())
     }
+
+    pub(super) fn with_socket_context(self, socket_path: &Path) -> Self {
+        if self.kind == ExitFailureKind::UnsupportedWireVersion {
+            return Self::incompatible_daemon(socket_path);
+        }
+        self
+    }
+
+    fn incompatible_daemon(socket_path: &Path) -> Self {
+        Self::new(
+            1,
+            format!(
+                "rmux: running daemon on '{}' uses an incompatible protocol.\nrmux: run `{}` to stop it, then retry.",
+                socket_path.display(),
+                incompatible_daemon_kill_server_command(socket_path)
+            ),
+        )
+    }
+}
+
+fn unsupported_wire_version(error: &ClientError) -> bool {
+    matches!(
+        error,
+        ClientError::Protocol(RmuxError::UnsupportedWireVersion { .. })
+    )
+}
+
+fn incompatible_daemon_kill_server_command(socket_path: &Path) -> String {
+    if default_socket_path()
+        .ok()
+        .as_deref()
+        .is_some_and(|default_path| default_path == socket_path)
+    {
+        return "rmux kill-server".to_owned();
+    }
+
+    format!("rmux -S {} kill-server", shell_quote_path(socket_path))
+}
+
+fn shell_quote_path(path: &Path) -> String {
+    let text = path.display().to_string();
+    if !text.is_empty()
+        && text
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"/._-+=:@".contains(&byte))
+    {
+        return text;
+    }
+
+    format!("'{}'", text.replace('\'', "'\\''"))
 }
 
 fn tmux_compat_clap_message(error: &clap::Error) -> String {

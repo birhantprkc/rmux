@@ -550,27 +550,99 @@ fn third_regional_indicator_starts_a_new_cell() {
     assert_eq!(line.cell(2).expect("third indicator").width(), 1);
 }
 
+fn first_line(screen: &Screen) -> String {
+    screen
+        .capture_grid(false)
+        .lines
+        .into_iter()
+        .next()
+        .unwrap_or_default()
+}
+
+fn assert_no_wide_cell_fragments(screen: &Screen) {
+    for y in 0..screen.grid().sy() {
+        let line = screen.grid().visible_line(y).expect("visible line");
+        let mut x = 0;
+        while x < screen.grid().sx() {
+            let cell = line.cell(x).expect("cell exists");
+            if cell.is_padding() {
+                assert!(
+                    line.owning_cell_x(x).is_some(),
+                    "padding cell at {x},{y} must have a wide-cell owner"
+                );
+                x += 1;
+                continue;
+            }
+
+            let width = u32::from(cell.width());
+            if width <= 1 {
+                x += 1;
+                continue;
+            }
+
+            assert!(
+                x + width <= screen.grid().sx(),
+                "wide cell at {x},{y} must fit in the row"
+            );
+            for offset in 1..width {
+                let padding_x = x + offset;
+                assert!(
+                    line.cell(padding_x)
+                        .expect("wide padding cell exists")
+                        .is_padding(),
+                    "wide cell at {x},{y} must be followed by padding at {padding_x},{y}"
+                );
+                assert_eq!(
+                    line.owning_cell_x(padding_x),
+                    Some(x),
+                    "padding at {padding_x},{y} must point back to {x},{y}"
+                );
+            }
+            x += width;
+        }
+    }
+}
+
 #[test]
-fn cursor_motion_skips_padding_cells_for_wide_characters() {
-    let mut screen = new_screen(4, 1, 10);
+fn cursor_motion_uses_terminal_columns_for_wide_characters() {
+    let mut screen = new_screen(6, 1, 10);
     parse(&mut screen, "表A".as_bytes());
+    assert_eq!(screen.cursor_x, 3);
 
     <Screen as crate::input::ScreenWriter>::cursor_left(&mut screen, 1);
     assert_eq!(screen.cursor_x, 2);
+
+    <Screen as crate::input::ScreenWriter>::cursor_left(&mut screen, 1);
+    assert_eq!(screen.cursor_x, 1);
 
     <Screen as crate::input::ScreenWriter>::cursor_left(&mut screen, 1);
     assert_eq!(screen.cursor_x, 0);
 
     <Screen as crate::input::ScreenWriter>::cursor_right(&mut screen, 1);
-    assert_eq!(screen.cursor_x, 2);
+    assert_eq!(screen.cursor_x, 1);
 
-    screen.cursor_x = 1;
-    <Screen as crate::input::ScreenWriter>::cursor_right(&mut screen, 1);
-    assert_eq!(screen.cursor_x, 2);
+    <Screen as crate::input::ScreenWriter>::cursor_right(&mut screen, 2);
+    assert_eq!(screen.cursor_x, 3);
 }
 
 #[test]
-fn backspace_steps_over_wide_characters_and_wrapped_padding() {
+fn backspace_moves_one_terminal_column_through_wide_characters() {
+    let mut screen = new_screen(6, 1, 10);
+    parse(&mut screen, "表A".as_bytes());
+    assert_eq!((screen.cursor_x, screen.cursor_y), (3, 0));
+
+    <Screen as crate::input::ScreenWriter>::backspace(&mut screen);
+    assert_eq!((screen.cursor_x, screen.cursor_y), (2, 0));
+
+    <Screen as crate::input::ScreenWriter>::backspace(&mut screen);
+    assert_eq!((screen.cursor_x, screen.cursor_y), (1, 0));
+
+    <Screen as crate::input::ScreenWriter>::backspace(&mut screen);
+    assert_eq!((screen.cursor_x, screen.cursor_y), (0, 0));
+}
+
+#[test]
+fn backspace_wraps_to_previous_line_last_column() {
     let mut screen = new_screen(2, 2, 10);
     parse(&mut screen, "表A".as_bytes());
 
@@ -578,5 +650,68 @@ fn backspace_steps_over_wide_characters_and_wrapped_padding() {
     assert_eq!((screen.cursor_x, screen.cursor_y), (0, 1));
 
     <Screen as crate::input::ScreenWriter>::backspace(&mut screen);
+    assert_eq!((screen.cursor_x, screen.cursor_y), (1, 0));
+
+    <Screen as crate::input::ScreenWriter>::backspace(&mut screen);
     assert_eq!((screen.cursor_x, screen.cursor_y), (0, 0));
+}
+
+#[test]
+fn csi_cursor_backward_uses_columns_for_cjk_text() {
+    let mut screen = new_screen(16, 1, 10);
+    parse(&mut screen, "你好世界\x1b[2D".as_bytes());
+
+    assert_eq!(first_line(&screen), "你好世界");
+    assert_eq!(screen.cursor_position(), (6, 0));
+    assert_no_wide_cell_fragments(&screen);
+}
+
+#[test]
+fn bash_style_backspace_deletes_one_cjk_character() {
+    let mut screen = new_screen(16, 1, 10);
+    parse(&mut screen, "你好世界\x08\x08  \x08\x08".as_bytes());
+
+    assert_eq!(first_line(&screen), "你好世");
+    assert_eq!(screen.cursor_position(), (6, 0));
+    assert_no_wide_cell_fragments(&screen);
+}
+
+#[test]
+fn delete_character_removes_cjk_columns_without_padding_orphans() {
+    let mut screen = new_screen(16, 1, 10);
+    parse(&mut screen, "你好世界\x1b[7G\x1b[2P".as_bytes());
+
+    assert_eq!(first_line(&screen), "你好世");
+    assert_eq!(screen.cursor_position(), (6, 0));
+    assert_no_wide_cell_fragments(&screen);
+}
+
+#[test]
+fn erase_character_clears_cjk_columns_without_padding_orphans() {
+    let mut screen = new_screen(16, 1, 10);
+    parse(&mut screen, "你好世界\x1b[7G\x1b[2X".as_bytes());
+
+    assert_eq!(first_line(&screen), "你好世");
+    assert_eq!(screen.cursor_position(), (6, 0));
+    assert_no_wide_cell_fragments(&screen);
+}
+
+#[test]
+fn insert_character_shifts_whole_cjk_cells() {
+    let mut screen = new_screen(16, 1, 10);
+    parse(&mut screen, "你好世界\x1b[7G\x1b[2@".as_bytes());
+
+    assert_eq!(first_line(&screen), "你好世  界");
+    assert_eq!(screen.cursor_position(), (6, 0));
+    assert_no_wide_cell_fragments(&screen);
+}
+
+#[test]
+fn writing_on_wide_padding_clears_owner_cell() {
+    let mut screen = new_screen(6, 1, 10);
+    parse(&mut screen, "表\x08A".as_bytes());
+
+    assert_eq!(first_line(&screen), " A");
+    assert_eq!(screen.cursor_position(), (2, 0));
+    assert_no_wide_cell_fragments(&screen);
 }

@@ -13,7 +13,7 @@ English 路 [Fran莽ais](README.fr.md) 路 [绠�浣撲腑鏂嘳(README.zh-CN.md) 路 [鏃ユ
 
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](LICENSE-MIT)
 [![Release validation](https://github.com/Helvesec/rmux/actions/workflows/ci.yml/badge.svg)](https://github.com/Helvesec/rmux/actions/workflows/ci.yml)
-[![rmux 0.6.0](https://img.shields.io/badge/rmux-0.6.0-informational.svg)](#install)
+[![rmux 0.6.1](https://img.shields.io/badge/rmux-0.6.1-informational.svg)](#install)
 [![Platform: Linux | macOS | Windows](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-lightgrey.svg)](#platform-support)
 [![Unsafe policy](https://img.shields.io/badge/unsafe-restricted-success.svg)](#verification)
 
@@ -26,6 +26,8 @@ English 路 [Fran莽ais](README.fr.md) 路 [绠�浣撲腑鏂嘳(README.zh-CN.md) 路 [鏃ユ
 
 > [!NOTE]
 > RMUX now includes hybrid post-quantum end-to-end encrypted web multiplexing through a static frontend. [Learn more in the repository Web Share docs](docs/web-share.md).
+>
+> RMUX now provides an official Python SDK: [librmux](https://github.com/Helvesec/rmux-python/).
 >
 > If you have a feature request or want to report anything, please [file an issue](https://github.com/Helvesec/rmux/issues).
 
@@ -112,11 +114,11 @@ sudo curl -fsSL https://packages.rmux.io/rpm/rmux.repo -o /etc/yum.repos.d/rmux.
 sudo dnf install rmux
 ```
 
-Direct downloads are available from the [v0.6.0 GitHub Release](https://github.com/helvesec/rmux/releases/tag/v0.6.0):
+Direct downloads are available from the [v0.6.1 GitHub Release](https://github.com/helvesec/rmux/releases/tag/v0.6.1):
 
-- `rmux-0.6.0-linux-x86_64.tar.gz`
-- `rmux_0.6.0_amd64.deb`
-- `rmux-0.6.0-1.x86_64.rpm`
+- `rmux-0.6.1-linux-x86_64.tar.gz`
+- `rmux_0.6.1_amd64.deb`
+- `rmux-0.6.1-1.x86_64.rpm`
 
 </details>
 
@@ -133,13 +135,13 @@ curl -fsSL https://rmux.io/install.sh | sh
 #### Homebrew
 
 ```sh
-brew install helvesec/rmux/rmux
+brew install rmux
 ```
 
-Direct downloads are available from the [v0.6.0 GitHub Release](https://github.com/helvesec/rmux/releases/tag/v0.6.0):
+Direct downloads are available from the [v0.6.1 GitHub Release](https://github.com/helvesec/rmux/releases/tag/v0.6.1):
 
-- `rmux-0.6.0-macos-aarch64.tar.gz`
-- `rmux-0.6.0-macos-x86_64.tar.gz`
+- `rmux-0.6.1-macos-aarch64.tar.gz`
+- `rmux-0.6.1-macos-x86_64.tar.gz`
 
 </details>
 
@@ -160,9 +162,21 @@ scoop bucket add rmux https://github.com/Helvesec/scoop-rmux
 scoop install rmux
 ```
 
-Direct downloads are available from the [v0.6.0 GitHub Release](https://github.com/helvesec/rmux/releases/tag/v0.6.0):
+#### WinGet
 
-- `rmux-0.6.0-windows-x86_64.zip`
+```powershell
+winget install rmux
+```
+
+#### Chocolatey
+
+```powershell
+choco install rmux
+```
+
+Direct downloads are available from the [v0.6.1 GitHub Release](https://github.com/helvesec/rmux/releases/tag/v0.6.1):
+
+- `rmux-0.6.1-windows-x86_64.zip`
 
 </details>
 
@@ -291,9 +305,9 @@ fn render(snapshot: PaneSnapshot, area: Rect, buffer: &mut Buffer) {
 <div align="center">
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="https://rmux.io/rmux-architecture-dark.png?v=0.6.0-web-share">
-  <source media="(prefers-color-scheme: light)" srcset="https://rmux.io/rmux-architecture-light.png?v=0.6.0-web-share">
-  <img src="https://rmux.io/rmux-architecture-dark.png?v=0.6.0-web-share" alt="RMUX runtime architecture" width="800">
+  <source media="(prefers-color-scheme: dark)" srcset="https://rmux.io/rmux-architecture-dark.png?v=0.6.1-web-share">
+  <source media="(prefers-color-scheme: light)" srcset="https://rmux.io/rmux-architecture-light.png?v=0.6.1-web-share">
+  <img src="https://rmux.io/rmux-architecture-dark.png?v=0.6.1-web-share" alt="RMUX runtime architecture" width="800">
 </picture>
 
 </div>
@@ -342,18 +356,13 @@ On Windows, RMUX reads `.rmux.conf` from:
 3. `%APPDATA%\rmux\rmux.conf`
 4. `%RMUX_CONFIG_FILE%`
 
-### `tmux.conf` migration fallback
+### `tmux.conf` compatibility
 
-When RMUX starts with the default config search and no RMUX config file is loaded, it loads `tmux.conf` as a migration fallback. Explicit config loading with `-f` does not use this fallback.
+When RMUX starts with the default config search and no RMUX config file is loaded, it also checks standard `tmux.conf` locations. Explicit `-f` config files do not trigger this fallback.
 
-Fallback paths:
+Fallback files use the tmux-compatible source parser and load best-effort. Supported commands are applied; unsupported plugin lines are reported without aborting startup. Set `RMUX_DISABLE_TMUX_FALLBACK=1` to disable autoload.
 
-- Linux and macOS: `/etc/tmux.conf`, `~/.tmux.conf`, `$XDG_CONFIG_HOME/tmux/tmux.conf`, `~/.config/tmux/tmux.conf`
-- Windows: `%XDG_CONFIG_HOME%\tmux\tmux.conf`, `%USERPROFILE%\.tmux.conf`, `%APPDATA%\tmux\tmux.conf`
-
-RMUX parses fallback files as tmux command files and executes supported commands in order, including user options, hooks, `run-shell`, conditionals, recursive `source-file`, and status jobs such as `#(cmd)`. Unsupported commands and invalid lines are reported with file and line context, but config loading continues so a single plugin-specific command does not prevent the session from starting. Set `RMUX_DISABLE_TMUX_FALLBACK=1` to disable the fallback.
-
-Inside RMUX panes, hooks, status jobs, and `run-shell`, RMUX prepends a private per-socket shim directory to `PATH` and exports `TMUX_PROGRAM`. The shim provides `tmux` by routing back to RMUX, so TPM and common tmux plugins can call `tmux` without changing user config. Set `RMUX_DISABLE_TMUX_SHIM=1` only if an environment deliberately wants plugin scripts to reach a real external tmux binary.
+On Unix, RMUX also provides a private per-socket `tmux` shim in command environments so common plugin scripts route back to RMUX. Set `RMUX_DISABLE_TMUX_SHIM=1` to disable it.
 
 ## Terminal Compatibility Notes
 

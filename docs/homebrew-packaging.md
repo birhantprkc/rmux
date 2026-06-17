@@ -18,7 +18,7 @@ installer, or Cargo.
 Generate `Formula/rmux.rb` for the official tap:
 
 ```sh
-tag=v0.6.0
+tag=v0.6.1
 version="${tag#v}"
 curl -fsSL "https://github.com/Helvesec/rmux/releases/download/$tag/SHA256SUMS" -o /tmp/rmux-SHA256SUMS
 scripts/generate-homebrew-formula.sh \
@@ -34,11 +34,11 @@ ruby -c ../homebrew-rmux/Formula/rmux.rb
 brew style ../homebrew-rmux/Formula/rmux.rb
 ```
 
-The tap repository is separate from this source repository. The expected user
-install command is:
+The generated tap repository is separate from this source repository. The
+canonical Homebrew user install command is:
 
 ```sh
-brew install helvesec/rmux/rmux
+brew install rmux
 ```
 
 The release orchestrator should run the generator after `release.yml` has

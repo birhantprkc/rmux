@@ -30,6 +30,11 @@ impl Connection {
         self.roundtrip(&Request::KillServer(KillServerRequest))
     }
 
+    /// Sends a legacy wire-v1 `kill-server` request for pre-0.6 daemon cleanup.
+    pub fn kill_server_legacy_wire_v1(&mut self) -> Result<(), ClientError> {
+        self.write_legacy_wire_v1_request(&Request::KillServer(KillServerRequest))
+    }
+
     /// Sends an internal daemon status request over the detached RPC channel.
     pub fn daemon_status(&mut self) -> Result<Response, ClientError> {
         self.roundtrip(&Request::DaemonStatus(DaemonStatusRequest))

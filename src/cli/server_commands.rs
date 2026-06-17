@@ -2,8 +2,10 @@ use std::path::Path;
 #[cfg(unix)]
 use std::time::{Duration, Instant};
 
-use rmux_client::{connect, ClientError, Connection, StartServerError};
-use rmux_proto::ListSessionsRequest;
+use rmux_client::{
+    connect, connect_or_absent, ClientError, ConnectResult, Connection, StartServerError,
+};
+use rmux_proto::{ListSessionsRequest, RmuxError};
 
 use super::{
     expect_command_output, expect_command_success, resolve_session_target_or_current, run_command,
@@ -53,6 +55,33 @@ pub(super) fn run_kill_server(socket_path: &Path) -> Result<i32, ExitFailure> {
             if let Some(output) = output {
                 write_command_output(&output)?;
             }
+            wait_for_killed_server_socket_cleanup(socket_path);
+            Ok(0)
+        }
+        Err(error) if kill_server_connection_closed(&error) => {
+            wait_for_killed_server_socket_cleanup(socket_path);
+            Ok(0)
+        }
+        Err(error) if unsupported_wire_version(&error) => {
+            run_legacy_wire_v1_kill_server(socket_path)
+        }
+        Err(error) => Err(ExitFailure::from_client(error)),
+    }
+}
+
+fn run_legacy_wire_v1_kill_server(socket_path: &Path) -> Result<i32, ExitFailure> {
+    let mut connection = match connect_or_absent(socket_path)
+        .map_err(|error| ExitFailure::from_client_connect(socket_path, error))?
+    {
+        ConnectResult::Connected(connection) => connection,
+        ConnectResult::Absent => {
+            wait_for_killed_server_socket_cleanup(socket_path);
+            return Ok(0);
+        }
+    };
+
+    match connection.kill_server_legacy_wire_v1() {
+        Ok(()) => {
             wait_for_killed_server_socket_cleanup(socket_path);
             Ok(0)
         }
@@ -122,14 +151,22 @@ pub(super) fn run_lock_client(
 }
 
 fn kill_server_connection_closed(error: &ClientError) -> bool {
+    matches!(error, ClientError::UnexpectedEof)
+        || matches!(
+            error,
+            ClientError::Io(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::BrokenPipe
+                        | std::io::ErrorKind::ConnectionReset
+                        | std::io::ErrorKind::UnexpectedEof
+                )
+        )
+}
+
+fn unsupported_wire_version(error: &ClientError) -> bool {
     matches!(
         error,
-        ClientError::Io(error)
-            if matches!(
-                error.kind(),
-                std::io::ErrorKind::BrokenPipe
-                    | std::io::ErrorKind::ConnectionReset
-                    | std::io::ErrorKind::UnexpectedEof
-            )
+        ClientError::Protocol(RmuxError::UnsupportedWireVersion { .. })
     )
 }

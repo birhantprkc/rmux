@@ -11,8 +11,6 @@ use rmux_proto::TerminalSize;
 mod acs;
 #[path = "screen/capture.rs"]
 mod capture;
-#[path = "screen/cell_nav.rs"]
-mod cell_nav;
 #[path = "screen/history_bytes.rs"]
 mod history_bytes;
 #[path = "screen/selection.rs"]
@@ -412,6 +410,66 @@ impl Screen {
         GridCell::blank_with_bg(bg)
     }
 
+    fn repair_wide_cells_on_line(line: &mut GridLine, sx: u32, bg: i32) {
+        let blank = GridCell::blank_with_bg(bg);
+        let mut changed = false;
+        let mut x = 0;
+
+        while x < sx {
+            let Some(cell) = line.cell(x) else {
+                x += 1;
+                continue;
+            };
+
+            if cell.is_padding() {
+                if line.owning_cell_x(x).is_none() {
+                    if let Some(target) = line.cell_mut(x) {
+                        *target = blank.clone();
+                        changed = true;
+                    }
+                }
+                x += 1;
+                continue;
+            }
+
+            let width = u32::from(cell.width());
+            if width <= 1 {
+                x += 1;
+                continue;
+            }
+
+            let mut valid = x.saturating_add(width) <= sx;
+            if valid {
+                for offset in 1..width {
+                    let column = x + offset;
+                    let valid_padding = line
+                        .cell(column)
+                        .is_some_and(|candidate| candidate.is_padding())
+                        && line.owning_cell_x(column) == Some(x);
+                    if !valid_padding {
+                        valid = false;
+                        break;
+                    }
+                }
+            }
+
+            if valid {
+                x += width;
+                continue;
+            }
+
+            if let Some(target) = line.cell_mut(x) {
+                *target = blank.clone();
+                changed = true;
+            }
+            x += 1;
+        }
+
+        if changed {
+            line.touch();
+        }
+    }
+
     fn overwrite_for_write(&mut self, x: u32, width: u32) {
         let sx = self.grid.sx();
         let blank = GridCell::blank_with_bg(COLOUR_DEFAULT);
@@ -457,6 +515,7 @@ impl Screen {
                 *cell = GridCell::blank_with_bg(bg);
             }
         }
+        Self::repair_wide_cells_on_line(line, sx, bg);
         line.set_wrapped(false);
         line.touch();
     }

@@ -1128,7 +1128,7 @@ dependencies = [
 
 [[package]]
 name = "ratatui-rmux"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "ratatui",
  "rmux-sdk",
@@ -1175,7 +1175,7 @@ checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 
 [[package]]
 name = "rmux"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "chrono",
  "clap",
@@ -1198,7 +1198,7 @@ dependencies = [
 
 [[package]]
 name = "rmux-client"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "libc",
  "rmux-core",
@@ -1217,7 +1217,7 @@ dependencies = [
 
 [[package]]
 name = "rmux-core"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "chrono",
  "compact_str",
@@ -1228,7 +1228,7 @@ dependencies = [
 
 [[package]]
 name = "rmux-ipc"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "libc",
  "rmux-os",
@@ -1240,7 +1240,7 @@ dependencies = [
 
 [[package]]
 name = "rmux-os"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "libc",
  "rmux-types",
@@ -1250,7 +1250,7 @@ dependencies = [
 
 [[package]]
 name = "rmux-proto"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "bincode",
  "rmux-types",
@@ -1260,7 +1260,7 @@ dependencies = [
 
 [[package]]
 name = "rmux-pty"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "libc",
  "rmux-os",
@@ -1273,7 +1273,7 @@ dependencies = [
 
 [[package]]
 name = "rmux-render-core"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "ratatui",
  "serde",
@@ -1281,7 +1281,7 @@ dependencies = [
 
 [[package]]
 name = "rmux-sdk"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "bincode",
  "crossterm",
@@ -1300,7 +1300,7 @@ dependencies = [
 
 [[package]]
 name = "rmux-server"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "async-recursion",
  "base64",
@@ -1330,14 +1330,14 @@ dependencies = [
 
 [[package]]
 name = "rmux-types"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "rmux-web-crypto"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "chacha20poly1305",
  "hex-literal",
@@ -2089,7 +2089,7 @@ dependencies = [
 
 [[package]]
 name = "xtask"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "clap",
  "clap_complete",

@@ -5,6 +5,7 @@ mod common;
 use std::error::Error;
 use std::fs;
 use std::io::{self, Read, Write};
+use std::os::unix::net::UnixListener;
 use std::path::Path;
 use std::process::{Output, Stdio};
 use std::sync::{Arc, Mutex};
@@ -20,7 +21,10 @@ use common::{
 };
 use rmux_client::INTERNAL_DAEMON_FLAG;
 use rmux_core::command_parser::COMMAND_TABLE;
-use rmux_proto::{CONTROL_CONTROL_END, CONTROL_CONTROL_START};
+use rmux_proto::{
+    encode_frame, ErrorResponse, Response, RmuxError, CONTROL_CONTROL_END, CONTROL_CONTROL_START,
+    RMUX_WIRE_VERSION,
+};
 use rmux_pty::TerminalSize;
 
 const ATTACH_TIMEOUT: Duration = Duration::from_secs(5);
@@ -61,6 +65,73 @@ fn assert_absent_server_error(output: &Output, harness: &CliHarness, command_nam
     );
 }
 
+fn spawn_incompatible_wire_server(socket_path: &Path) -> io::Result<JoinHandle<io::Result<()>>> {
+    if let Some(parent) = socket_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let _ = fs::remove_file(socket_path);
+    let listener = UnixListener::bind(socket_path)?;
+    let handle = thread::spawn(move || {
+        let (mut stream, _) = listener.accept()?;
+        let mut buffer = [0_u8; 1024];
+        let bytes_read = stream.read(&mut buffer)?;
+        if bytes_read == 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "client closed before sending request",
+            ));
+        }
+
+        write_legacy_incompatible_wire_response(&mut stream)
+    });
+    Ok(handle)
+}
+
+fn write_legacy_incompatible_wire_response(stream: &mut impl Write) -> io::Result<()> {
+    let response = Response::Error(ErrorResponse {
+        error: RmuxError::UnsupportedWireVersion {
+            got: RMUX_WIRE_VERSION,
+            minimum: 1,
+            maximum: 1,
+        },
+    });
+    let mut frame = encode_frame(&response)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    if frame.get(1).copied() != Some(RMUX_WIRE_VERSION as u8) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "unexpected encoded RMUX wire envelope",
+        ));
+    }
+    frame[1] = 1;
+    stream.write_all(&frame)
+}
+
+fn spawn_alias_fallback_incompatible_wire_server(
+    socket_path: &Path,
+) -> io::Result<JoinHandle<io::Result<()>>> {
+    if let Some(parent) = socket_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let _ = fs::remove_file(socket_path);
+    let listener = UnixListener::bind(socket_path)?;
+    let handle = thread::spawn(move || {
+        let (_probe, _) = listener.accept()?;
+        let (mut stream, _) = listener.accept()?;
+        let mut buffer = [0_u8; 1024];
+        let bytes_read = stream.read(&mut buffer)?;
+        if bytes_read == 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "client closed before sending alias fallback request",
+            ));
+        }
+
+        write_legacy_incompatible_wire_response(&mut stream)
+    });
+    Ok(handle)
+}
+
 #[test]
 fn named_socket_absent_server_keeps_connect_error_surface() -> Result<(), Box<dyn Error>> {
     let harness = CliHarness::new("named-socket-no-server")?;
@@ -82,6 +153,77 @@ fn named_socket_absent_server_keeps_connect_error_surface() -> Result<(), Box<dy
         "named sockets should not use the default-socket absent server wording, got: {}",
         stderr(&output)
     );
+    Ok(())
+}
+
+#[test]
+fn incompatible_wire_error_uses_simple_default_kill_server_command() -> Result<(), Box<dyn Error>> {
+    let harness = CliHarness::new("wire-incompatible-default")?;
+    let server = spawn_incompatible_wire_server(harness.socket_path())?;
+
+    let output = harness.run(&["list-sessions"])?;
+
+    assert_eq!(output.status.code(), Some(1));
+    let stderr = stderr(&output);
+    assert!(
+        stderr.contains("uses an incompatible protocol"),
+        "stderr should explain protocol incompatibility, got: {stderr}"
+    );
+    assert!(
+        stderr.contains("rmux: run `rmux kill-server` to stop it, then retry."),
+        "default socket should use simple kill-server command, got: {stderr}"
+    );
+    server
+        .join()
+        .expect("fake incompatible server should exit")?;
+    Ok(())
+}
+
+#[test]
+fn incompatible_wire_error_targets_explicit_socket_command() -> Result<(), Box<dyn Error>> {
+    let harness = CliHarness::new("wire-incompatible-explicit")?;
+    let socket_path = harness.tmpdir().join("custom.sock");
+    let server = spawn_incompatible_wire_server(&socket_path)?;
+    let socket_arg = socket_path.to_string_lossy().to_string();
+
+    let output = harness.run(&["-S", &socket_arg, "list-sessions"])?;
+
+    assert_eq!(output.status.code(), Some(1));
+    let stderr = stderr(&output);
+    assert!(
+        stderr.contains("uses an incompatible protocol"),
+        "stderr should explain protocol incompatibility, got: {stderr}"
+    );
+    assert!(
+        stderr.contains(&format!("rmux -S {socket_arg} kill-server")),
+        "explicit socket should be preserved in command hint, got: {stderr}"
+    );
+    server
+        .join()
+        .expect("fake incompatible server should exit")?;
+    Ok(())
+}
+
+#[test]
+fn alias_fallback_incompatible_wire_error_keeps_socket_context() -> Result<(), Box<dyn Error>> {
+    let harness = CliHarness::new("wire-incompatible-alias-fallback")?;
+    let server = spawn_alias_fallback_incompatible_wire_server(harness.socket_path())?;
+
+    let output = harness.run(&["not-a-command"])?;
+
+    assert_eq!(output.status.code(), Some(1));
+    let stderr = stderr(&output);
+    assert!(
+        stderr.contains("uses an incompatible protocol"),
+        "stderr should explain protocol incompatibility, got: {stderr}"
+    );
+    assert!(
+        stderr.contains("rmux: run `rmux kill-server` to stop it, then retry."),
+        "alias fallback should keep default socket restart guidance, got: {stderr}"
+    );
+    server
+        .join()
+        .expect("fake incompatible alias server should exit")?;
     Ok(())
 }
 

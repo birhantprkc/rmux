@@ -8,7 +8,8 @@ use std::time::Duration;
 
 use super::{
     ensure_server_running_with_probe, hidden_daemon_binary_path,
-    hidden_daemon_binary_path_for_config, probe_connected_server, AutoStartConfig, AutoStartError,
+    hidden_daemon_binary_path_for_config, incompatible_daemon_kill_server_command,
+    probe_connected_server, AutoStartConfig, AutoStartError,
 };
 use crate::{ClientError, ConnectResult, Connection};
 use rmux_proto::{
@@ -341,6 +342,63 @@ fn probe_connected_server_allows_legacy_daemon_status_error() {
 }
 
 #[test]
+fn probe_connected_server_reports_incompatible_wire_version() {
+    let (client, mut server) = UnixStream::pair().expect("create unix stream pair");
+    let server_thread = std::thread::spawn(move || {
+        let mut buffer = [0_u8; 1024];
+        let bytes_read = server
+            .read(&mut buffer)
+            .expect("read daemon-status request");
+        assert!(bytes_read > 0, "daemon-status request should not be empty");
+        let response = Response::Error(ErrorResponse {
+            error: RmuxError::UnsupportedWireVersion {
+                got: RMUX_WIRE_VERSION,
+                minimum: 1,
+                maximum: 1,
+            },
+        });
+        let frame = legacy_wire_v1_frame(&response);
+        server
+            .write_all(&frame)
+            .expect("write legacy daemon-status response");
+    });
+
+    let connection = Connection::new(client).expect("connection with timeout");
+    let error = probe_connected_server(
+        connection,
+        &AutoStartConfig::disabled(),
+        Path::new("/tmp/rmux-probe-wire-v1.sock"),
+    )
+    .expect_err("wire v1 daemon should be reported as incompatible");
+
+    assert!(matches!(error, AutoStartError::IncompatibleDaemon { .. }));
+    let message = error.to_string();
+    assert!(message.contains("running daemon from an older release uses incompatible protocol 1"));
+    assert!(message.contains("rmux -S /tmp/rmux-probe-wire-v1.sock kill-server"));
+    server_thread
+        .join()
+        .expect("probe server thread should exit");
+}
+
+#[test]
+fn incompatible_daemon_command_is_simple_for_default_socket() {
+    let default_socket = crate::default_socket_path().expect("default socket path");
+
+    assert_eq!(
+        incompatible_daemon_kill_server_command(&default_socket),
+        "rmux kill-server"
+    );
+}
+
+#[test]
+fn incompatible_daemon_command_targets_non_default_socket() {
+    assert_eq!(
+        incompatible_daemon_kill_server_command(Path::new("/tmp/rmux-custom/default")),
+        "rmux -S /tmp/rmux-custom/default kill-server"
+    );
+}
+
+#[test]
 fn probe_connected_server_waits_for_reentrant_startup_source_clients() {
     let _guard = AUTO_START_ENV_LOCK
         .lock()
@@ -393,6 +451,13 @@ fn restore_env(name: &str, value: Option<std::ffi::OsString>) {
         Some(value) => std::env::set_var(name, value),
         None => std::env::remove_var(name),
     }
+}
+
+fn legacy_wire_v1_frame(response: &Response) -> Vec<u8> {
+    let mut frame = encode_frame(response).expect("encode response");
+    assert_eq!(frame.get(1).copied(), Some(RMUX_WIRE_VERSION as u8));
+    frame[1] = 1;
+    frame
 }
 
 #[test]
