@@ -61,7 +61,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
+          - os: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
             platform-label: linux-x86_64
             binary: rmux
@@ -122,6 +122,14 @@ jobs:
           ls -lh "$bin"
           if [[ "$RUNNER_OS" != "Windows" ]]; then
             file "$bin"
+          fi
+          if [[ "$TARGET" == "x86_64-unknown-linux-gnu" ]]; then
+            max_glibc="$(strings "$bin" | grep -o 'GLIBC_[0-9.]*' | sort -V | tail -n 1 || true)"
+            echo "max GLIBC symbol: ${max_glibc:-none}"
+            if [[ -n "$max_glibc" ]] && [[ "$(printf '%s\n' "$max_glibc" "GLIBC_2.35" | sort -V | tail -n 1)" != "GLIBC_2.35" ]]; then
+              echo "Linux release binary requires $max_glibc; expected GLIBC_2.35 or older" >&2
+              exit 1
+            fi
           fi
 
       - name: Re-sign macOS binary
