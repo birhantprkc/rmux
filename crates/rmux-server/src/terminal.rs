@@ -15,6 +15,8 @@ use tokio::runtime::Handle;
 mod shell_resolver;
 mod shell_spec;
 
+#[cfg(windows)]
+use shell_resolver::CLIENT_SHELL_ENV;
 use shell_resolver::{resolve_program_path, resolve_shell_path};
 use shell_spec::ShellSpec;
 
@@ -193,7 +195,7 @@ impl TerminalProfile {
     fn from_resolved_environment(
         mut resolved: HashMap<String, String>,
         raw_base_environment: Option<&[(OsString, OsString)]>,
-        suppressed_raw_names: HashSet<String>,
+        mut suppressed_raw_names: HashSet<String>,
         options: &OptionStore,
         session_name: &SessionName,
         session_id: u32,
@@ -244,6 +246,11 @@ impl TerminalProfile {
 
         let cwd = resolve_working_directory(requested_cwd)?;
         let shell = resolve_shell_path(options, Some(session_name), &resolved);
+        #[cfg(windows)]
+        {
+            remove_environment_value(&mut resolved, CLIENT_SHELL_ENV);
+            suppressed_raw_names.insert(CLIENT_SHELL_ENV.to_owned());
+        }
         set_environment_value(
             &mut resolved,
             "SHELL".to_owned(),
@@ -362,6 +369,10 @@ impl TerminalProfile {
 
         let cwd = resolve_working_directory(requested_cwd)?;
         let shell = resolve_shell_path(options, session_name, &resolved);
+        #[cfg(windows)]
+        {
+            remove_environment_value(&mut resolved, CLIENT_SHELL_ENV);
+        }
         set_environment_value(
             &mut resolved,
             "SHELL".to_owned(),
@@ -377,6 +388,8 @@ impl TerminalProfile {
             .suppressed_process_environment_names(session_name, include_implicit_globals);
         suppressed.insert("RMUX_PANE".to_owned());
         suppressed.insert("TMUX_PANE".to_owned());
+        #[cfg(windows)]
+        suppressed.insert(CLIENT_SHELL_ENV.to_owned());
         Ok(Self {
             cwd,
             shell,

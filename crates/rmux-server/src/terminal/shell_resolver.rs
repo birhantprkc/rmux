@@ -12,6 +12,9 @@ use rmux_proto::{OptionName, SessionName};
 #[cfg(unix)]
 use rustix::process::getuid;
 
+#[cfg(windows)]
+pub(super) const CLIENT_SHELL_ENV: &str = "RMUX_CLIENT_SHELL";
+
 #[cfg(unix)]
 pub(super) fn resolve_shell_path(
     options: &OptionStore,
@@ -44,6 +47,7 @@ pub(super) fn resolve_shell_path(
     explicit_default_shell(options, session_name)
         .map(PathBuf::from)
         .map(|path| resolve_program_path(&path, environment))
+        .or_else(|| inherited_client_shell(environment))
         .unwrap_or_else(|| default_shell_path(environment))
 }
 
@@ -94,6 +98,16 @@ fn find_program_on_path(path: &Path, environment: &HashMap<String, String>) -> O
     }
 
     search_path(path, environment)
+}
+
+#[cfg(windows)]
+fn inherited_client_shell(environment: &HashMap<String, String>) -> Option<PathBuf> {
+    let shell = environment_string_value(environment, CLIENT_SHELL_ENV)?;
+    let shell = shell.trim();
+    if shell.is_empty() {
+        return None;
+    }
+    Some(resolve_program_path(Path::new(shell), environment))
 }
 
 #[cfg(windows)]
@@ -231,6 +245,19 @@ fn environment_os_value(environment: &HashMap<String, String>, name: &str) -> Op
     })
 }
 
+#[cfg(windows)]
+fn environment_string_value<'a>(
+    environment: &'a HashMap<String, String>,
+    name: &str,
+) -> Option<&'a str> {
+    environment.get(name).map(String::as_str).or_else(|| {
+        environment
+            .iter()
+            .find(|(key, _)| key.eq_ignore_ascii_case(name))
+            .map(|(_, value)| value.as_str())
+    })
+}
+
 #[cfg(all(test, windows))]
 mod tests {
     use super::*;
@@ -343,6 +370,45 @@ mod tests {
 
         assert_eq!(resolved, bin.join("custom-shell.EXE"));
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn inherited_client_shell_hint_is_used_when_default_shell_is_unset() {
+        let environment = HashMap::from([(CLIENT_SHELL_ENV.to_owned(), "cmd.exe".to_owned())]);
+        let options = OptionStore::new();
+
+        let resolved = resolve_shell_path(&options, None, &environment);
+        let leaf = resolved
+            .file_name()
+            .expect("resolved shell has a leaf")
+            .to_string_lossy()
+            .to_ascii_lowercase();
+
+        assert_eq!(leaf, "cmd.exe");
+    }
+
+    #[test]
+    fn explicit_default_shell_overrides_inherited_client_shell_hint() {
+        let environment =
+            HashMap::from([(CLIENT_SHELL_ENV.to_owned(), "powershell.exe".to_owned())]);
+        let mut options = OptionStore::new();
+        options
+            .set(
+                rmux_proto::ScopeSelector::Global,
+                OptionName::DefaultShell,
+                "cmd.exe".to_owned(),
+                rmux_proto::SetOptionMode::Replace,
+            )
+            .expect("default-shell set succeeds");
+
+        let resolved = resolve_shell_path(&options, None, &environment);
+        let leaf = resolved
+            .file_name()
+            .expect("resolved shell has a leaf")
+            .to_string_lossy()
+            .to_ascii_lowercase();
+
+        assert_eq!(leaf, "cmd.exe");
     }
 
     fn unique_test_dir(label: &str) -> PathBuf {

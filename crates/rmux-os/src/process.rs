@@ -23,6 +23,11 @@ pub use windows_process::ProcessJob;
 pub struct ProcessInspector;
 
 impl ProcessInspector {
+    /// Returns the parent process id for `pid`, when available.
+    pub fn parent_pid(&self, pid: u32) -> io::Result<Option<u32>> {
+        parent_pid_impl(pid)
+    }
+
     /// Returns the current working directory for `pid`, when available.
     pub fn current_path(&self, pid: u32) -> io::Result<Option<String>> {
         current_path_impl(pid)
@@ -56,6 +61,12 @@ impl ProcessInspector {
     pub fn raw_environment(&self, pid: u32) -> io::Result<Option<Vec<(OsString, OsString)>>> {
         raw_environment_impl(pid)
     }
+}
+
+/// Returns the parent process id for `pid`, when available.
+#[must_use]
+pub fn parent_pid(pid: u32) -> Option<u32> {
+    ProcessInspector.parent_pid(pid).ok().flatten()
 }
 
 /// Returns the current working directory for `pid`, when the platform exposes it.
@@ -117,6 +128,11 @@ pub mod unix {
         }
         u32::try_from(pgrp).ok()
     }
+}
+
+#[cfg(target_os = "linux")]
+fn parent_pid_impl(_pid: u32) -> io::Result<Option<u32>> {
+    Ok(None)
 }
 
 #[cfg(target_os = "linux")]
@@ -197,6 +213,11 @@ fn raw_environment_impl(pid: u32) -> io::Result<Option<Vec<(OsString, OsString)>
         Err(error) => return Err(error),
     };
     Ok(Some(raw_environment_from_nul_entries(&environ)))
+}
+
+#[cfg(target_os = "macos")]
+fn parent_pid_impl(_pid: u32) -> io::Result<Option<u32>> {
+    Ok(None)
 }
 
 #[cfg(target_os = "macos")]
@@ -344,6 +365,11 @@ fn environment_impl(pid: u32) -> io::Result<Option<HashMap<String, String>>> {
 #[cfg(target_os = "macos")]
 fn raw_environment_impl(pid: u32) -> io::Result<Option<Vec<(OsString, OsString)>>> {
     Ok(macos_procargs(pid).and_then(|buffer| raw_environment_from_macos_procargs(&buffer)))
+}
+
+#[cfg(windows)]
+fn parent_pid_impl(pid: u32) -> io::Result<Option<u32>> {
+    windows_process::parent_pid(pid)
 }
 
 #[cfg(windows)]

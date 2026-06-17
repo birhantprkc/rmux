@@ -80,6 +80,59 @@ async fn send_keys_sends_modified_cursor_keys_without_extended_mode() {
     capture.assert_contents(&handler, expected).await;
 }
 
+#[cfg(windows)]
+#[tokio::test]
+async fn live_attach_ctrl_a_emulates_cmd_select_all() {
+    let handler = RequestHandler::new();
+    let alpha = session_name("alpha");
+    let requester_pid = std::process::id();
+
+    {
+        let mut state = handler.state.lock().await;
+        state
+            .options
+            .set(
+                ScopeSelector::Global,
+                OptionName::DefaultShell,
+                "cmd.exe".to_owned(),
+                SetOptionMode::Replace,
+            )
+            .expect("test default-shell is valid");
+    }
+    create_send_keys_test_session(&handler, &alpha).await;
+
+    let (control_tx, _control_rx) = mpsc::unbounded_channel();
+    let _attach_id = handler
+        .register_attach(requester_pid, alpha.clone(), control_tx)
+        .await;
+
+    let mut expected = encode_key(
+        0,
+        ExtendedKeyFormat::Xterm,
+        key_string_lookup_string("C-Home").expect("C-Home parses"),
+    )
+    .expect("C-Home encodes");
+    expected.extend_from_slice(
+        &encode_key(
+            0,
+            ExtendedKeyFormat::Xterm,
+            key_string_lookup_string("S-End").expect("S-End parses"),
+        )
+        .expect("S-End encodes"),
+    );
+    let capture =
+        RawPaneInputProbe::start(&handler, &alpha, "live-attach-cmd-c-a", expected.len()).await;
+
+    let mut pending_input = Vec::new();
+    handler
+        .handle_attached_live_input(requester_pid, &mut pending_input, b"\x01")
+        .await
+        .expect("Ctrl+A attached input succeeds");
+
+    capture.finish(&handler, &alpha).await;
+    capture.assert_contents(&handler, &expected).await;
+}
+
 #[tokio::test]
 async fn send_keys_m_forwards_the_current_mouse_event_to_the_pane() {
     let handler = RequestHandler::new();

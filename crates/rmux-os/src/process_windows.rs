@@ -114,6 +114,26 @@ pub(super) fn current_path(pid: u32) -> io::Result<Option<String>> {
         .map(trim_trailing_current_directory_separator))
 }
 
+pub(super) fn parent_pid(pid: u32) -> io::Result<Option<u32>> {
+    let handle = unsafe {
+        // SAFETY: OpenProcess validates the pid and returns either a handle or null.
+        OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid)
+    };
+    if handle.is_null() {
+        return unavailable_or_error(io::Error::last_os_error());
+    }
+    let _guard = WindowsHandle(handle);
+    let Some(info) = query_basic_information(handle)? else {
+        return Ok(None);
+    };
+    if info.inherited_from_unique_process_id == 0 {
+        return Ok(None);
+    }
+    let parent = u32::try_from(info.inherited_from_unique_process_id)
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "parent pid out of range"))?;
+    Ok(Some(parent))
+}
+
 pub(super) fn command_name(pid: u32) -> io::Result<Option<String>> {
     let handle = unsafe {
         // SAFETY: OpenProcess validates the pid and returns either a handle or null.
@@ -238,27 +258,7 @@ impl RemoteProcess {
     }
 
     fn query_basic_information(&self) -> io::Result<Option<ProcessBasicInformationRecord>> {
-        let mut info = MaybeUninit::<ProcessBasicInformationRecord>::zeroed();
-        let len = u32::try_from(size_of::<ProcessBasicInformationRecord>())
-            .map_err(|_| io::ErrorKind::InvalidData)?;
-        let mut returned = 0_u32;
-        let status = unsafe {
-            // SAFETY: `info` points to writable memory sized by `len`.
-            NtQueryInformationProcess(
-                self.handle,
-                ProcessBasicInformation,
-                info.as_mut_ptr().cast(),
-                len,
-                &mut returned,
-            )
-        };
-        if status < 0 {
-            return Ok(None);
-        }
-        Ok(Some(unsafe {
-            // SAFETY: NtQueryInformationProcess succeeded and initialized `info`.
-            info.assume_init()
-        }))
+        query_basic_information(self.handle)
     }
 
     fn read_struct<T: Copy>(&self, address: usize) -> io::Result<Option<T>> {
@@ -371,6 +371,30 @@ impl RemoteProcess {
         }
         Ok((bytes_read == byte_len).then_some(()))
     }
+}
+
+fn query_basic_information(handle: HANDLE) -> io::Result<Option<ProcessBasicInformationRecord>> {
+    let mut info = MaybeUninit::<ProcessBasicInformationRecord>::zeroed();
+    let len = u32::try_from(size_of::<ProcessBasicInformationRecord>())
+        .map_err(|_| io::ErrorKind::InvalidData)?;
+    let mut returned = 0_u32;
+    let status = unsafe {
+        // SAFETY: `info` points to writable memory sized by `len`.
+        NtQueryInformationProcess(
+            handle,
+            ProcessBasicInformation,
+            info.as_mut_ptr().cast(),
+            len,
+            &mut returned,
+        )
+    };
+    if status < 0 {
+        return Ok(None);
+    }
+    Ok(Some(unsafe {
+        // SAFETY: NtQueryInformationProcess succeeded and initialized `info`.
+        info.assume_init()
+    }))
 }
 
 impl Drop for RemoteProcess {

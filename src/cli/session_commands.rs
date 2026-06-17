@@ -126,19 +126,68 @@ fn current_working_directory_string() -> Option<String> {
 }
 
 #[cfg(windows)]
+const RMUX_CLIENT_SHELL_ENV: &str = "RMUX_CLIENT_SHELL";
+
+#[cfg(windows)]
 fn invoking_client_environment() -> Option<Vec<String>> {
-    Some(
-        std::env::vars_os()
-            .map(|(name, value)| {
-                (
-                    name.to_string_lossy().into_owned(),
-                    value.to_string_lossy().into_owned(),
-                )
-            })
-            .filter(|(name, _)| !name.starts_with('='))
-            .map(|(name, value)| format!("{name}={value}"))
-            .collect(),
-    )
+    let mut environment = std::env::vars_os()
+        .map(|(name, value)| {
+            (
+                name.to_string_lossy().into_owned(),
+                value.to_string_lossy().into_owned(),
+            )
+        })
+        .filter(|(name, _)| !name.starts_with('='))
+        .filter(|(name, _)| !name.eq_ignore_ascii_case(RMUX_CLIENT_SHELL_ENV))
+        .map(|(name, value)| format!("{name}={value}"))
+        .collect::<Vec<_>>();
+
+    if let Some(shell) = invoking_client_shell() {
+        environment.push(format!("{RMUX_CLIENT_SHELL_ENV}={shell}"));
+    }
+
+    Some(environment)
+}
+
+#[cfg(windows)]
+fn invoking_client_shell() -> Option<String> {
+    let parent_pid = rmux_os::process::parent_pid(std::process::id())?;
+    let parent_name = rmux_os::process::command_name(parent_pid)?;
+    windows_client_shell_for_parent_name(&parent_name)
+}
+
+#[cfg(windows)]
+fn windows_client_shell_for_parent_name(parent_name: &str) -> Option<String> {
+    let lower = parent_name.to_ascii_lowercase();
+    match lower.as_str() {
+        "cmd.exe" | "cmd" => Some(
+            std::env::var_os("COMSPEC")
+                .filter(|value| !value.is_empty())
+                .unwrap_or_else(|| "cmd.exe".into())
+                .to_string_lossy()
+                .into_owned(),
+        ),
+        "powershell.exe" | "powershell" => {
+            if windows_command_available_on_path("pwsh.exe") {
+                Some("pwsh.exe".to_owned())
+            } else {
+                Some("powershell.exe".to_owned())
+            }
+        }
+        "pwsh.exe" | "pwsh" => Some("pwsh.exe".to_owned()),
+        "bash.exe" | "bash" | "sh.exe" | "sh" | "zsh.exe" | "zsh" | "nu.exe" | "nu" => {
+            Some(parent_name.to_owned())
+        }
+        _ => None,
+    }
+}
+
+#[cfg(windows)]
+fn windows_command_available_on_path(name: &str) -> bool {
+    let Some(path) = std::env::var_os("PATH") else {
+        return false;
+    };
+    std::env::split_paths(&path).any(|directory| directory.join(name).is_file())
 }
 
 #[cfg(not(windows))]

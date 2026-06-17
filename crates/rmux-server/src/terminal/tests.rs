@@ -794,6 +794,49 @@ fn resolve_shell_path_uses_stable_windows_default_shell() {
 
 #[cfg(windows)]
 #[test]
+fn terminal_profile_consumes_windows_client_shell_hint_without_exporting_it() {
+    let environment = EnvironmentStore::new();
+    let options = OptionStore::new();
+    let session_name = SessionName::new("client-shell").expect("valid session name");
+    let spawn_environment = HashMap::from([(
+        super::shell_resolver::CLIENT_SHELL_ENV.to_owned(),
+        "cmd.exe".to_owned(),
+    )]);
+    let raw_environment = vec![(
+        OsString::from(super::shell_resolver::CLIENT_SHELL_ENV),
+        OsString::from("cmd.exe"),
+    )];
+
+    let profile = TerminalProfile::for_initial_session_pane(
+        &environment,
+        &options,
+        &session_name,
+        1,
+        Path::new(r"\\.\pipe\rmux-test"),
+        Some(&spawn_environment),
+        Some(&raw_environment),
+        true,
+        None,
+        None,
+        None,
+    )
+    .expect("profile builds");
+    let leaf = profile
+        .shell()
+        .file_name()
+        .expect("shell has a leaf")
+        .to_string_lossy()
+        .to_ascii_lowercase();
+
+    assert_eq!(leaf, "cmd.exe");
+    assert_eq!(
+        profile.environment_value(super::shell_resolver::CLIENT_SHELL_ENV),
+        None
+    );
+}
+
+#[cfg(windows)]
+#[test]
 fn resolve_shell_path_respects_explicit_windows_cmd_default_shell() {
     let mut options = OptionStore::new();
     options

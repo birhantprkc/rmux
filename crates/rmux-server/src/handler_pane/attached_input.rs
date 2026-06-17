@@ -125,7 +125,8 @@ impl RequestHandler {
 
         let prepared = {
             let state = self.state.lock().await;
-            let Some(encoded) = encode_key_for_target(&state, &target, key).map_err(io_other)?
+            let Some(encoded) =
+                encode_attached_key_for_target(&state, &target, key).map_err(io_other)?
             else {
                 return Ok(false);
             };
@@ -590,6 +591,71 @@ impl RequestHandler {
         frame.extend_from_slice(b"\x1b[0m\x1b[u");
         Some(frame)
     }
+}
+
+fn encode_attached_key_for_target(
+    state: &crate::pane_terminals::HandlerState,
+    target: &PaneTarget,
+    key: rmux_core::KeyCode,
+) -> Result<Option<Vec<u8>>, RmuxError> {
+    #[cfg(windows)]
+    if should_emulate_windows_cmd_select_all(state, target, key) {
+        return windows_cmd_select_all_sequence(state, target);
+    }
+
+    encode_key_for_target(state, target, key)
+}
+
+#[cfg(windows)]
+fn should_emulate_windows_cmd_select_all(
+    state: &crate::pane_terminals::HandlerState,
+    target: &PaneTarget,
+    key: rmux_core::KeyCode,
+) -> bool {
+    key_matches_name(key, "C-a") && target_uses_windows_cmd_shell(state, target)
+}
+
+#[cfg(windows)]
+fn target_uses_windows_cmd_shell(
+    state: &crate::pane_terminals::HandlerState,
+    target: &PaneTarget,
+) -> bool {
+    state
+        .pane_profile_in_window(
+            target.session_name(),
+            target.window_index(),
+            target.pane_index(),
+        )
+        .ok()
+        .and_then(|profile| profile.shell().file_name())
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| {
+            name.eq_ignore_ascii_case("cmd.exe") || name.eq_ignore_ascii_case("cmd")
+        })
+}
+
+#[cfg(windows)]
+fn windows_cmd_select_all_sequence(
+    state: &crate::pane_terminals::HandlerState,
+    target: &PaneTarget,
+) -> Result<Option<Vec<u8>>, RmuxError> {
+    let mut bytes = Vec::new();
+    for key_name in ["C-Home", "S-End"] {
+        let Some(key) = key_string_lookup_string(key_name) else {
+            return Ok(None);
+        };
+        let Some(encoded) = encode_key_for_target(state, target, key)? else {
+            return Ok(None);
+        };
+        bytes.extend_from_slice(&encoded);
+    }
+    Ok(Some(bytes))
+}
+
+#[cfg(windows)]
+fn key_matches_name(key: rmux_core::KeyCode, name: &str) -> bool {
+    key_string_lookup_string(name)
+        .is_some_and(|candidate| key_code_lookup_bits(candidate) == key_code_lookup_bits(key))
 }
 
 fn is_mouse_prefix(bytes: &[u8]) -> bool {

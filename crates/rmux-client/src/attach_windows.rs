@@ -240,6 +240,7 @@ where
         lock_state.wait_until_closed();
         return Ok(());
     }
+    let mut console_input = input::ConsoleInputReader::from_handle(input_handle);
 
     loop {
         if lock_state.is_closed() || input_tx.is_closed() {
@@ -254,21 +255,27 @@ where
             continue;
         }
 
-        let bytes_read = match input.read(&mut read_buffer) {
-            Ok(0) => return Ok(()),
-            Ok(bytes_read) => bytes_read,
-            Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
-            Err(error) => return Err(ClientError::Io(error)),
+        let bytes = if let Some(console_input) = console_input.as_mut() {
+            match console_input.read_key_bytes() {
+                Ok(bytes) => bytes,
+                Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+                Err(error) => return Err(ClientError::Io(error)),
+            }
+        } else {
+            let bytes_read = match input.read(&mut read_buffer) {
+                Ok(0) => return Ok(()),
+                Ok(bytes_read) => bytes_read,
+                Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+                Err(error) => return Err(ClientError::Io(error)),
+            };
+            read_buffer[..bytes_read].to_vec()
         };
 
-        if locked || lock_state.is_locked() {
+        if bytes.is_empty() || locked || lock_state.is_locked() {
             continue;
         }
 
-        if input_tx
-            .blocking_send(read_buffer[..bytes_read].to_vec())
-            .is_err()
-        {
+        if input_tx.blocking_send(bytes).is_err() {
             return Ok(());
         }
     }
