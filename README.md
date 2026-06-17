@@ -13,7 +13,7 @@ English · [Français](README.fr.md) · [简体中文](README.zh-CN.md) · [日�
 
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](LICENSE-MIT)
 [![Release validation](https://github.com/Helvesec/rmux/actions/workflows/ci.yml/badge.svg)](https://github.com/Helvesec/rmux/actions/workflows/ci.yml)
-[![rmux 0.6.0](https://img.shields.io/badge/rmux-0.6.0-informational.svg)](#install)
+[![rmux 0.6.1](https://img.shields.io/badge/rmux-0.6.1-informational.svg)](#install)
 [![Platform: Linux | macOS | Windows](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-lightgrey.svg)](#platform-support)
 [![Unsafe policy](https://img.shields.io/badge/unsafe-restricted-success.svg)](#verification)
 
@@ -112,11 +112,11 @@ sudo curl -fsSL https://packages.rmux.io/rpm/rmux.repo -o /etc/yum.repos.d/rmux.
 sudo dnf install rmux
 ```
 
-Direct downloads are available from the [v0.6.0 GitHub Release](https://github.com/helvesec/rmux/releases/tag/v0.6.0):
+Direct downloads are available from the [v0.6.1 GitHub Release](https://github.com/helvesec/rmux/releases/tag/v0.6.1):
 
-- `rmux-0.6.0-linux-x86_64.tar.gz`
-- `rmux_0.6.0_amd64.deb`
-- `rmux-0.6.0-1.x86_64.rpm`
+- `rmux-0.6.1-linux-x86_64.tar.gz`
+- `rmux_0.6.1_amd64.deb`
+- `rmux-0.6.1-1.x86_64.rpm`
 
 </details>
 
@@ -136,10 +136,10 @@ curl -fsSL https://rmux.io/install.sh | sh
 brew install helvesec/rmux/rmux
 ```
 
-Direct downloads are available from the [v0.6.0 GitHub Release](https://github.com/helvesec/rmux/releases/tag/v0.6.0):
+Direct downloads are available from the [v0.6.1 GitHub Release](https://github.com/helvesec/rmux/releases/tag/v0.6.1):
 
-- `rmux-0.6.0-macos-aarch64.tar.gz`
-- `rmux-0.6.0-macos-x86_64.tar.gz`
+- `rmux-0.6.1-macos-aarch64.tar.gz`
+- `rmux-0.6.1-macos-x86_64.tar.gz`
 
 </details>
 
@@ -160,9 +160,9 @@ scoop bucket add rmux https://github.com/Helvesec/scoop-rmux
 scoop install rmux
 ```
 
-Direct downloads are available from the [v0.6.0 GitHub Release](https://github.com/helvesec/rmux/releases/tag/v0.6.0):
+Direct downloads are available from the [v0.6.1 GitHub Release](https://github.com/helvesec/rmux/releases/tag/v0.6.1):
 
-- `rmux-0.6.0-windows-x86_64.zip`
+- `rmux-0.6.1-windows-x86_64.zip`
 
 </details>
 
@@ -291,9 +291,9 @@ fn render(snapshot: PaneSnapshot, area: Rect, buffer: &mut Buffer) {
 <div align="center">
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="https://rmux.io/rmux-architecture-dark.png?v=0.6.0-web-share">
-  <source media="(prefers-color-scheme: light)" srcset="https://rmux.io/rmux-architecture-light.png?v=0.6.0-web-share">
-  <img src="https://rmux.io/rmux-architecture-dark.png?v=0.6.0-web-share" alt="RMUX runtime architecture" width="800">
+  <source media="(prefers-color-scheme: dark)" srcset="https://rmux.io/rmux-architecture-dark.png?v=0.6.1-web-share">
+  <source media="(prefers-color-scheme: light)" srcset="https://rmux.io/rmux-architecture-light.png?v=0.6.1-web-share">
+  <img src="https://rmux.io/rmux-architecture-dark.png?v=0.6.1-web-share" alt="RMUX runtime architecture" width="800">
 </picture>
 
 </div>

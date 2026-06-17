@@ -186,14 +186,13 @@ pub(crate) fn incompatible_daemon_message(incompatible: &IncompatibleDaemon) -> 
     let daemon = incompatible
         .daemon_version
         .as_deref()
-        .unwrap_or("an older release");
-    let client_version = client_version();
+        .unwrap_or("from an older release");
     match incompatible.daemon_wire_version {
         Some(wire_version) => format!(
-            "daemon {daemon} is not compatible with this client v{client_version} (daemon protocol {wire_version}, client protocol {RMUX_WIRE_VERSION})"
+            "running daemon {daemon} uses incompatible protocol {wire_version}; this client supports protocol {RMUX_WIRE_VERSION}"
         ),
         None => format!(
-            "daemon {daemon} is not compatible with this client v{client_version} (client protocol {RMUX_WIRE_VERSION})"
+            "running daemon {daemon} uses an incompatible protocol; this client supports protocol {RMUX_WIRE_VERSION}"
         ),
     }
 }

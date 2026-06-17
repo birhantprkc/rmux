@@ -15,7 +15,7 @@ use crate::ClientError;
 use rmux_ipc::{connect_blocking, BlockingLocalStream, LocalEndpoint};
 use rmux_proto::{
     encode_frame, AttachSessionResponse, ControlMode, ControlModeResponse, FrameDecoder,
-    HandshakeRequest, Request, Response, RmuxError,
+    HandshakeRequest, Request, Response, RmuxError, RMUX_FRAME_MAGIC, RMUX_WIRE_VERSION,
 };
 
 /// Read buffer size for blocking socket reads.
@@ -26,6 +26,8 @@ const SOCKET_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 const SOCKET_WRITE_TIMEOUT: Duration = Duration::from_secs(5);
 /// Default timeout for ordinary detached RPC response reads.
 const SOCKET_RESPONSE_TIMEOUT: Duration = Duration::from_secs(15);
+/// Legacy wire version kept only for targeted shutdown of pre-0.6 daemons.
+const LEGACY_SHUTDOWN_WIRE_VERSION: u8 = 1;
 
 #[cfg(all(test, unix))]
 const FALLBACK_SOCKET_ROOT: &str = "/tmp";
@@ -262,6 +264,14 @@ impl Connection {
         self.stream.write_all(&frame).map_err(ClientError::Io)
     }
 
+    pub(crate) fn write_legacy_wire_v1_request(
+        &mut self,
+        request: &Request,
+    ) -> Result<(), ClientError> {
+        let frame = encode_legacy_wire_v1_frame(request)?;
+        self.stream.write_all(&frame).map_err(ClientError::Io)
+    }
+
     pub(crate) fn read_response(&mut self) -> Result<Response, ClientError> {
         let mut buffer = [0u8; READ_BUFFER_SIZE];
 
@@ -316,6 +326,31 @@ impl Connection {
             response,
             stream: self.stream,
         })
+    }
+}
+
+fn encode_legacy_wire_v1_frame(request: &Request) -> Result<Vec<u8>, ClientError> {
+    let mut frame = encode_frame(request).map_err(ClientError::Protocol)?;
+    if frame.first().copied() != Some(RMUX_FRAME_MAGIC) {
+        return Err(ClientError::Protocol(RmuxError::Encode(
+            "current frame encoder produced an invalid RMUX envelope".to_owned(),
+        )));
+    }
+
+    if RMUX_WIRE_VERSION > 0x7f {
+        return Err(ClientError::Protocol(RmuxError::Encode(
+            "legacy shutdown recovery expects a single-byte current wire version".to_owned(),
+        )));
+    }
+
+    match frame.get_mut(1) {
+        Some(version) if *version == RMUX_WIRE_VERSION as u8 => {
+            *version = LEGACY_SHUTDOWN_WIRE_VERSION;
+            Ok(frame)
+        }
+        _ => Err(ClientError::Protocol(RmuxError::Encode(
+            "current frame encoder used an unexpected wire-version envelope".to_owned(),
+        ))),
     }
 }
 

@@ -12,7 +12,7 @@ use std::time::Duration;
 
 use rmux_proto::{
     encode_frame, ErrorResponse, FrameDecoder, HandshakeRequest, HandshakeResponse,
-    HasSessionRequest, HasSessionResponse, Request, Response, RmuxError,
+    HasSessionRequest, HasSessionResponse, Request, Response, RmuxError, RMUX_FRAME_MAGIC,
 };
 
 use super::{is_absent_error, socket_path_from_parts, ClientError};
@@ -505,6 +505,32 @@ fn supports_capability_treats_error_response_as_unsupported() {
     );
 
     server.join().expect("server thread joins");
+}
+
+#[test]
+fn legacy_wire_v1_request_writer_uses_v1_shutdown_envelope() {
+    let (client_stream, mut server_stream) = UnixStream::pair().expect("create stream pair");
+    let mut connection = super::Connection::new(client_stream).expect("connection with timeout");
+
+    connection
+        .write_legacy_wire_v1_request(&Request::KillServer(rmux_proto::KillServerRequest))
+        .expect("write legacy kill-server request");
+
+    let mut buffer = [0_u8; 64];
+    let bytes_read = server_stream
+        .read(&mut buffer)
+        .expect("read legacy shutdown frame");
+    assert!(bytes_read >= 10, "legacy frame should include envelope and tag");
+    assert_eq!(buffer[0], RMUX_FRAME_MAGIC);
+    assert_eq!(buffer[1], 1, "legacy shutdown must use wire version 1");
+
+    let length = u32::from_le_bytes(
+        buffer[2..6]
+            .try_into()
+            .expect("single-byte wire version leaves length at offset 2"),
+    );
+    assert_eq!(length, 4, "empty KillServer payload only carries enum tag");
+    assert_eq!(&buffer[6..10], &72_u32.to_le_bytes());
 }
 
 #[test]
