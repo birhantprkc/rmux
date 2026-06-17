@@ -4,18 +4,10 @@ updates:
     directory: /
     schedule:
       interval: weekly
-    open-pull-requests-limit: 10
-    groups:
-      cargo-minor-patch:
-        update-types:
-          - minor
-          - patch
+    open-pull-requests-limit: 0
 
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
-    groups:
-      actions-all:
-        patterns:
-          - "*"
+    open-pull-requests-limit: 0
