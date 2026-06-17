@@ -164,6 +164,8 @@ mod imp {
     fn flush_input(fd: libc::c_int) -> std::io::Result<()> {
         // Best-effort cleanup for terminal emulators that answer OSC palette queries late.
         // Without this, unread replies can be consumed and echoed by the user's shell.
+        // SAFETY: `fd` is borrowed for a `tcflush` call that only affects the terminal input
+        // queue. Invalid descriptors are reported through the libc return value.
         if unsafe { libc::tcflush(fd, libc::TCIFLUSH) } == 0 {
             Ok(())
         } else {
@@ -263,6 +265,8 @@ mod imp {
         fn open_pty_pair() -> (File, File) {
             let mut master = -1;
             let mut slave = -1;
+            // SAFETY: `master` and `slave` are valid writable out-pointers. Null optional
+            // arguments request libc defaults, and success initializes both descriptors.
             let result = unsafe {
                 libc::openpty(
                     &mut master,
@@ -278,6 +282,8 @@ mod imp {
                 "openpty failed: {}",
                 std::io::Error::last_os_error()
             );
+            // SAFETY: `openpty` returned success, so both raw file descriptors are initialized
+            // and ownership is transferred exactly once into `File`.
             unsafe { (File::from_raw_fd(master), File::from_raw_fd(slave)) }
         }
     }
