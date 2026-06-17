@@ -373,7 +373,7 @@ fn probe_connected_server_reports_incompatible_wire_version() {
 
     assert!(matches!(error, AutoStartError::IncompatibleDaemon { .. }));
     let message = error.to_string();
-    assert!(message.contains("running daemon from an older release uses an incompatible protocol"));
+    assert!(message.contains("running daemon from an older release uses incompatible protocol 1"));
     assert!(message.contains("rmux -S /tmp/rmux-probe-wire-v1.sock kill-server"));
     server_thread
         .join()

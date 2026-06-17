@@ -96,7 +96,7 @@ curl -fsSL https://rmux.io/install.sh | sh
 Binaire macOS avec Homebrew :
 
 ```sh
-brew install helvesec/rmux/rmux
+brew install rmux
 ```
 
 Paquets Linux :

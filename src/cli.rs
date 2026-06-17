@@ -184,6 +184,7 @@ fn parse_failure_or_absent_server(
     match connect(&resolved) {
         Ok(_) if error.kind() == clap::error::ErrorKind::InvalidSubcommand => {
             alias_fallback::run_unknown_command_through_server_aliases(args, &resolved)
+                .map_err(|error| error.with_socket_context(&resolved))
         }
         Ok(_) => Err(ExitFailure::from_clap(error)),
         Err(connect_error) => Err(ExitFailure::from_client_connect(&resolved, connect_error)),

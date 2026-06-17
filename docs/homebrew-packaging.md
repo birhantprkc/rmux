@@ -34,11 +34,11 @@ ruby -c ../homebrew-rmux/Formula/rmux.rb
 brew style ../homebrew-rmux/Formula/rmux.rb
 ```
 
-The tap repository is separate from this source repository. The expected user
-install command is:
+The generated tap repository is separate from this source repository. The
+canonical Homebrew user install command is:
 
 ```sh
-brew install helvesec/rmux/rmux
+brew install rmux
 ```
 
 The release orchestrator should run the generator after `release.yml` has

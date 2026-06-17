@@ -290,12 +290,12 @@ fn probe_connected_server(
     loop {
         match probe_server_readiness(&mut connection) {
             Ok(()) => return Ok(connection),
-            Err(error) if unsupported_wire_version(&error) => {
+            Err(ClientError::Protocol(RmuxError::UnsupportedWireVersion { got, .. })) => {
                 return Err(AutoStartError::IncompatibleDaemon {
                     socket_path: socket_path.to_path_buf(),
                     message: upgrade::incompatible_daemon_message(&upgrade::IncompatibleDaemon {
                         daemon_version: None,
-                        daemon_wire_version: None,
+                        daemon_wire_version: Some(got),
                     }),
                 });
             }
@@ -601,13 +601,6 @@ fn is_transient_connect_error(error: &ClientError) -> bool {
                     | io::ErrorKind::Interrupted
                     | io::ErrorKind::TimedOut
             )
-    )
-}
-
-fn unsupported_wire_version(error: &ClientError) -> bool {
-    matches!(
-        error,
-        ClientError::Protocol(RmuxError::UnsupportedWireVersion { .. })
     )
 }
 

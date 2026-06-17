@@ -82,23 +82,52 @@ fn spawn_incompatible_wire_server(socket_path: &Path) -> io::Result<JoinHandle<i
             ));
         }
 
-        let response = Response::Error(ErrorResponse {
-            error: RmuxError::UnsupportedWireVersion {
-                got: RMUX_WIRE_VERSION,
-                minimum: 1,
-                maximum: 1,
-            },
-        });
-        let mut frame = encode_frame(&response)
-            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
-        if frame.get(1).copied() != Some(RMUX_WIRE_VERSION as u8) {
+        write_legacy_incompatible_wire_response(&mut stream)
+    });
+    Ok(handle)
+}
+
+fn write_legacy_incompatible_wire_response(stream: &mut impl Write) -> io::Result<()> {
+    let response = Response::Error(ErrorResponse {
+        error: RmuxError::UnsupportedWireVersion {
+            got: RMUX_WIRE_VERSION,
+            minimum: 1,
+            maximum: 1,
+        },
+    });
+    let mut frame = encode_frame(&response)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    if frame.get(1).copied() != Some(RMUX_WIRE_VERSION as u8) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "unexpected encoded RMUX wire envelope",
+        ));
+    }
+    frame[1] = 1;
+    stream.write_all(&frame)
+}
+
+fn spawn_alias_fallback_incompatible_wire_server(
+    socket_path: &Path,
+) -> io::Result<JoinHandle<io::Result<()>>> {
+    if let Some(parent) = socket_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let _ = fs::remove_file(socket_path);
+    let listener = UnixListener::bind(socket_path)?;
+    let handle = thread::spawn(move || {
+        let (_probe, _) = listener.accept()?;
+        let (mut stream, _) = listener.accept()?;
+        let mut buffer = [0_u8; 1024];
+        let bytes_read = stream.read(&mut buffer)?;
+        if bytes_read == 0 {
             return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                "unexpected encoded RMUX wire envelope",
+                io::ErrorKind::UnexpectedEof,
+                "client closed before sending alias fallback request",
             ));
         }
-        frame[1] = 1;
-        stream.write_all(&frame)
+
+        write_legacy_incompatible_wire_response(&mut stream)
     });
     Ok(handle)
 }
@@ -172,6 +201,29 @@ fn incompatible_wire_error_targets_explicit_socket_command() -> Result<(), Box<d
     server
         .join()
         .expect("fake incompatible server should exit")?;
+    Ok(())
+}
+
+#[test]
+fn alias_fallback_incompatible_wire_error_keeps_socket_context() -> Result<(), Box<dyn Error>> {
+    let harness = CliHarness::new("wire-incompatible-alias-fallback")?;
+    let server = spawn_alias_fallback_incompatible_wire_server(harness.socket_path())?;
+
+    let output = harness.run(&["not-a-command"])?;
+
+    assert_eq!(output.status.code(), Some(1));
+    let stderr = stderr(&output);
+    assert!(
+        stderr.contains("uses an incompatible protocol"),
+        "stderr should explain protocol incompatibility, got: {stderr}"
+    );
+    assert!(
+        stderr.contains("rmux: run `rmux kill-server` to stop it, then retry."),
+        "alias fallback should keep default socket restart guidance, got: {stderr}"
+    );
+    server
+        .join()
+        .expect("fake incompatible alias server should exit")?;
     Ok(())
 }
 
