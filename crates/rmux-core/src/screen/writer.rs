@@ -37,16 +37,15 @@ impl ScreenWriter for Screen {
 
     fn cursor_left(&mut self, n: u32) {
         self.clear_pending_wrap();
-        for _ in 0..n {
-            self.cursor_x = self.previous_cell_x(self.cursor_y, self.cursor_x);
-        }
+        self.cursor_x = self.cursor_column().saturating_sub(n);
     }
 
     fn cursor_right(&mut self, n: u32) {
         self.clear_pending_wrap();
-        for _ in 0..n {
-            self.cursor_x = self.next_cell_x(self.cursor_y, self.cursor_x);
-        }
+        self.cursor_x = self
+            .cursor_column()
+            .saturating_add(n)
+            .min(self.max_cursor_x());
     }
 
     fn cursor_move(&mut self, col: i32, row: i32, origin_mode: bool) {
@@ -154,20 +153,20 @@ impl ScreenWriter for Screen {
     fn backspace(&mut self) {
         self.clear_pending_wrap();
         let cx = self.cursor_column();
-        if cx == 0 {
-            if self.cursor_y == 0 {
-                return;
-            }
-            if self
-                .grid
-                .visible_line(self.cursor_y - 1)
-                .is_some_and(|line| line.flags().contains(GridLineFlags::WRAPPED))
-            {
-                self.cursor_y -= 1;
-                self.cursor_x = self.previous_cell_x(self.cursor_y, self.grid.sx());
-            }
-        } else {
-            self.cursor_x = self.previous_cell_x(self.cursor_y, cx);
+        if cx > 0 {
+            self.cursor_x = cx - 1;
+            return;
+        }
+        if self.cursor_y == 0 {
+            return;
+        }
+        if self
+            .grid
+            .visible_line(self.cursor_y - 1)
+            .is_some_and(|line| line.flags().contains(GridLineFlags::WRAPPED))
+        {
+            self.cursor_y -= 1;
+            self.cursor_x = self.max_cursor_x();
         }
     }
 
@@ -200,6 +199,7 @@ impl ScreenWriter for Screen {
                     *target = blank.clone();
                 }
             }
+            Self::repair_wide_cells_on_line(line, sx, bg);
             line.touch();
         }
     }
@@ -222,6 +222,7 @@ impl ScreenWriter for Screen {
                         .unwrap_or_else(|| blank.clone());
                 }
             }
+            Self::repair_wide_cells_on_line(line, sx, bg);
             line.touch();
         }
     }
