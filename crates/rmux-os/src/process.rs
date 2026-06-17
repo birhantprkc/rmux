@@ -130,7 +130,7 @@ pub mod unix {
     }
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(not(windows))]
 fn parent_pid_impl(_pid: u32) -> io::Result<Option<u32>> {
     Ok(None)
 }
@@ -213,11 +213,6 @@ fn raw_environment_impl(pid: u32) -> io::Result<Option<Vec<(OsString, OsString)>
         Err(error) => return Err(error),
     };
     Ok(Some(raw_environment_from_nul_entries(&environ)))
-}
-
-#[cfg(target_os = "macos")]
-fn parent_pid_impl(_pid: u32) -> io::Result<Option<u32>> {
-    Ok(None)
 }
 
 #[cfg(target_os = "macos")]

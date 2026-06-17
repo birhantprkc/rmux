@@ -195,7 +195,7 @@ impl TerminalProfile {
     fn from_resolved_environment(
         mut resolved: HashMap<String, String>,
         raw_base_environment: Option<&[(OsString, OsString)]>,
-        mut suppressed_raw_names: HashSet<String>,
+        suppressed_raw_names: HashSet<String>,
         options: &OptionStore,
         session_name: &SessionName,
         session_id: u32,
@@ -246,11 +246,8 @@ impl TerminalProfile {
 
         let cwd = resolve_working_directory(requested_cwd)?;
         let shell = resolve_shell_path(options, Some(session_name), &resolved);
-        #[cfg(windows)]
-        {
-            remove_environment_value(&mut resolved, CLIENT_SHELL_ENV);
-            suppressed_raw_names.insert(CLIENT_SHELL_ENV.to_owned());
-        }
+        let suppressed_raw_names =
+            suppress_client_shell_environment(&mut resolved, suppressed_raw_names);
         set_environment_value(
             &mut resolved,
             "SHELL".to_owned(),
@@ -516,6 +513,24 @@ impl TerminalProfile {
     fn environment_map(&self) -> HashMap<String, String> {
         environment_from_os_pairs(self.raw_environment.iter().cloned())
     }
+}
+
+#[cfg(windows)]
+fn suppress_client_shell_environment(
+    resolved: &mut HashMap<String, String>,
+    mut suppressed_raw_names: HashSet<String>,
+) -> HashSet<String> {
+    remove_environment_value(resolved, CLIENT_SHELL_ENV);
+    suppressed_raw_names.insert(CLIENT_SHELL_ENV.to_owned());
+    suppressed_raw_names
+}
+
+#[cfg(not(windows))]
+fn suppress_client_shell_environment(
+    _resolved: &mut HashMap<String, String>,
+    suppressed_raw_names: HashSet<String>,
+) -> HashSet<String> {
+    suppressed_raw_names
 }
 
 pub(crate) fn base_process_environment() -> HashMap<String, String> {
