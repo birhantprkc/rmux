@@ -64,6 +64,7 @@ manifest() {
   nested_path="rmux-$version-windows-x86_64\\rmux.exe"
 
   cat <<EOF
+# yaml-language-server: \$schema=https://aka.ms/winget-manifest.singleton.1.10.0.schema.json
 PackageIdentifier: "$identifier"
 PackageVersion: "$version"
 PackageLocale: "en-US"
@@ -90,7 +91,7 @@ Installers:
     InstallerUrl: "$base_url/$asset"
     InstallerSha256: "$sha"
 ManifestType: "singleton"
-ManifestVersion: "1.12.0"
+ManifestVersion: "1.10.0"
 EOF
 }
 

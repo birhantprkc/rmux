@@ -320,7 +320,10 @@ jobs:
             --version "$version" \
             --checksums release-assets/SHA256SUMS \
             --output target/package-managers/winget/Helvesec.RMUX.yaml
-          sed -i '/^# yaml-language-server:/d' target/package-managers/winget/Helvesec.RMUX.yaml
+          sed -i \
+            -e 's/winget-manifest\.singleton\.1\.12\.0\.schema\.json/winget-manifest.singleton.1.10.0.schema.json/' \
+            -e 's/ManifestVersion: "1\.12\.0"/ManifestVersion: "1.10.0"/' \
+            target/package-managers/winget/Helvesec.RMUX.yaml
           scripts/generate-scoop-manifest.sh \
             --version "$version" \
             --checksums release-assets/SHA256SUMS \

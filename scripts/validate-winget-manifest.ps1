@@ -170,7 +170,7 @@ AssertManifestValue "RelativeFilePath" $expectedRelativePath
 AssertManifestValue "PortableCommandAlias" "rmux"
 AssertManifestValue "InstallerUrl" $expectedUrl
 AssertManifestValue "ManifestType" "singleton"
-AssertManifestValue "ManifestVersion" "1.12.0"
+AssertManifestValue "ManifestVersion" "1.10.0"
 
 $actualSha256 = ReadManifestValue "InstallerSha256"
 if ($actualSha256 -notmatch '^[0-9a-fA-F]{64}$') {
