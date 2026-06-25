@@ -191,7 +191,7 @@ AssertManifestValue "PackageIdentifier" $Identifier
 AssertManifestValue "PackageVersion" $versionValue
 AssertManifestValue "DefaultLocale" "en-US"
 AssertManifestValue "ManifestType" "version"
-AssertManifestValue "ManifestVersion" "1.12.0"
+AssertManifestValue "ManifestVersion" "1.10.0"
 
 UseManifest $installerManifest
 AssertManifestValue "PackageIdentifier" $Identifier
@@ -206,7 +206,7 @@ AssertManifestLine "- PackageIdentifier: Microsoft.VCRedist.2015+.x64"
 AssertManifestValue "Architecture" "x64"
 AssertManifestValue "InstallerUrl" $expectedUrl
 AssertManifestValue "ManifestType" "installer"
-AssertManifestValue "ManifestVersion" "1.12.0"
+AssertManifestValue "ManifestVersion" "1.10.0"
 
 $releaseDate = ReadManifestValue "ReleaseDate"
 if ($releaseDate -notmatch '^[0-9]{4}-[0-9]{2}-[0-9]{2}$') {
@@ -235,6 +235,6 @@ AssertManifestValue "License" "MIT OR Apache-2.0"
 AssertManifestValue "Moniker" "rmux"
 AssertManifestValue "ReleaseNotesUrl" "https://github.com/$Repository/releases/tag/v$versionValue"
 AssertManifestValue "ManifestType" "defaultLocale"
-AssertManifestValue "ManifestVersion" "1.12.0"
+AssertManifestValue "ManifestVersion" "1.10.0"
 
 Write-Output "WinGet manifest OK: $Identifier $versionValue multi-file"

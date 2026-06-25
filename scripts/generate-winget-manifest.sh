@@ -58,11 +58,13 @@ asset_sha256() {
 
 version_manifest() {
   cat <<EOF
+# yaml-language-server: \$schema=https://aka.ms/winget-manifest.version.1.10.0.schema.json
+
 PackageIdentifier: $identifier
 PackageVersion: $version
 DefaultLocale: en-US
 ManifestType: version
-ManifestVersion: 1.12.0
+ManifestVersion: 1.10.0
 EOF
 }
 
@@ -75,6 +77,8 @@ installer_manifest() {
   nested_path="rmux-$version-windows-x86_64\\rmux.exe"
 
   cat <<EOF
+# yaml-language-server: \$schema=https://aka.ms/winget-manifest.installer.1.10.0.schema.json
+
 PackageIdentifier: $identifier
 PackageVersion: $version
 InstallerType: zip
@@ -91,7 +95,7 @@ Installers:
     InstallerUrl: $base_url/$asset
     InstallerSha256: $sha
 ManifestType: installer
-ManifestVersion: 1.12.0
+ManifestVersion: 1.10.0
 EOF
 }
 
@@ -100,6 +104,8 @@ locale_manifest() {
   owner="${repository%%/*}"
 
   cat <<EOF
+# yaml-language-server: \$schema=https://aka.ms/winget-manifest.locale.1.10.0.schema.json
+
 PackageIdentifier: $identifier
 PackageVersion: $version
 PackageLocale: en-US
@@ -122,7 +128,7 @@ Tags:
   - tmux
 ReleaseNotesUrl: https://github.com/$repository/releases/tag/v$version
 ManifestType: defaultLocale
-ManifestVersion: 1.12.0
+ManifestVersion: 1.10.0
 EOF
 }
 
