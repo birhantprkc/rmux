@@ -16,4 +16,3 @@ Repository docs:
 Repository-local guides:
 
 - [Human-friendly starter config](human-friendly-config.md)
-- [Snap packaging](snap-packaging.md)

@@ -42,7 +42,7 @@ def scp_windows_path(repo: str, suffix: str) -> str:
 def collect_local_unix(platform_id: str, iterations: int, skip_build: bool, dry_run: bool, timeout: int) -> None:
     out = f"target/benchmarks/{platform_id}.json"
     cmd = [
-        "tools/bench/run-unix.sh",
+        "scripts/bench/run-unix.sh",
         "--iterations",
         str(iterations),
         "--out",
@@ -62,7 +62,7 @@ def collect_windows(
     timeout: int,
 ) -> None:
     out = remote_windows_path(repo, "target\\benchmarks\\windows.json")
-    runner = remote_windows_path(repo, "tools\\bench\\run-windows.ps1")
+    runner = remote_windows_path(repo, "scripts\\bench\\run-windows.ps1")
     args = ["-Iterations", str(iterations), "-Out", powershell_literal(out)]
     if skip_build:
         args.append("-SkipBuild")
@@ -94,7 +94,7 @@ def collect_linux(
 ) -> None:
     parts = [
         'PATH="$HOME/.cargo/bin:$PATH"',
-        "tools/bench/run-unix.sh",
+        "scripts/bench/run-unix.sh",
         "--iterations",
         str(iterations),
         "--out",
@@ -118,7 +118,7 @@ def render(output: Path, asset_dir: Path, dry_run: bool, timeout: int) -> None:
     run(
         [
             sys.executable,
-            "tools/bench/render.py",
+            "scripts/bench/render.py",
             *inputs,
             "--output",
             str(output),

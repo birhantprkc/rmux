@@ -45,7 +45,6 @@
             # choose-tree redraw races) — unreliable in the hermetic,
             # CPU-saturated build sandbox even though they pass under
             # `cargo test`. The full suite runs in the project's CI and locally.
-            # See docs/nix-packaging.md.
             doCheck = false;
 
             # The workspace defaults to publish = false for library crates and

@@ -7,7 +7,7 @@
   "binary": {"path":"/tmp/rmux-base-0.6.5-target/release/rmux","size_bytes":14111032},
   "memory": {"rss_proxy_kib":4560,"status":"collected","note":"/usr/bin/time -v diagnose --json proxy"},
   "parameters": {"iterations":30,"line_count":5000},
-  "artifacts": {"schema1_json":"/tmp/rmux-perf-base-clean-30/schema1/unix-20260620-160046.json","schema1_summary":"/tmp/rmux-perf-base-clean-30/schema1/unix-20260620-160046.txt","baseline_file":"docs/perf/baselines.md","fixture_manifest":"benches/perf/fixtures/MANIFEST.sha256"},
+  "artifacts": {"schema1_json":"/tmp/rmux-perf-base-clean-30/schema1/unix-20260620-160046.json","schema1_summary":"/tmp/rmux-perf-base-clean-30/schema1/unix-20260620-160046.txt","baseline_file":"benches/perf/baselines/release-0.7.0.json","fixture_manifest":"benches/perf/fixtures/MANIFEST.sha256"},
   "required_targets": [
     {"name":"attach_deep_scrollback_render","status":"pending","source_metric":"","note":"requires attach render golden harness"},
     {"name":"pane_snapshot_deep_scrollback_80x24_200x60","status":"proxy","source_metric":"capture_pane_5000_lines","note":"current CLI proxy until SDK snapshot bench lands"},

@@ -44,8 +44,7 @@ tiny-path compatibility issues.
 
 Windows packages for `0.7.0` use the same public tiny/private helper split:
 `rmux.exe` is the public tiny dispatcher, `libexec/rmux/rmux.exe` is the private
-full helper, and `rmux-daemon.exe` is the daemon. See
-`docs/windows-package-managers.md` for the Windows package-manager checklist.
+full helper, and `rmux-daemon.exe` is the daemon.
 
 Platform-specific behavior is kept behind crate boundaries:
 

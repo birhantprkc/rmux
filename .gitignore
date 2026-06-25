@@ -8,7 +8,7 @@ __pycache__/
 /parts/
 /prime/
 /stage/
-fuzz/target/
+/scripts/fuzz/target/
 tests/reference/screenshots/*/*/
 SDK demo/node_modules/
 SDK demo/.astro/
@@ -22,7 +22,7 @@ SDK demo/playwright-report/
 /rmux-release.sh
 /.release-deployment/
 /.rmux-audit/
-/tools/bench/README.md
+/scripts/bench/README.md
 
 # Local secret material and environment overrides.
 .env

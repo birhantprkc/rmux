@@ -33,7 +33,7 @@ Usage:
 Commands:
     --help, -h, help            Print this help text.
     feature-inventory --check
-                                Validate spec/feature-inventory-v1.yaml.
+                                Validate xtask/spec/feature-inventory-v1.yaml.
     feature-inventory --check-file-sizes
                                 Check tracked rmux-sdk source-size exceptions.
     feature-inventory --render-markdown

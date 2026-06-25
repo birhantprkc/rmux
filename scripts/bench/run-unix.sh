@@ -51,7 +51,7 @@ while [ "$#" -gt 0 ]; do
             ;;
         -h|--help)
             cat <<'USAGE'
-usage: tools/bench/run-unix.sh --out target/benchmarks/<linux|macos>.json
+usage: scripts/bench/run-unix.sh --out target/benchmarks/<linux|macos>.json
                                 [--iterations N] [--layout DIR]
                                 [--binary PATH] [--skip-build]
                                 [--sample-progress] [--quiet]
@@ -59,7 +59,7 @@ usage: tools/bench/run-unix.sh --out target/benchmarks/<linux|macos>.json
                                 [--only-operations OP1,OP2]
 
 Runs a local Unix benchmark and writes a JSON artifact consumed by
-tools/bench/render.py. The script clears RMUX/TMUX/TERM_PROGRAM so benchmark
+scripts/bench/render.py. The script clears RMUX/TMUX/TERM_PROGRAM so benchmark
 servers do not target the orchestrating terminal.
 
 By default, this builds and measures a package-like tiny release layout:
@@ -164,4 +164,4 @@ if [ -n "$daemon_binary" ]; then
     args+=(--rmux-daemon-binary "$daemon_binary")
 fi
 
-python3 tools/bench/bench_unix.py "${args[@]}"
+python3 scripts/bench/bench_unix.py "${args[@]}"

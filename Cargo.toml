@@ -82,7 +82,6 @@ include = [
     "build.rs",
     "resources/windows/rmux.exe.manifest",
     "docs/man/rmux.1",
-    "spec/**",
     "src/**",
     "tests/**",
 ]

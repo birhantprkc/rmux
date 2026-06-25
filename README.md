@@ -237,7 +237,6 @@ The full documentation is available at [rmux.io/docs](https://rmux.io/docs/).
 - [Examples](https://rmux.io/docs/examples/)
 - [API reference](https://rmux.io/docs/api/)
 - [Human-friendly config](docs/human-friendly-config.md)
-- [Nix packaging](docs/nix-packaging.md)
 - [Web Share](https://rmux.io/docs/web-share/)
 
 ## 🏗️ Architecture

@@ -168,7 +168,7 @@ timestamp="$(date -u +%Y%m%d-%H%M%S)"
 json_path="$output_dir/baseline-$timestamp.json"
 
 fixture_manifest="benches/perf/fixtures/MANIFEST.sha256"
-baseline_file="docs/perf/baselines.md"
+baseline_file="$output_dir/baselines.md"
 
 target_json_line() {
     local name="$1"
@@ -231,6 +231,17 @@ target_json_line() {
     printf '}\n'
 } >"$json_path"
 
+{
+    printf '# RMUX Perf Baseline\n\n'
+    printf 'Generated at `%s`.\n\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    printf '- JSON artifact: `%s`\n' "$json_path"
+    printf '- Schema 1 JSON: `%s`\n' "$legacy_json"
+    printf '- Schema 1 summary: `%s`\n' "$legacy_summary"
+    printf '- Fixture manifest: `%s`\n\n' "$fixture_manifest"
+    printf 'This file is generated beside local perf baseline artifacts and is not release-facing documentation.\n'
+} >"$baseline_file"
+
 printf 'json=%s\n' "$json_path"
 printf 'schema1_json=%s\n' "$legacy_json"
 printf 'schema1_summary=%s\n' "$legacy_summary"
+printf 'baseline_file=%s\n' "$baseline_file"

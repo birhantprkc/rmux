@@ -9,7 +9,7 @@ cargo-fuzz = true
 
 [dependencies]
 libfuzzer-sys = "0.4"
-rmux-server = { path = "../crates/rmux-server", features = ["web", "fuzzing"] }
+rmux-server = { path = "../../crates/rmux-server", features = ["web", "fuzzing"] }
 
 [workspace]
 
