@@ -675,12 +675,23 @@ jobs:
           fi
 
       - name: Publish Snap to latest/candidate
+        id: publish_snap
+        continue-on-error: true
         uses: snapcore/action-publish@214b86e5ca036ead1668c79afb81e550e6c54d40
         env:
           SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.SNAPCRAFT_STORE_CREDENTIALS }}
         with:
           snap: ${{ steps.snap.outputs.snap }}
           release: latest/candidate
+
+      - name: Report Snap Store manual review
+        if: steps.publish_snap.outcome == 'failure'
+        shell: bash
+        run: |
+          cat <<'EOF'
+          Snap Store did not publish this upload automatically.
+          Classic confinement can require manual Store review; the signed .snap artifact remains attached to the GitHub Release.
+          EOF
 
   validate-winget:
     name: Validate WinGet manifest

@@ -58,8 +58,6 @@ asset_sha256() {
 
 version_manifest() {
   cat <<EOF
-# yaml-language-server: \$schema=https://aka.ms/winget-manifest.version.1.12.0.schema.json
-
 PackageIdentifier: $identifier
 PackageVersion: $version
 DefaultLocale: en-US
@@ -77,8 +75,6 @@ installer_manifest() {
   nested_path="rmux-$version-windows-x86_64\\rmux.exe"
 
   cat <<EOF
-# yaml-language-server: \$schema=https://aka.ms/winget-manifest.installer.1.12.0.schema.json
-
 PackageIdentifier: $identifier
 PackageVersion: $version
 InstallerType: zip
@@ -104,8 +100,6 @@ locale_manifest() {
   owner="${repository%%/*}"
 
   cat <<EOF
-# yaml-language-server: \$schema=https://aka.ms/winget-manifest.defaultLocale.1.12.0.schema.json
-
 PackageIdentifier: $identifier
 PackageVersion: $version
 PackageLocale: en-US
