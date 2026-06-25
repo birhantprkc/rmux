@@ -99,7 +99,7 @@ run_step "workspace clippy" \
 run_step "tiny parser and boundary tests" \
   cargo test -p rmux --features tiny-cli tiny_main --locked
 run_step "mutating target-action retry tests" \
-  cargo test -p rmux --locked target_action_retry_is_limited
+  cargo test -p rmux --bin rmux --locked target_action_retry_is_limited
 
 if [ "$skip_package" -eq 0 ]; then
   args=(--target-dir "$target_dir")
