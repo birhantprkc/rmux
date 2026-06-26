@@ -435,10 +435,15 @@ fn tiny_tmux_invocation_honors_internal_override() {
         &os_args(&["rmux", "list-sessions"]),
         Some(OsStr::new("1")),
     ));
-    assert!(!invoked_as_tmux_from(
-        &os_args(&["rmux", "list-sessions"]),
-        Some(OsStr::new("")),
-    ));
+    for value in ["", "0", "true", "yes"] {
+        assert!(
+            !invoked_as_tmux_from(
+                &os_args(&["rmux", "list-sessions"]),
+                Some(OsStr::new(value))
+            ),
+            "internal tmux override should require exactly 1, got {value:?}"
+        );
+    }
 }
 
 #[cfg(windows)]
