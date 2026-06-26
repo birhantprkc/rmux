@@ -362,6 +362,40 @@ async fn queued_if_shell_compact_mouse_target_falls_back_to_current_target() {
 }
 
 #[tokio::test]
+async fn queued_if_shell_separated_mouse_target_falls_back_to_current_target() {
+    let handler = RequestHandler::new();
+    let alpha = session_name("alpha");
+    let beta = session_name("beta");
+    for session in [&alpha, &beta] {
+        assert!(matches!(
+            handler
+                .handle(Request::NewSession(NewSessionRequest {
+                    session_name: session.clone(),
+                    detached: true,
+                    size: Some(TerminalSize { cols: 80, rows: 24 }),
+                    environment: None,
+                }))
+                .await,
+            Response::NewSession(_)
+        ));
+    }
+
+    let parsed = CommandParser::new()
+        .parse("if-shell -F -t = 1 { display-message -p '#{session_name}' }")
+        .expect("if-shell separated target parses");
+    let output = handler
+        .execute_parsed_commands(
+            std::process::id(),
+            parsed,
+            QueueExecutionContext::without_caller_cwd()
+                .with_current_target(Some(Target::Session(beta))),
+        )
+        .await
+        .expect("separated if-shell branch should execute without mouse context");
+    assert_eq!(output.stdout(), b"beta\n");
+}
+
+#[tokio::test]
 async fn queued_if_shell_accepts_compact_format_target_with_next_argument() {
     let handler = RequestHandler::new();
     let alpha = session_name("alpha");
