@@ -161,7 +161,7 @@ async fn attached_command_prompt_can_create_window_from_same_read() {
         sleep(Duration::from_millis(25)).await;
     }
 
-    let frame = wait_for_switch_frame_containing(&mut control_rx, "ISSUE8_WINDOW_READY").await;
+    let frame = wait_for_attach_output_containing(&mut control_rx, "ISSUE8_WINDOW_READY").await;
     assert!(
         frame.contains("ISSUE8_WINDOW_READY"),
         "prompt-created window must render its first output, got {frame:?}"
@@ -368,6 +368,54 @@ async fn wait_for_switch_frame_containing(
         assert!(
             tokio::time::Instant::now() < deadline,
             "timed out after {:?} waiting for attach frame containing {expected:?}",
+            ATTACH_LIFECYCLE_TIMEOUT
+        );
+    }
+}
+
+async fn wait_for_attach_output_containing(
+    control_rx: &mut mpsc::UnboundedReceiver<AttachControl>,
+    expected: &str,
+) -> String {
+    let deadline = tokio::time::Instant::now() + ATTACH_LIFECYCLE_TIMEOUT;
+    let mut seen = String::new();
+    loop {
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        let control = match tokio::time::timeout(
+            remaining.min(Duration::from_millis(250)),
+            control_rx.recv(),
+        )
+        .await
+        {
+            Ok(Some(control)) => control,
+            Ok(None) => panic!("attach refresh channel closed"),
+            Err(_) => {
+                assert!(
+                    tokio::time::Instant::now() < deadline,
+                    "timed out after {:?} waiting for attach output containing {expected:?}; saw {seen:?}",
+                    ATTACH_LIFECYCLE_TIMEOUT
+                );
+                continue;
+            }
+        };
+        match control {
+            AttachControl::Switch(target) => {
+                seen.push_str(&String::from_utf8_lossy(&target.render_frame));
+            }
+            AttachControl::Overlay(frame) => {
+                seen.push_str(&String::from_utf8_lossy(&frame.frame));
+            }
+            AttachControl::Write(bytes) => {
+                seen.push_str(&String::from_utf8_lossy(&bytes));
+            }
+            _ => {}
+        }
+        if seen.contains(expected) {
+            return seen;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "timed out after {:?} waiting for attach output containing {expected:?}; saw {seen:?}",
             ATTACH_LIFECYCLE_TIMEOUT
         );
     }
