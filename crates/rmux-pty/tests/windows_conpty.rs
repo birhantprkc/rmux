@@ -79,6 +79,7 @@ fn conpty_interactive_cmd_accepts_written_input() -> Result<(), Box<dyn std::err
 }
 
 #[test]
+#[ignore = "host-dependent Windows console injection probe; run explicitly when validating Ctrl-D semantics"]
 fn conpty_console_ctrl_d_interrupts_timeout_when_supported(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut spawned = ChildCommand::new("C:\\Windows\\System32\\cmd.exe")
