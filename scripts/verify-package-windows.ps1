@@ -15,6 +15,24 @@ function Fail([string]$Message) {
     exit 1
 }
 
+function Invoke-NativeCapture([string]$Program, [string[]]$Arguments) {
+    $previousErrorActionPreference = $ErrorActionPreference
+    try {
+        # Native stderr redirection is surfaced as NativeCommandError under
+        # pwsh when ErrorActionPreference is Stop. Capture it as data instead.
+        $ErrorActionPreference = "Continue"
+        $output = & $Program @Arguments 2>&1
+        $status = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+    }
+
+    [pscustomobject]@{
+        Output = $output
+        Status = $status
+    }
+}
+
 function Sha256File([string]$Path) {
     $getFileHash = Get-Command Get-FileHash -ErrorAction SilentlyContinue
     if ($getFileHash) {
@@ -36,11 +54,11 @@ function Sha256File([string]$Path) {
 }
 
 function AssertSuccess([string]$Binary, [string[]]$Arguments) {
-    $output = & $Binary @Arguments 2>&1
-    if ($LASTEXITCODE -ne 0) {
-        Fail "command failed: $Binary $($Arguments -join ' ')`n$output"
+    $result = Invoke-NativeCapture $Binary $Arguments
+    if ($result.Status -ne 0) {
+        Fail "command failed: $Binary $($Arguments -join ' ')`n$($result.Output)"
     }
-    $output
+    $result.Output
 }
 
 function AssertSuccessNoCapture([string]$Binary, [string[]]$Arguments) {
@@ -51,8 +69,9 @@ function AssertSuccessNoCapture([string]$Binary, [string[]]$Arguments) {
 }
 
 function AssertHelperFallback([string]$Binary) {
-    $output = & $Binary "--help" 2>&1
-    $status = $LASTEXITCODE
+    $result = Invoke-NativeCapture $Binary @("--help")
+    $output = $result.Output
+    $status = $result.Status
     if ($status -ne 0 -and $status -ne 1) {
         Fail "command failed with unexpected exit code $($status): $Binary --help`n$output"
     }
@@ -68,12 +87,17 @@ function NewPortableAliasSmoke([string]$Binary, [string]$Root) {
     try {
         New-Item -ItemType SymbolicLink -Path $alias -Target $Binary -ErrorAction Stop | Out-Null
     } catch {
-        Fail "failed to create portable alias symlink for smoke: $_"
+        Copy-Item -LiteralPath (Split-Path -Parent $Binary) -Destination $links -Recurse -Force
+        $copied = Join-Path $links (Join-Path ([System.IO.Path]::GetFileName((Split-Path -Parent $Binary))) ([System.IO.Path]::GetFileName($Binary)))
+        if (-not (Test-Path -LiteralPath $copied -PathType Leaf)) {
+            Fail "failed to create portable alias smoke copy after symlink failure: $_"
+        }
+        $alias = $copied
     }
 
     [pscustomobject]@{
         Binary = $alias
-        Directory = $links
+        Directory = Split-Path -Parent $alias
     }
 }
 

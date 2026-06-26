@@ -12,17 +12,36 @@ function Fail([string]$Message) {
     exit 1
 }
 
-function Invoke-RmuxSuccess([string[]]$Arguments) {
-    $output = & $Rmux @Arguments 2>&1
-    if ($LASTEXITCODE -ne 0) {
-        Fail "command failed: $Rmux $($Arguments -join ' ')`n$output"
+function Invoke-NativeCapture([string]$Program, [string[]]$Arguments) {
+    $previousErrorActionPreference = $ErrorActionPreference
+    try {
+        # Native stderr redirection is surfaced as NativeCommandError under
+        # pwsh when ErrorActionPreference is Stop. Capture it as data instead.
+        $ErrorActionPreference = "Continue"
+        $output = & $Program @Arguments 2>&1
+        $status = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $previousErrorActionPreference
     }
-    $output
+
+    [pscustomobject]@{
+        Output = $output
+        Status = $status
+    }
+}
+
+function Invoke-RmuxSuccess([string[]]$Arguments) {
+    $result = Invoke-NativeCapture $Rmux $Arguments
+    if ($result.Status -ne 0) {
+        Fail "command failed: $Rmux $($Arguments -join ' ')`n$($result.Output)"
+    }
+    $result.Output
 }
 
 function Assert-RmuxHelperFallback {
-    $output = & $Rmux --help 2>&1
-    $status = $LASTEXITCODE
+    $result = Invoke-NativeCapture $Rmux @("--help")
+    $output = $result.Output
+    $status = $result.Status
     if ($status -ne 0 -and $status -ne 1) {
         Fail "rmux --help failed with unexpected exit code $status`n$output"
     }
