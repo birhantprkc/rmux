@@ -53,6 +53,8 @@
   README files.
 - Added a Windows package smoke that exercises portable alias fallback, PATH
   resolution, and daemon startup from a WinGet-like Links layout.
+- Exposed `rmux-daemon` in the Scoop manifest and expanded package-manager
+  metadata smokes to cover the installed daemon path.
 
 ## 0.7.0
 

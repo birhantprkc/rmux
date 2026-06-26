@@ -487,7 +487,13 @@ jobs:
             --checksums release-assets/SHA256SUMS \
             --output-dir target/package-managers/chocolatey/rmux
           if command -v ruby >/dev/null 2>&1; then
-            ruby -rjson -e 'manifest = JSON.parse(File.read(ARGV.fetch(0))); abort "missing Scoop vcredist2022 dependency" unless manifest["depends"] == "vcredist2022"' target/package-managers/scoop/rmux.json
+            ruby -rjson -e '
+              manifest = JSON.parse(File.read(ARGV.fetch(0)))
+              abort "missing Scoop vcredist2022 dependency" unless manifest["depends"] == "vcredist2022"
+              bin = manifest["bin"].is_a?(Array) ? manifest["bin"] : [manifest["bin"]]
+              missing = ["rmux.exe", "rmux-daemon.exe"] - bin
+              abort "missing Scoop bin entries: #{missing.join(", ")}" unless missing.empty?
+            ' target/package-managers/scoop/rmux.json
           fi
           grep -F '<dependency id="vcredist140" />' target/package-managers/chocolatey/rmux/rmux.nuspec
 
@@ -865,6 +871,39 @@ jobs:
           $versionOutput = (& rmux -V).Trim()
           if ($versionOutput -ne "rmux $version") {
             throw "Unexpected rmux version from Chocolatey install: $versionOutput"
+          }
+
+          $daemonCommand = Get-Command rmux-daemon -ErrorAction SilentlyContinue
+          if ($null -eq $daemonCommand) {
+            throw "Chocolatey install did not expose rmux-daemon on PATH"
+          }
+
+          $diagnoseJson = & rmux diagnose --json
+          if ($LASTEXITCODE -ne 0) {
+            throw "rmux diagnose --json failed after Chocolatey install"
+          }
+          try {
+            $diagnoseJson | ConvertFrom-Json | Out-Null
+          } catch {
+            throw "rmux diagnose --json returned invalid JSON after Chocolatey install: $_"
+          }
+
+          $label = "choco-smoke-$PID-$([guid]::NewGuid().ToString('N').Substring(0, 8))"
+          $sessionName = "choco_smoke_$PID"
+          try {
+            & rmux -L $label new-session -d -s $sessionName cmd.exe /d /q /k
+            if ($LASTEXITCODE -ne 0) {
+              throw "Chocolatey daemon smoke failed to create session"
+            }
+            $sessions = & rmux -L $label list-sessions -F "#{session_name}"
+            if ($LASTEXITCODE -ne 0) {
+              throw "Chocolatey daemon smoke failed to list sessions"
+            }
+            if (($sessions -join "`n") -notmatch [regex]::Escape($sessionName)) {
+              throw "Chocolatey daemon smoke did not list $sessionName"
+            }
+          } finally {
+            & rmux -L $label kill-server | Out-Null
           }
 
           choco uninstall rmux --yes --no-progress
