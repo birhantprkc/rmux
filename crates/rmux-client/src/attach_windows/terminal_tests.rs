@@ -44,6 +44,7 @@ fn raw_modes_preserve_selection_flags_and_disable_line_editing() {
         | ENABLE_ECHO_INPUT
         | ENABLE_PROCESSED_INPUT
         | ENABLE_QUICK_EDIT_MODE
+        | ENABLE_MOUSE_INPUT
         | ENABLE_INSERT_MODE
         | PRESERVED_INPUT_FLAG;
     let input_mode = raw_input_mode(input_original);

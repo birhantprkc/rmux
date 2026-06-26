@@ -373,6 +373,33 @@ async fn split_mouse_sequence_toggles_windows_console_mouse(
 }
 
 #[tokio::test]
+async fn mouse_all_sequences_toggle_windows_console_mouse_actions(
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut scenario = AttachScenario::new(RecordingActions::default());
+    let actions = scenario.actions.clone();
+    let mut server = scenario.take_server();
+
+    write_server_message(&mut server, AttachMessage::Data(b"\x1b[?1003h".to_vec())).await?;
+    actions
+        .wait_for_call("mouse:true", Duration::from_secs(1))
+        .await?;
+
+    write_server_message(&mut server, AttachMessage::Data(b"\x1b[?1003l".to_vec())).await?;
+    actions
+        .wait_for_call("mouse:false", Duration::from_secs(1))
+        .await?;
+
+    write_server_message(&mut server, AttachMessage::DetachKill).await?;
+    scenario.join().await?;
+
+    assert_eq!(
+        actions.calls(),
+        vec!["mouse:true", "mouse:false", "detach-kill"]
+    );
+    Ok(())
+}
+
+#[tokio::test]
 async fn split_detached_banner_marks_stream_stopped_before_eof(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let mut scenario = AttachScenario::new(RecordingActions::default());

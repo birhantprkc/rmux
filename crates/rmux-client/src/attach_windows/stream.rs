@@ -326,8 +326,18 @@ struct WindowsConsoleMouseTracker {
 
 impl WindowsConsoleMouseTracker {
     fn observe(&mut self, bytes: &[u8]) -> Option<bool> {
-        const ENABLE: [&[u8]; 3] = [b"\x1b[?1000h", b"\x1b[?1002h", b"\x1b[?1006h"];
-        const DISABLE: [&[u8]; 3] = [b"\x1b[?1000l", b"\x1b[?1002l", b"\x1b[?1006l"];
+        const ENABLE: [&[u8]; 4] = [
+            b"\x1b[?1000h",
+            b"\x1b[?1002h",
+            b"\x1b[?1003h",
+            b"\x1b[?1006h",
+        ];
+        const DISABLE: [&[u8]; 4] = [
+            b"\x1b[?1000l",
+            b"\x1b[?1002l",
+            b"\x1b[?1003l",
+            b"\x1b[?1006l",
+        ];
         const TAIL_LEN: usize = 7;
 
         if bytes.is_empty() {

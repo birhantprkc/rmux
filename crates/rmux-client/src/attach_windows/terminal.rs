@@ -605,7 +605,7 @@ const fn raw_input_mode_with_mouse(original: u32, mouse_enabled: bool) -> u32 {
         (original | ENABLE_EXTENDED_FLAGS | ENABLE_MOUSE_INPUT)
             & !(line_editing | ENABLE_QUICK_EDIT_MODE)
     } else {
-        (original | ENABLE_EXTENDED_FLAGS) & !line_editing
+        (original | ENABLE_EXTENDED_FLAGS) & !(line_editing | ENABLE_MOUSE_INPUT)
     }
 }
 
