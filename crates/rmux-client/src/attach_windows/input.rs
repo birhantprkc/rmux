@@ -6,7 +6,7 @@ use windows_sys::Win32::Foundation::HANDLE;
 use windows_sys::Win32::System::Console::{
     GetConsoleMode, ReadConsoleInputW, FROM_LEFT_1ST_BUTTON_PRESSED, FROM_LEFT_2ND_BUTTON_PRESSED,
     FROM_LEFT_3RD_BUTTON_PRESSED, INPUT_RECORD, KEY_EVENT, KEY_EVENT_RECORD, LEFT_ALT_PRESSED,
-    LEFT_CTRL_PRESSED, MOUSE_EVENT, MOUSE_EVENT_RECORD, MOUSE_MOVED, MOUSE_WHEELED,
+    LEFT_CTRL_PRESSED, MOUSE_EVENT, MOUSE_EVENT_RECORD, MOUSE_HWHEELED, MOUSE_MOVED, MOUSE_WHEELED,
     RIGHTMOST_BUTTON_PRESSED, RIGHT_ALT_PRESSED, RIGHT_CTRL_PRESSED, SHIFT_PRESSED,
 };
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
@@ -133,7 +133,6 @@ impl ConsoleInputReader {
 const SGR_BTN_LEFT: u16 = 0;
 const SGR_BTN_MIDDLE: u16 = 1;
 const SGR_BTN_RIGHT: u16 = 2;
-const SGR_BTN_RELEASE: u16 = 3;
 const SGR_WHEEL_UP: u16 = 64;
 const SGR_WHEEL_DOWN: u16 = 65;
 const SGR_MOD_SHIFT: u16 = 4;
@@ -160,19 +159,22 @@ fn encode_mouse_event(event: MOUSE_EVENT_RECORD, last_button_state: &mut u32) ->
         };
         return Some(format_sgr_mouse(base | modifiers, x, y, 'M'));
     }
+    if event.dwEventFlags & MOUSE_HWHEELED != 0 {
+        return None;
+    }
 
-    // Ignore horizontal wheel and bare double-click flags; movement is handled below.
+    // Ignore bare double-click flags; movement is handled below.
     let previous = *last_button_state;
     *last_button_state = buttons;
-    let changed = previous ^ buttons;
+    let pressed = buttons & !previous;
+    let released = previous & !buttons;
 
-    let primary_pressed = sgr_button_for_state(buttons);
     let is_move = event.dwEventFlags & MOUSE_MOVED != 0;
 
-    if changed == 0 {
+    if pressed == 0 && released == 0 {
         if is_move {
             // Drag (motion with a button held) or bare hover motion.
-            if let Some(button) = primary_pressed {
+            if let Some(button) = sgr_button_for_state(buttons) {
                 return Some(format_sgr_mouse(
                     button | SGR_DRAG_FLAG | modifiers,
                     x,
@@ -184,13 +186,10 @@ fn encode_mouse_event(event: MOUSE_EVENT_RECORD, last_button_state: &mut u32) ->
         return None;
     }
 
-    // A button transition occurred. Determine press vs release.
-    if let Some(button) = primary_pressed {
-        // Some button is currently down -> press of the newly-pressed button.
+    if let Some(button) = sgr_button_for_state(pressed) {
         Some(format_sgr_mouse(button | modifiers, x, y, 'M'))
     } else {
-        // All buttons up -> release. SGR release uses button 3 with 'm'.
-        Some(format_sgr_mouse(SGR_BTN_RELEASE | modifiers, x, y, 'm'))
+        sgr_button_for_state(released).map(|button| format_sgr_mouse(button | modifiers, x, y, 'm'))
     }
 }
 
@@ -629,8 +628,9 @@ mod tests {
         ConsoleKeyEvent, ATTACH_INPUT_CHUNK_LIMIT, BRACKETED_PASTE_END, BRACKETED_PASTE_START,
     };
     use windows_sys::Win32::System::Console::{
-        FROM_LEFT_1ST_BUTTON_PRESSED, LEFT_ALT_PRESSED, LEFT_CTRL_PRESSED, MOUSE_EVENT_RECORD,
-        MOUSE_MOVED, MOUSE_WHEELED, RIGHTMOST_BUTTON_PRESSED, RIGHT_ALT_PRESSED, SHIFT_PRESSED,
+        FROM_LEFT_1ST_BUTTON_PRESSED, FROM_LEFT_2ND_BUTTON_PRESSED, LEFT_ALT_PRESSED,
+        LEFT_CTRL_PRESSED, MOUSE_EVENT_RECORD, MOUSE_HWHEELED, MOUSE_MOVED, MOUSE_WHEELED,
+        RIGHTMOST_BUTTON_PRESSED, RIGHT_ALT_PRESSED, SHIFT_PRESSED,
     };
     use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
         VK_BACK, VK_DELETE, VK_DOWN, VK_END, VK_ESCAPE, VK_F5, VK_HOME, VK_LEFT, VK_RETURN,
@@ -937,11 +937,27 @@ mod tests {
             encode_mouse(press, &mut last).as_deref(),
             Some("\x1b[<0;5;5M")
         );
-        // Button transition to all-up encodes the SGR release form (button 3, 'm').
+        // SGR release uses the released button identity plus the 'm' terminator.
         let release = mouse_event(0, 0, 0, 4, 4);
         assert_eq!(
             encode_mouse(release, &mut last).as_deref(),
-            Some("\x1b[<3;5;5m")
+            Some("\x1b[<0;5;5m")
+        );
+    }
+
+    #[test]
+    fn mouse_middle_release_preserves_sgr_button_identity() {
+        let mut last = 0;
+        let press = mouse_event(FROM_LEFT_2ND_BUTTON_PRESSED, 0, 0, 8, 3);
+        assert_eq!(
+            encode_mouse(press, &mut last).as_deref(),
+            Some("\x1b[<1;9;4M")
+        );
+
+        let release = mouse_event(0, 0, SHIFT_PRESSED, 8, 3);
+        assert_eq!(
+            encode_mouse(release, &mut last).as_deref(),
+            Some("\x1b[<5;9;4m")
         );
     }
 
@@ -971,6 +987,47 @@ mod tests {
     }
 
     #[test]
+    fn mouse_second_button_press_uses_changed_button_not_aggregate_state() {
+        let mut last = 0;
+        let left = mouse_event(FROM_LEFT_1ST_BUTTON_PRESSED, 0, 0, 0, 0);
+        assert_eq!(
+            encode_mouse(left, &mut last).as_deref(),
+            Some("\x1b[<0;1;1M")
+        );
+
+        let left_and_right = mouse_event(
+            FROM_LEFT_1ST_BUTTON_PRESSED | RIGHTMOST_BUTTON_PRESSED,
+            0,
+            0,
+            1,
+            0,
+        );
+        assert_eq!(
+            encode_mouse(left_and_right, &mut last).as_deref(),
+            Some("\x1b[<2;2;1M")
+        );
+    }
+
+    #[test]
+    fn mouse_partial_release_uses_released_button_not_remaining_button() {
+        let mut last = 0;
+        let both = mouse_event(
+            FROM_LEFT_1ST_BUTTON_PRESSED | RIGHTMOST_BUTTON_PRESSED,
+            0,
+            0,
+            1,
+            1,
+        );
+        let _ = encode_mouse(both, &mut last);
+
+        let left_remaining = mouse_event(FROM_LEFT_1ST_BUTTON_PRESSED, 0, 0, 1, 1);
+        assert_eq!(
+            encode_mouse(left_remaining, &mut last).as_deref(),
+            Some("\x1b[<2;2;2m")
+        );
+    }
+
+    #[test]
     fn mouse_modifiers_are_or_ed_into_button() {
         let mut last = 0;
         // Ctrl+Shift wheel up -> 64 | 4 (shift) | 16 (ctrl) = 84.
@@ -985,6 +1042,15 @@ mod tests {
             encode_mouse(event, &mut last).as_deref(),
             Some("\x1b[<84;1;1M")
         );
+    }
+
+    #[test]
+    fn mouse_horizontal_wheel_is_ignored_without_polluting_button_state() {
+        let mut last = FROM_LEFT_1ST_BUTTON_PRESSED;
+        let event = mouse_event(0x0078_0000, MOUSE_HWHEELED, 0, 3, 3);
+
+        assert_eq!(encode_mouse(event, &mut last), None);
+        assert_eq!(last, FROM_LEFT_1ST_BUTTON_PRESSED);
     }
 
     #[test]
